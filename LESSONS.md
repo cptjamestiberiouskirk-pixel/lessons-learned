@@ -17,7 +17,7 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - What went wrong: the first CI run (43957308380) failed on Node 22 on all three systems with "Cannot find module '.../tests'", while Node 20 passed. Locally, `node --test tests/` had passed on Node 26.
 - Why: INFERRED from the log: Node 22 took the `tests/` argument as a module to load, not a folder to search. How `--test` reads its arguments differs between Node versions.
 - Rule going forward: run the tests with `node --test` and no path argument. It finds `*.test.mjs` files the same way on every version CI uses.
-- Evidence: `gh run view 43957308380 --log-failed`; the next CI run after the change.
+- Evidence: `gh run view 43957308380 --log-failed`; after 52e4438, run 43957556091 passed all six jobs (three systems, Node 22 and 24).
 - Status: open
 
 ## 2026-11-16: Listing a git archive through a pipe in PowerShell ran past the 2-minute limit
