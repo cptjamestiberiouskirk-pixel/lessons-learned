@@ -3,6 +3,7 @@
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {mkdtempSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
@@ -33,6 +34,14 @@ function entry(date, title, {why = 'a cause', rule = 'a rule', status = 'open'} 
 }
 
 const SECTION = '\n## Changing saved state\n\nFrom: 2026-01-01 "Saved state was lost"\n\n1. Edit every writer and reader.\n';
+
+test('the fingerprint in the setup skill matches the shipped script', () => {
+  const skill = readFileSync(join(TEMPLATES, '../skills/setup/SKILL.md'), 'utf8');
+  const named = skill.match(/It must print `([0-9a-f]{64})`/);
+  assert.ok(named, 'SKILL.md names no fingerprint in the form the test expects');
+  const actual = createHash('sha256').update(readFileSync(SCRIPT, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
+  assert.equal(named[1], actual, 'templates/lessons.mjs changed: update its fingerprint in SKILL.md step 5');
+});
 
 test('the templates as shipped pass the format check', () => {
   const r = run(['--check']);

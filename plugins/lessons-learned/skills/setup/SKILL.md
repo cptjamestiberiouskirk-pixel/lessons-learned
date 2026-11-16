@@ -42,6 +42,8 @@ If the project doesn't use Node, say so in the plan: the script needs Node to ru
 
 ### 4. Build
 
+Bring each template in by reading it with the Read tool and writing it into the repo with the Write tool, exactly as read. Don't copy it with a shell command (`cp`, `Copy-Item`): the plugin folder is outside the repo, so Claude Code refuses that or asks the user to approve it as a sensitive edit. Make any change after the write, with an edit. Step 5 checks that the script came through intact.
+
 - **`LESSONS.md`**: copy `templates/LESSONS.md` to the repo root. Add no entries: don't invent lessons. If the project's history or docs show real, evidenced gotchas, list them in the report as proposed entries.
 - **`PLAYBOOK.md`**: copy `templates/PLAYBOOK.md` to the repo root, and replace the topic words in step 1 of "The lessons check" with the ones from the plan. Add no other sections: those come from promoted lessons.
 - **`dev/lessons.mjs`**: copy `templates/lessons.mjs`. It finds the repo root as the parent of its own folder, so it must sit one level down. If the project keeps dev scripts in another top-level folder (`scripts/`, `tools/`), put it there and change every `dev/lessons.mjs` in the two Markdown files and the script's usage text to match.
@@ -59,7 +61,13 @@ Don't add hooks, skills or slash commands to the project.
 
 ### 5. Verify
 
-1. Run `node dev/lessons.mjs`, `node dev/lessons.mjs --check` (it must report 0 bad) and `node dev/lessons.mjs <one topic word>`.
+1. Run `node dev/lessons.mjs`, `node dev/lessons.mjs --check` (it must report 0 bad) and `node dev/lessons.mjs <one topic word>`. If the script wasn't moved, confirm it came through intact: from the repo root, run
+
+   ```
+   node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha256').update(f.readFileSync('dev/lessons.mjs','utf8').replace(/\r\n/g,'\n')).digest('hex'))"
+   ```
+
+   It must print `107c844c469fc0e422dc285f7ac06a66b8825286e83330e8a5d808412c6b3f50`, the template's fingerprint with line endings ignored. On any other value, compare the file with the template, fix the difference and run it again. If the script was moved and its paths edited, skip this and say so.
 2. Prove that `--check` catches problems. Make a temp folder outside the repo, copy both Markdown files into it, and add three bad entries to the copy of `LESSONS.md`: one missing its `Why` field, one dated later than the entry above it, and one with `Status: promoted to PLAYBOOK "No such section"`. Run `node dev/lessons.mjs --dir <temp folder> --check`, confirm it exits 1 and names each of the three, then delete the temp folder.
 3. If the project builds or packages anything, confirm the excluded files are left out: `git archive HEAD | tar -t`, `npm pack --dry-run`, or the build's own listing. Exclusions in `.gitattributes` apply only once committed, so say if this can't be checked yet.
 4. Show `git status` and `git diff`. Don't commit or push unless the user says so. When they do, follow the project's commit rules.
