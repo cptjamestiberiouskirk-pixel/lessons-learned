@@ -1,0 +1,14 @@
+# Text files use LF in every checkout, so the templates reach users the same
+# way on every system. The setup skill's fingerprint ignores line endings, but
+# a script copied with CRLF would still show as changed in a user's diff.
+* text=auto eol=lf
+*.png binary
+*.ps1 text eol=crlf
+
+# Development files: not part of a git archive of this repo.
+/dev export-ignore
+/tests export-ignore
+/.github export-ignore
+/CLAUDE.md export-ignore
+/LESSONS.md export-ignore
+/PLAYBOOK.md export-ignore
