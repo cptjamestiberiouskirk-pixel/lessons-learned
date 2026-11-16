@@ -14,7 +14,7 @@ All of it lives in the repo, so it keeps working for anyone who clones the repo,
 ## Install
 
 ```
-/plugin marketplace add <path or GitHub URL of this repo>
+/plugin marketplace add cptjamestiberiouskirk-pixel/lessons-learned
 /plugin install lessons-learned@lessons-learned
 ```
 
