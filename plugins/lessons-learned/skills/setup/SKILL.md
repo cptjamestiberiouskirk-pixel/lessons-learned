@@ -17,17 +17,28 @@ The templates for parts 1 to 3 are in `${CLAUDE_PLUGIN_ROOT}/templates/`. If tha
 
 Everything lands in the repo itself, so the repo keeps working for people and sessions that don't have this plugin.
 
+## The script's fingerprint
+
+To tell whether a repo's `dev/lessons.mjs` is this plugin's version, run this from the repo root. It hashes the file with line endings ignored:
+
+```
+node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha256').update(f.readFileSync('dev/lessons.mjs','utf8').replace(/\r\n/g,'\n')).digest('hex'))"
+```
+
+This plugin's version prints `107c844c469fc0e422dc285f7ac06a66b8825286e83330e8a5d808412c6b3f50`. For a script kept in another folder, change the path in the command.
+
 ## Steps
 
 ### 1. Check what's here (read-only)
 
 Find the repo root (`git rev-parse --show-toplevel`, or the working directory if it isn't a git repo). Look for each of the five parts, under these names and under others: `lessons*`, `learnings`, `gotchas`, `pitfalls`, `playbook*`, `runbook`, `checklist`, a `tasks/lessons.md`, rules kept in `CLAUDE.md`, `AGENTS.md`, `.claude/rules/` or `.claude/skills/`, and any memory or handoff folder the project uses. Skip `node_modules`, `.git`, build output and vendored folders.
 
-Report each part as **present**, **partial**, **under another name** or **missing**, with the file path and the quoted line that shows it. If `dev/lessons.mjs` is present, run `node dev/lessons.mjs --check` and include its output.
+Report each part as **present**, **partial**, **under another name** or **missing**, with the file path and the quoted line that shows it. If the script is present, run its `--check` and the fingerprint command, and include both outputs. A script whose fingerprint differs is **present, other version**.
 
 ### 2. Decide
 
-- **All five present and `--check` reports 0 bad:** change nothing. Report and stop.
+- **All five present, `--check` reports 0 bad and the fingerprint matches:** change nothing. Report and stop.
+- **Script present, other version:** it may be older than this plugin's, or changed on purpose. Read both, tell the user what differs in a few lines, and ask whether to replace it with this version. Replace it only on a yes, and then run `--check` again, since a newer script can find problems an older one missed.
 - **Some present:** add only the missing parts. Keep the existing files' entries, names and wording. Fix format only where `--check` fails, and list each fix.
 - **Same job under another name or format** (a `NOTES.md` of gotchas, rules kept in `CLAUDE.md`, a different log format): stop and ask the user whether to leave it, migrate its entries into `LESSONS.md` (each keeping its date and evidence), or wire the existing file into the lessons check as it is.
 - **Missing:** go on to step 3.
@@ -61,15 +72,9 @@ Don't add hooks, skills or slash commands to the project.
 
 ### 5. Verify
 
-1. Run `node dev/lessons.mjs`, `node dev/lessons.mjs --check` (it must report 0 bad) and `node dev/lessons.mjs <one topic word>`. If the script wasn't moved, confirm it came through intact: from the repo root, run
-
-   ```
-   node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha256').update(f.readFileSync('dev/lessons.mjs','utf8').replace(/\r\n/g,'\n')).digest('hex'))"
-   ```
-
-   It must print `107c844c469fc0e422dc285f7ac06a66b8825286e83330e8a5d808412c6b3f50`, the template's fingerprint with line endings ignored. On any other value, compare the file with the template, fix the difference and run it again. If the script was moved and its paths edited, skip this and say so.
+1. Run `node dev/lessons.mjs`, `node dev/lessons.mjs --check` (it must report 0 bad) and `node dev/lessons.mjs <one topic word>`. If you wrote the script and didn't edit its paths, run the fingerprint command (see "The script's fingerprint"): it must print this plugin's value. On any other value, compare the file with the template, fix the difference and run it again. If the script was moved and its paths edited, skip this and say so.
 2. Prove that `--check` catches problems. Make a temp folder outside the repo, copy both Markdown files into it, and add three bad entries to the copy of `LESSONS.md`: one missing its `Why` field, one dated later than the entry above it, and one with `Status: promoted to PLAYBOOK "No such section"`. Run `node dev/lessons.mjs --dir <temp folder> --check`, confirm it exits 1 and names each of the three, then delete the temp folder.
-3. If the project builds or packages anything, confirm the excluded files are left out: `git archive HEAD | tar -t`, `npm pack --dry-run`, or the build's own listing. Exclusions in `.gitattributes` apply only once committed, so say if this can't be checked yet.
+3. If the project builds or packages anything, confirm the excluded files are left out: `git archive -o <temp file> HEAD` then `tar -tf <temp file>`, `npm pack --dry-run`, or the build's own listing. Exclusions in `.gitattributes` apply only once committed, so say if this can't be checked yet.
 4. Show `git status` and `git diff`. Don't commit or push unless the user says so. When they do, follow the project's commit rules.
 
 ### 6. Report

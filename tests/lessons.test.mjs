@@ -37,10 +37,21 @@ const SECTION = '\n## Changing saved state\n\nFrom: 2026-01-01 "Saved state was 
 
 test('the fingerprint in the setup skill matches the shipped script', () => {
   const skill = readFileSync(join(TEMPLATES, '../skills/setup/SKILL.md'), 'utf8');
-  const named = skill.match(/It must print `([0-9a-f]{64})`/);
+  const named = skill.match(/This plugin's version prints `([0-9a-f]{64})`/);
   assert.ok(named, 'SKILL.md names no fingerprint in the form the test expects');
   const actual = createHash('sha256').update(readFileSync(SCRIPT, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
-  assert.equal(named[1], actual, 'templates/lessons.mjs changed: update its fingerprint in SKILL.md step 5');
+  assert.equal(named[1], actual, 'templates/lessons.mjs changed: update its fingerprint in SKILL.md, "The script\'s fingerprint"');
+});
+
+test("this repo's own dev/lessons.mjs is the same text as the template", () => {
+  const own = readFileSync(resolve(TEMPLATES, '../../../dev/lessons.mjs'), 'utf8').replace(/\r\n/g, '\n');
+  assert.equal(own, readFileSync(SCRIPT, 'utf8').replace(/\r\n/g, '\n'), 'copy templates/lessons.mjs to dev/lessons.mjs');
+});
+
+test("this repo's own LESSONS.md and PLAYBOOK.md pass the format check", () => {
+  const root = resolve(TEMPLATES, '../../..');
+  const r = spawnSync(process.execPath, [SCRIPT, '--dir', root, '--check'], {encoding: 'utf8'});
+  assert.equal(r.status, 0, r.stdout + r.stderr);
 });
 
 test('the templates as shipped pass the format check', () => {
