@@ -9,4 +9,13 @@ This repo is a plugin marketplace with one plugin. See [plugins/lessons-learned/
 /plugin install lessons-learned@lessons-learned
 ```
 
-Tests for the lessons script: `node --test tests/`.
+## Working on the plugin
+
+This repo uses its own lessons check: see [CLAUDE.md](CLAUDE.md) and [PLAYBOOK.md](PLAYBOOK.md).
+
+- Tests: `node --test tests/`
+- Validation: `claude plugin validate .` and `claude plugin validate plugins/lessons-learned --profile directory`
+- End-to-end runs of the setup skill (billed): [dev/e2e/README.md](dev/e2e/README.md)
+- The icon is drawn by `node dev/make-icon.mjs`.
+
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
