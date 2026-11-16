@@ -1,5 +1,5 @@
 // Tests for templates/lessons.mjs, run against the plugin's own templates and
-// against logs built in a temp folder. Run with: node --test tests/
+// against logs built in a temp folder. Run with: node --test
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';

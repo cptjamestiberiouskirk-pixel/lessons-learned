@@ -6,7 +6,7 @@ This repo is a Claude Code plugin marketplace with one plugin. What ships is `pl
 
 ## Checking a change
 
-- `node --test tests/`: the template script's lookup and `--check`, that the setup skill's fingerprint matches `templates/lessons.mjs`, and that this repo's own `dev/lessons.mjs` matches the template.
+- `node --test`: the template script's lookup and `--check`, that the setup skill's fingerprint matches `templates/lessons.mjs`, and that this repo's own `dev/lessons.mjs` matches the template.
 - `claude plugin validate .` and `claude plugin validate plugins/lessons-learned --profile directory`.
 - `node dev/lessons.mjs --check`.
 - A change to the setup skill or templates also gets an end-to-end run: `PLAYBOOK.md`, "Changing the setup skill or templates".

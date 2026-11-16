@@ -13,6 +13,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - Status: open | promoted to PLAYBOOK "<section>" | closed: <why the rule no longer holds>
 ```
 
+## 2026-11-16: CI ran the tests with a folder argument, and Node 22 read it as a module
+- What went wrong: the first CI run (43957308380) failed on Node 22 on all three systems with "Cannot find module '.../tests'", while Node 20 passed. Locally, `node --test tests/` had passed on Node 26.
+- Why: INFERRED from the log: Node 22 took the `tests/` argument as a module to load, not a folder to search. How `--test` reads its arguments differs between Node versions.
+- Rule going forward: run the tests with `node --test` and no path argument. It finds `*.test.mjs` files the same way on every version CI uses.
+- Evidence: `gh run view 43957308380 --log-failed`; the next CI run after the change.
+- Status: open
+
 ## 2026-11-16: Listing a git archive through a pipe in PowerShell ran past the 2-minute limit
 - What went wrong: `git archive $tree | tar -t` in the PowerShell tool ran past the 2-minute limit and was moved to the background, though the archive has 20 entries. The same listing through a file (`git archive -o <file>`, then `tar -tf <file>`) took 176 ms.
 - Why: HYPOTHESIZED: the pipe between the two native programs in pwsh 7.7. Not looked into further.
