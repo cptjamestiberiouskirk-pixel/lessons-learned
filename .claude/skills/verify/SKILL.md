@@ -9,7 +9,7 @@ Verification here means running the change and reporting what was seen, not read
 
 ## 1. Always
 
-Run `node dev/release-check.mjs`. It must report every check passed and none skipped. A skip needs `--allow-skip` and a reason in the report. Inside the tests, `node --test` skips the three symlink tests on Windows without Developer Mode (`dev/release-state.md`, RS-T-winsymlink); name them in the report.
+Run `node dev/release-check.mjs`. It must report every check passed and none skipped. A skip needs `--allow-skip` and a reason in the report. Inside the tests, `node --test` skips the symlink tests on Windows without Developer Mode (`dev/release-state.md`, RS-T-winsymlink), and each OS skips the tests written for another; name them in the report. On Windows the check "node --test on Linux" runs the tests under WSL, where the symlink tests do run. Without WSL it is skipped, and that skip needs `--allow-skip` and a reason like any other.
 
 ## 2. A change to the script or the tests
 
