@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // Runs every check a release needs and prints what each one found.
 // Read-only: it runs the tests, the validators and this repo's own --check,
-// and compares files; it changes nothing.
+// and compares files; it changes nothing in the repo. On Windows the Linux
+// test run copies the repo's files into a temporary folder in WSL, and
+// removes it afterwards.
 //
 //   node dev/release-check.mjs
 //
 // Exit 0 when every check passed, 1 when any failed. A check that can't run
-// here (no claude on PATH) is reported as SKIPPED, and fails the run unless
-// --allow-skip is given.
+// here (no claude on PATH, no WSL on Windows) is reported as SKIPPED, and
+// fails the run unless --allow-skip is given.
 
 import {spawnSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
@@ -51,6 +53,44 @@ record('shared files identical', differ.length ? 'FAIL' : 'PASS', differ.length 
 run('node --test', process.execPath, ['--test']);
 run('own LESSONS.md and PLAYBOOK.md', process.execPath, ['dev/lessons.mjs', '--check']);
 const win = process.platform === 'win32';
+
+// node --test on Linux. Inode reuse, case and heap use differ there, and in
+// 0.2.1 two tests that passed on Windows failed on Linux (LESSONS.md,
+// 2026-11-17). On Linux the run above covers it. On Windows it runs under WSL,
+// from a copy of the working tree's files (tracked and untracked, not ignored)
+// on WSL's own file system, which is removed afterwards.
+function linuxTests() {
+  const name = 'node --test on Linux';
+  if (process.platform === 'linux') return record(name, 'PASS', 'this is Linux: the node --test run above covers it');
+  if (!win) return record(name, 'SKIPPED', `no Linux to run it on here (${process.platform})`);
+  const clean = (s) => (s || '').replace(/\0/g, '').replace(/\r/g, '');
+  const where = spawnSync('wsl', ['-e', 'wslpath', '-a', '-u', REPO], {encoding: 'utf8'});
+  if (where.error || where.status !== 0) return record(name, 'SKIPPED', `WSL not available: ${clean(where.stderr || where.error?.message).trim().split('\n')[0]}`);
+  const files = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {cwd: REPO, encoding: 'utf8'});
+  if (files.status !== 0) return record(name, 'FAIL', `git ls-files: ${clean(files.stderr).trim()}`);
+  // The file list comes on stdin, one name per NUL. Nothing from the repo is
+  // put into the script's text: the folder is its first argument.
+  const script = [
+    'set -e',
+    'D=$(mktemp -d)',
+    'trap \'rm -rf "$D"\' EXIT',
+    'cd "$1"',
+    'tar -cf - --null -T - | tar -xf - -C "$D"',
+    'cd "$D"',
+    'command -v node >/dev/null || { echo "no node in WSL"; exit 127; }',
+    'echo "node $(node --version)"',
+    'node --test',
+  ].join('\n');
+  const r = spawnSync('wsl', ['-e', 'sh', '-c', script, 'sh', clean(where.stdout).trim()], {input: files.stdout, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
+  const out = clean(`${r.stdout}${r.stderr}`);
+  if (r.status === 127) return record(name, 'SKIPPED', 'no node in WSL');
+  const version = out.match(/^node (v\S+)/m)?.[1] ?? 'node ?';
+  const count = (k) => out.match(new RegExp(`^(?:# |ℹ )${k} (\\d+)`, 'm'))?.[1] ?? '?';
+  const failing = [...out.matchAll(/^not ok \d+ - (.*)$/gm)].map((m) => m[1]).slice(0, 3);
+  record(name, r.status === 0 ? 'PASS' : 'FAIL',
+    `WSL, ${version}: ${count('pass')} pass, ${count('fail')} fail, ${count('skipped')} skipped${failing.length ? `; failing: ${failing.join('; ')}` : ''}`);
+}
+linuxTests();
 run('claude plugin validate (marketplace)', 'claude', ['plugin', 'validate', '.'], win);
 run('claude plugin validate (plugin folder)', 'claude', ['plugin', 'validate', 'plugins/lessons-learned', '--profile', 'directory'], win);
 

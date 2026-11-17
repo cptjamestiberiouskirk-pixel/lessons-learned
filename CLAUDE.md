@@ -10,6 +10,7 @@ Before a commit, run the `verify` skill (`.claude/skills/verify/SKILL.md`). Why 
 
 - `node dev/release-check.mjs` runs all of the below that don't need a model and prints what each found.
 - `node --test`: the template script's lookup, `--check` and hardening, and properties tried on random text (`tests/property.test.mjs`); that both skills' fingerprints match `templates/lessons.mjs`; that the shared files are the same in both copies; that this repo's own `dev/lessons.mjs` matches the template.
+- `node --test` on Linux. On Windows the release check runs it under WSL, from a copy on WSL's own file system. Inode reuse, case and heap use differ there, and in 0.2.1 two tests that passed on Windows failed on Linux.
 - `claude plugin validate .` and `claude plugin validate plugins/lessons-learned --profile directory`. Codex has no validate command: `tests/codex.test.mjs` checks the Codex manifests and marketplace, and installing with `codex plugin add` is the real check.
 - `node dev/lessons.mjs --check`.
 - A change to a setup skill or the templates also gets an end-to-end run: `PLAYBOOK.md`, "Changing the setup skill or templates".

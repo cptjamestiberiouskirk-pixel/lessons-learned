@@ -22,6 +22,7 @@ A change is verified when it has been run the way a user runs it. Here that mean
 ## Keep checks fast and honest
 
 - A slow check gets run less. `node --test` takes seconds. Keep it that way.
+- One machine's results are not the code's. CI runs Linux, Windows and macOS, and a failure there comes after a push. `node dev/release-check.mjs` also runs `node --test` on Linux: on Windows under WSL, from a copy on WSL's own file system, since a test run on the Windows drive through WSL would get Windows file system behavior. In 0.2.1 that run found two failures the Windows run hid: Linux gave a deleted file's inode number to the next new file, and the new script needed more heap on Node 18 than the test allowed. macOS is left to CI.
 - A flaky test teaches you to rerun it instead of fixing the code. Don't add a sleep or a retry. Find the cause, or delete the test and log why in `LESSONS.md`.
 - A timing test compares growth, not seconds. It times the full input and a quarter of it, and fails when the full run takes more than 8 times as long: linear work grows about 4 times, quadratic about 16. A busy machine or a slow CI runner slows both runs alike, so the ratio holds where a fixed limit would fail for no reason. Its input must make the slow version fail, and the test is run against the slow version before it is trusted. Growth can't see a cost that an output cap repeats at most a fixed number of times (50 problem messages, say): that cost is linear. Test it by keeping the input and changing only the repeat count, 50 against 1.
 
