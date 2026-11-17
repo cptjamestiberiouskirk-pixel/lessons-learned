@@ -20,7 +20,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: a fix to one piece of code was not turned into a rule for the next code that walks a path.
 - Rule going forward: code that refuses a link on a path in the repo also checks that the path's real path (`realpathSync.native`) is the repo's real path plus the name, with case folded only on Windows and macOS, since `lstat` calls a junction to a volume path a plain folder. Its tests make such a junction with `mklink /J` to the volume path `mountvol` prints.
 - Evidence: `dev/lessons.mjs`, search "A junction to a volume path is a plain folder to lstat"; `tests/stale.test.mjs`, search "which lstat calls a folder"; `dev/release-state.md`, search "the same class as 0.2.1 round 8".
-- Status: open
+- Status: promoted to PLAYBOOK "Walking a path in the repo"
 
 ## 2026-11-17: A test asserted the cut marker's format from memory, and failed on the fixed script
 - What went wrong: a new test for a long file name expected `[cut: N more characters]` right after the name, but the script puts a space before it. The test failed on both the old and the fixed script, and only reading the actual output showed why.

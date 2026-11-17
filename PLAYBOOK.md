@@ -62,3 +62,10 @@ From: 2026-11-16 "A rule holding U+2028 was read as a broken field"
 
 1. A regex that must match a whole line of untrusted text uses the `s` flag, or `[^]` in place of `.`, so that `.` also matches U+2028 and U+2029.
 2. A new parsing rule gets a property test with random text, not only example tests.
+
+## Walking a path in the repo
+
+From: 2026-11-17 "--stale followed a junction to a volume path, the class 0.2.1 had already fixed in the copy"
+
+1. If code refuses a link on a path in the repo, it also checks that the path's real path (`realpathSync.native`) equals the repo's real path plus the path's name. Fold case only on Windows and macOS. `lstat` reports a junction to a volume path as a plain folder.
+2. That code's tests create a junction to a volume path with `mklink /J`, using the volume path that `mountvol` prints.
