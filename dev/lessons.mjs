@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// lessons.mjs from the lessons-learned plugin, version 0.2.0.
+// lessons.mjs from the lessons-learned plugin, version 0.2.1.
 // Prints the rules in LESSONS.md for the lessons check in PLAYBOOK.md, and checks
 // the log's format. Reads LESSONS.md and PLAYBOOK.md and writes nothing.
 //
@@ -133,7 +133,8 @@ function show(text, max = MAX_LINE) {
 // MAX_NAME so the problem itself stays in view after it. Counting what was cut
 // walks the whole text, so a title or section name is cut once, when it is
 // read: a 10 MB title named in fifty messages costs one walk, not fifty. A
-// From: name is in at most one message, so it is cut when that one is made.
+// From: name is in at most one message, so it is cut when that one is made,
+// and only if that message is one of those printed.
 const label = (text) => show(text, MAX_NAME);
 
 function say(text) {
@@ -197,8 +198,15 @@ function read(name) {
   return text.replace(/\r/g, '').split('\n');
 }
 
+// --check prints the first MAX_BAD problems and counts the rest, so only those
+// messages are kept. A message given as a function is built only when it is
+// kept; a From: message is, since a PLAYBOOK.md can hold hundreds of thousands
+// of bad From: names. Other messages are built as their problem is found.
+let badCount = 0;
 const bad = [];
-const problem = (line, text) => bad.push(`BAD   ${line ? `line ${line}: ` : ''}${text}`);
+const problem = (line, text) => {
+  if (badCount++ < MAX_BAD) bad.push(`BAD   ${line ? `line ${line}: ` : ''}${typeof text === 'function' ? text() : text}`);
+};
 
 // PLAYBOOK.md: its "## " sections and the lessons each one's "From:" line names.
 const sections = new Map();
@@ -317,7 +325,7 @@ for (const section of sections.values()) {
   for (const key of section.from) {
     const e = byKey.get(key);
     if (!e || e.status !== 'promoted' || e.section !== section.name)
-      problem(0, `PLAYBOOK.md line ${section.line}, "${section.label}": From: names ${label(key)}, which is not a lesson promoted to this section`);
+      problem(0, () => `PLAYBOOK.md line ${section.line}, "${section.label}": From: names ${label(key)}, which is not a lesson promoted to this section`);
   }
 }
 
@@ -325,10 +333,10 @@ const count = (s) => entries.filter((e) => e.status === s).length;
 const totals = `${entries.length} lessons: ${count('open')} open, ${count('promoted')} promoted, ${count('closed')} closed`;
 
 if (mode === 'check') {
-  bad.slice(0, MAX_BAD).forEach((b) => say(b));
-  if (bad.length > MAX_BAD) say(`BAD   ... and ${bad.length - MAX_BAD} more, not printed`);
-  say(`${totals}; ${bad.length} bad`);
-  process.exit(bad.length ? 1 : 0);
+  bad.forEach((b) => say(b));
+  if (badCount > MAX_BAD) say(`BAD   ... and ${badCount - MAX_BAD} more, not printed`);
+  say(`${totals}; ${badCount} bad`);
+  process.exit(badCount ? 1 : 0);
 }
 
 if (mode === 'counts') {
@@ -360,4 +368,4 @@ if (mode === 'counts') {
   if (items.length > MAX_SHOWN) say(`... and ${items.length - MAX_SHOWN} more, not printed: use more specific words`);
   say(`-- ${shown} shown; ${totals}`);
 }
-if (bad.length) say(`lessons: the log has ${bad.length} format problem(s): run node dev/lessons.mjs --check`);
+if (badCount) say(`lessons: the log has ${badCount} format problem(s): run node dev/lessons.mjs --check`);

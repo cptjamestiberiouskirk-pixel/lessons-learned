@@ -13,12 +13,40 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - Status: open | promoted to PLAYBOOK "<section>" | closed: <why the rule no longer holds>
 ```
 
+## 2026-11-17: Two tests that passed on Windows failed on Linux, found only by a reviewer's WSL probe
+- What went wrong: for eleven review rounds of 0.2.1 every test ran on Windows only. A reviewer used WSL for a probe; running the suite there then showed two failures that CI (ubuntu, windows and macOS) would have shown only after a push. The copy command's end check passed a swapped-in file, because the random-name file's handle was closed and Linux gave the next new file the same inode number. The heap test's 96 MB limit was too little for the new script on Node 18, which needs 128 MB (Node 26 needs 40).
+- Why: I ran `node --test` and the release check on this Windows machine only, and took one machine's numbers (inode behavior, heap use) as the code's.
+- Rule going forward: before a release commit, also run `node --test` under WSL (Linux) from a copy on its own file system. A test that measures a resource (heap, time) gets its limit from runs on more than one Node version and OS, with room on both sides.
+- Evidence: the 0.2.1 work: `not ok 35 - the copy command fails when its random-name file is replaced by another plain file before the fallback rename` under WSL, and the probe showing the same inode after unlink with the handle closed and a new one with it held; `heapfloor.mjs`: new script 128 MB and old 256 MB on Node 18, 40 MB and 256 MB on Node 26.
+- Status: open
+
+## 2026-11-17: Review rounds re-reviewed the whole release instead of the diff since the last round
+- What went wrong: rounds 6 to 9 of the 0.2.1 review each had a fresh reviewer look at the whole diff from 643dcdd, not at the previous round's fixes. Each round found something new in that large surface, so the stop rule was never near. A reviewer quoted REVIEW.md's "Rounds" section back, which I had not read for this release.
+- Why: I wrote each round's brief from the one before it, not from REVIEW.md, and only read REVIEW.md's file path into the brief for the reviewer to follow.
+- Rule going forward: before writing a review round's brief, read REVIEW.md's "Rounds" section and scope the round to the diff since the last reviewed state; save that state (a copy of the changed folders and docs) before applying each round's fixes, so the next round can diff against it, and run fail-before checks in another copy, never in that one.
+- Evidence: the 0.2.1 session's briefs for rounds 6 to 9 ("the uncommitted diff from commit 643dcdd to the working tree" in each) and round 10's, scoped to round 9's fixes; REVIEW.md on main, "Each round reviews the diff since the last reviewed state".
+- Status: open
+
 ## 2026-11-17: Backslashes in a Git Bash heredoc were lost before the text reached the file
 - What went wrong: an edit script for 0.2.1, written through a quoted Git Bash heredoc (`<<'EOF'`), searched for a test line holding `/staged\.md/` and found nothing: the script Node read had lost a backslash. The 0.2.0 work hit the same loss in a RegExp template, fixed then with the Edit tool and `String.raw`, but logged no lesson.
 - Why: in this environment a doubled backslash in a Bash tool heredoc reaches the file as one, even when the heredoc is quoted; a single backslash before an ordinary character is kept. Tried: `one:\. two:\\. four:\\\\.` came out as `one:\. two:\. four:\\.` (`od -c`). The script had `\\.` inside a JS string, so it reached Node as `\.`, which JS reads as a plain `.`.
 - Rule going forward: text that holds a backslash (a regex, an escape, a Windows path) goes into a file through the Edit or Write tool, not through a Git Bash heredoc.
 - Evidence: the 0.2.1 session's `round1-fix.mjs` run ("0 matches: assert.match(r.stderr, /staged.md: ...", the backslash gone), then the same change made with the Edit tool; and the 0.2.0 session's RegExp template fix.
 - Status: promoted to PLAYBOOK "Editing files"
+
+## 2026-11-17: A command meant to run one billed setup run held a leftover call to another
+- What went wrong: the command for the second Claude Code end-to-end run of 0.2.1 began with leftovers from an earlier draft: a `run-setup.ps1` call on a repo path that didn't exist, and a copy and delete that did nothing. The stray call failed before starting a session, so nothing was billed or changed.
+- Why: I built the command by editing an earlier one in place and didn't read it through before running it.
+- Rule going forward: before running a command that calls a billed script (`run-setup.ps1`, `run-live.ps1`), read the whole command through, and write it fresh rather than editing an earlier draft.
+- Evidence: the 0.2.1 session's call that made `e2e021d-claude`; no session folder exists for the stray path.
+- Status: open
+
+## 2026-11-17: A create-only write was trusted to refuse a link, and on Windows it follows one
+- What went wrong: the 0.2.0 copy command relied on a create-only write (`flag: 'wx'`) as its last guard against a link made after its check, and `dev/release-state.md` said only a link made in that instant would get through. A probe for 0.2.1 showed more on Windows: the write follows a dangling file symbolic link and writes the text where it points, and a dangling junction makes it create an empty folder where the junction points.
+- Why: on Linux and macOS, `O_CREAT | O_EXCL` fails on any link at the name. Windows has no such rule for `CREATE_NEW`: it follows the link, so "create only" holds for the target, not for the name.
+- Rule going forward: to create a file at a name where a link may appear, write it under a random name beside it and give it the name with a hard link (`linkSync`), which fails on anything at the name and follows nothing. Where the hard link fails for any other reason (Codex's Windows sandbox refuses it with `EPERM`), rename it into place, which replaces the name and writes through nothing. Probe a guard's behavior on Windows, and in the Codex sandbox, before relying on it.
+- Evidence: the probes in the 0.2.1 work (a dangling file link: "WROTE", the text at the target; a dangling junction: `EISDIR` and an empty folder; `linkSync` over either: `EEXIST`, nothing made; `renameSync` over a junction: `EPERM`, nothing made), the Codex end-to-end run for 0.2.1 (`LESSONS.md: cannot be made (EPERM)` from `linkSync` in the sandbox), and `tests/codex.test.mjs`, "the copy command is not led by a dangling junction made after its look at the target".
+- Status: open
 
 ## 2026-11-16: A growth test was claimed to guard a cost that an output cap keeps linear
 - What went wrong: I said the 4 MB title test guarded the change that cuts a title once for all its problem messages. Review round 6 showed it passed on the script before that change, and on a mutant that cut the title again in each message.
