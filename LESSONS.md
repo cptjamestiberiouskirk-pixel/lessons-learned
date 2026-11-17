@@ -101,5 +101,5 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - What went wrong: the first commit, run in the PowerShell tool as `git commit -F - @'...'@`, failed with "pathspec 'Add the lessons-learned plugin ...' did not match any file(s)" and committed nothing.
 - Why: `-F -` reads the message from stdin, and PowerShell passed the here-string as one more argument, not as stdin.
 - Rule going forward: in the PowerShell tool, give a commit message with `-m @'...'@`.
-- Evidence: the session that made 2f94516: the failed call, then the same message with `-m`, which made the commit.
-- Status: open
+- Evidence: the session that made 2f94516: the failed call, then the same message with `-m`, which made the commit. Seen again at the 0.2.0 commit (855302b), made after the same failure, when the lessons check was skipped before the commit.
+- Status: promoted to PLAYBOOK "Committing"

@@ -43,3 +43,9 @@ From: 2026-11-16 "A fail-before run used a copy of the old script that was one l
 
 1. In pwsh, copy an old version of a file with a byte-exact redirect: `cmd /c "git show <rev>:<path> > <file>"`. Not `| Set-Content -NoNewline`, which joins the lines, and not from Git Bash, which rewrites `/c`.
 2. Check the copy before using it: `git hash-object <file>` must print what `git rev-parse <rev>:<path>` prints.
+
+## Committing
+
+From: 2026-11-16 "A commit message passed with -F - in PowerShell was read as a path"
+
+1. In the PowerShell tool, give a commit message with `-m @'...'@`.
