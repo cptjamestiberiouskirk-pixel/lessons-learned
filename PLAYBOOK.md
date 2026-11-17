@@ -49,3 +49,9 @@ From: 2026-11-16 "A fail-before run used a copy of the old script that was one l
 From: 2026-11-16 "A commit message passed with -F - in PowerShell was read as a path"
 
 1. In the PowerShell tool, give a commit message with `-m @'...'@`.
+
+## Editing files
+
+From: 2026-11-17 "Backslashes in a Git Bash heredoc were lost before the text reached the file"
+
+1. Text that holds a backslash (a regex, an escape, a Windows path) goes into a file through the Edit or Write tool, not through a Git Bash heredoc.
