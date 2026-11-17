@@ -13,7 +13,14 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - Status: open | promoted to PLAYBOOK "<section>" | closed: <why the rule no longer holds>
 ```
 
-A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds, at most 200 characters (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
+A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
+
+## 2026-11-17: Counting the search limit in code points let text past V8's slow-search threshold
+- What went wrong: round 1 capped --stale's search text at 200 to keep the search fast. Round 2 made the cap count code points, as the docs say, which lets up to 400 UTF-16 units through. V8's `includes` turns about 100 times slower per search once the pattern is longer than about 250 units, so 100 searches of 200 emoji on 1 MB took 5.7 s, against 0.4 s for the worst case under the old cap.
+- Why: the change was checked for what it counts, not for the cost the cap was there to bound, and no test timed the case at the new limit.
+- Rule going forward: a change to a limit that bounds a cost is tested at the new limit for that cost: time the worst input the new limit lets through, and compare it with the old limit's worst.
+- Evidence: `dev/release-state.md`, search "V8's slow substring search".
+- Status: open
 
 ## 2026-11-17: A real-path check folded the whole path with toLowerCase, and let a Kelvin-sign folder through
 - What went wrong: round 1's fix for --stale compared real paths after `toLowerCase` on Windows and macOS, as the 0.2.1 copy does. Review round 2 put the repo under `kit` and a junction to a volume path into `Kit` spelled with the Kelvin sign (U+212A) beside it. `toLowerCase` makes both `kit`, NTFS keeps them apart, and the script searched the outside file.

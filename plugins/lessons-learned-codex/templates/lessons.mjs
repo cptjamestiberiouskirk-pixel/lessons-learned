@@ -41,7 +41,7 @@ const MAX_SHOWN = 50; // lessons printed by a lookup or --all
 const MAX_NAME = 200; // characters of a title or section name in a problem message
 const MAX_REFS = 100; // file names --stale checks
 const MAX_SEARCH = 1024 * 1024; // bytes of a file --stale searches
-const MAX_QUOTE = 200; // characters of search text --stale looks for
+const MAX_QUOTE = 200; // UTF-16 units of search text --stale looks for
 
 // Characters that can hide or disguise text: controls (Cc), format characters
 // (Cf: bidi marks and overrides, zero-width characters, the BOM, Unicode tag
@@ -349,7 +349,7 @@ for (const section of sections.values()) {
 // with only ASCII case ignored and only on Windows and macOS: full case folding
 // would match the Kelvin sign to "k", where NTFS keeps two folders apart. Only a
 // regular file of at most MAX_SEARCH bytes with one hard link is read, to search
-// it for text of at most MAX_QUOTE characters (a longer one would make the
+// it for text of at most MAX_QUOTE UTF-16 units (a longer one would make the
 // search slow), and its text is never printed. Backticks pair left to right, as
 // in Markdown, so a span with a space in it (a command) doesn't shift the pairs.
 const EVIDENCE_REF = /`([^`]*)`(?:,? search "([^"]+)")?/g;
@@ -381,6 +381,8 @@ function look(name) {
   }
   if (found.path) {
     try {
+      // With the separator at the end, so a sibling such as `repo2` doesn't
+      // start with it; join adds none to a drive root's `C:\`, which has one.
       rootReal ??= join(realpathSync.native(dir), 'x').slice(0, -1);
       const real = realpathSync.native(found.path);
       if (!real.startsWith(rootReal) || foldAscii(real.slice(rootReal.length)) !== foldAscii(join(...parts)))
@@ -394,8 +396,10 @@ function look(name) {
 }
 // What is wrong with the file found for text the evidence says it holds, or ''.
 function holds(found, text) {
-  // Characters are code points; a text over 2 * MAX_QUOTE UTF-16 units has more.
-  if (text.length > MAX_QUOTE && (text.length > 2 * MAX_QUOTE || [...text].length > MAX_QUOTE)) return `not searched: search text over ${MAX_QUOTE} characters`;
+  // Counted in UTF-16 units, as V8 counts a pattern: past about 250 its substring
+  // search turns about 100 times slower, so a limit in code points (200 emoji are
+  // 400 units) would let that through.
+  if (text.length > MAX_QUOTE) return `not searched: search text over ${MAX_QUOTE} UTF-16 units`;
   const {stat, path} = found;
   if (!stat.isFile()) return 'not searched: not a regular file';
   if (stat.nlink > 1) return 'not searched: a file with a second hard link';

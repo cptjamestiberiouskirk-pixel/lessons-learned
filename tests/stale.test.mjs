@@ -222,24 +222,84 @@ test('--stale spells out hidden characters in the text it quotes, and cuts a lon
   assert.match(r.out, /`docs\/z+ \[cut: \d+ more characters\]`: no such file/);
 });
 
-test('--stale does not search for text over 200 characters, and does not quote it', () => {
+test('--stale does not search for text over 200 UTF-16 units, and does not quote it', () => {
   const text = 'q'.repeat(201);
   const dir = repo([entry('At the limit', `\`a.md\`, search "${'q'.repeat(200)}"`), entry('Over the limit', `\`a.md\`, search "${text}"`)], {'a.md': 'q'.repeat(300)});
   const r = stale(dir);
   assert.doesNotMatch(r.out, /"At the limit"/, r.out);
-  assert.match(r.out, /`a\.md`: not searched: search text over 200 characters/);
+  assert.match(r.out, /`a\.md`: not searched: search text over 200 UTF-16 units/);
   assert.ok(!r.out.includes(text), r.out);
 });
 
-test('--stale counts the 200 characters as code points, so 200 emoji are searched', () => {
+test('--stale counts the limit in UTF-16 units, so 100 emoji are searched and 101 are not', () => {
   const face = String.fromCodePoint(0x1f600); // two UTF-16 units
   const dir = repo(
-    [entry('Two hundred', `\`a.md\`, search "${face.repeat(200)}"`), entry('Two hundred and one', `\`a.md\`, search "${face.repeat(201)}"`)],
-    {'a.md': face.repeat(200)},
+    [entry('One hundred', `\`a.md\`, search "${face.repeat(100)}"`), entry('One hundred and one', `\`a.md\`, search "${face.repeat(101)}"`)],
+    {'a.md': face.repeat(100)},
   );
   const r = stale(dir);
-  assert.doesNotMatch(r.out, /"Two hundred"\n/, r.out);
-  assert.match(r.out, /"Two hundred and one"\n {4}`a\.md`: not searched: search text over 200 characters/);
+  assert.doesNotMatch(r.out, /"One hundred"\n/, r.out);
+  assert.match(r.out, /"One hundred and one"\n {4}`a\.md`: not searched: search text over 200 UTF-16 units/);
+});
+
+// Past about 250 UTF-16 units, V8's substring search turns about 100 times
+// slower per search. 100 searches at the limit, over a 1 MB file, must cost
+// about what the worst ASCII search at the limit costs. Each runs twice and
+// the faster run counts; a ratio holds on a slow machine where seconds don't.
+test('--stale costs no more for emoji search text than for ASCII at the limit', () => {
+  const smile = String.fromCodePoint(0x1f600);
+  const other = String.fromCodePoint(0x1f601);
+  const many = (text) => Array.from({length: 100}, () => `\`a.md\`, search "${text}"`).join('; ');
+  const ascii = repo([entry('Ascii', many('a'.repeat(199) + 'b'))], {'a.md': 'a'.repeat(MAX_SEARCH)});
+  const atLimit = repo([entry('At the limit', many(other + smile.repeat(99)))], {'a.md': smile.repeat(MAX_SEARCH / 4)});
+  const longer = repo([entry('Longer', many(other + smile.repeat(199)))], {'a.md': smile.repeat(MAX_SEARCH / 4)});
+  const timed = (dir) => {
+    const started = Date.now();
+    const r = stale(dir);
+    return {took: Date.now() - started, r};
+  };
+  const best = (dir) => [timed(dir), timed(dir)].reduce((a, b) => (a.took <= b.took ? a : b));
+  const base = best(ascii);
+  for (const [what, dir] of [['at the limit', atLimit], ['200 emoji', longer]]) {
+    const run = best(dir);
+    assert.equal(run.r.code, 0, run.r.out);
+    assert.ok(run.took < 4 * base.took + 500, `${what} took ${run.took} ms, the ASCII worst case ${base.took} ms`);
+  }
+});
+
+// A folder marked case-sensitive (no admin needed) can hold `repo` and `REPO`
+// side by side, so the repo's part of the real path must keep its case.
+test('--stale refuses a junction into a folder that differs from the repo only in case, in a case-sensitive folder', (t) => {
+  const base = folder();
+  if (process.platform !== 'win32') return t.skip('folders marked case-sensitive are a Windows feature');
+  const mark = spawnSync('fsutil', ['file', 'setCaseSensitiveInfo', base, 'enable'], {encoding: 'utf8'});
+  if (mark.status !== 0) return t.skip('this folder cannot be marked case-sensitive here');
+  const repoDir = join(base, 'repo');
+  const outside = join(base, 'REPO', 'docs');
+  mkdirSync(repoDir);
+  mkdirSync(outside, {recursive: true});
+  writeFileSync(join(repoDir, 'LESSONS.md'), LESSONS + entry('Held outside', '`docs/a.md`, search "held text"'));
+  writeFileSync(join(repoDir, 'PLAYBOOK.md'), PLAYBOOK);
+  writeFileSync(join(outside, 'a.md'), 'held text\n');
+  if (!volumeJunction(join(repoDir, 'docs'), outside)) return t.skip('no junction to a volume path can be made here');
+  const r = stale(repoDir);
+  assert.match(r.out, /`docs\/a\.md`: not checked: a link on the way leads elsewhere/, r.out);
+});
+
+// The repo's real path ends in a separator in the comparison, so a sibling
+// folder whose name starts with the repo's (`repoZdocs`) is outside.
+test('--stale refuses a junction into a sibling folder whose name starts with the repo\'s', (t) => {
+  const base = folder();
+  const repoDir = join(base, 'repo');
+  const outside = join(base, 'repoZdocs');
+  mkdirSync(repoDir);
+  mkdirSync(outside);
+  writeFileSync(join(repoDir, 'LESSONS.md'), LESSONS + entry('Held outside', '`docs/a.md`, search "held text"'));
+  writeFileSync(join(repoDir, 'PLAYBOOK.md'), PLAYBOOK);
+  writeFileSync(join(outside, 'a.md'), 'held text\n');
+  if (!volumeJunction(join(repoDir, 'docs'), outside)) return t.skip('no junction to a volume path can be made here');
+  const r = stale(repoDir);
+  assert.match(r.out, /`docs\/a\.md`: not checked: a link on the way leads elsewhere/, r.out);
 });
 
 // A long search text made V8's substring search take time in the product of the
