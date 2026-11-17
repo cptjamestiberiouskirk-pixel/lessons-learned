@@ -20,7 +20,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: the fold was copied from the copy command, which had passed its own review rounds, without asking whether Unicode case folding matches what the file system treats as one name.
 - Rule going forward: a real-path check compares the repo's real path exactly (both sides come from the same `realpathSync.native` call), and folds only ASCII case in the rest, which comes from a name of ASCII characters. Never fold a whole path with `toLowerCase`.
 - Evidence: `dev/lessons.mjs`, search "full case folding"; `tests/stale.test.mjs`, search "only by Unicode case"; `dev/release-state.md`, search "the Kelvin sign".
-- Status: open
+- Status: promoted to PLAYBOOK "Walking a path in the repo"
 
 ## 2026-11-17: --stale followed a junction to a volume path, the class 0.2.1 had already fixed in the copy
 - What went wrong: 0.3.0's `--stale` refused a link on the way to a file by `lstat` alone. Review round 1 planted a junction to a volume path at `docs`, which `lstat` reports as a plain folder, and the script searched a file outside the repo and printed whether it held the quoted text. 0.2.1 review round 8 had found the same in the copy command, and fixed it there with a real-path check, but no lesson was logged, so the new walk was written without it.

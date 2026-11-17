@@ -65,7 +65,8 @@ From: 2026-11-16 "A rule holding U+2028 was read as a broken field"
 
 ## Walking a path in the repo
 
-From: 2026-11-17 "--stale followed a junction to a volume path, the class 0.2.1 had already fixed in the copy"
+From: 2026-11-17 "--stale followed a junction to a volume path, the class 0.2.1 had already fixed in the copy", 2026-11-17 "A real-path check folded the whole path with toLowerCase, and let a Kelvin-sign folder through"
 
-1. If code refuses a link on a path in the repo, it also checks that the path's real path (`realpathSync.native`) equals the repo's real path plus the path's name. Fold case only on Windows and macOS. `lstat` reports a junction to a volume path as a plain folder.
-2. That code's tests create a junction to a volume path with `mklink /J`, using the volume path that `mountvol` prints.
+1. If code refuses symbolic links and junctions on a path in the repo, it also checks the path's real path (`realpathSync.native`). `lstat` reports a junction to a volume path (`\\?\Volume{...}\`) as a plain folder.
+2. The real path must equal the repo's real path plus the name joined onto it. Compare the repo's part exactly: both real paths come from `realpathSync.native`, which spells it the same way. Fold case only in the name, only ASCII case, and only on Windows and macOS. Never fold a whole path with `toLowerCase`.
+3. That code's tests make a junction to a volume path with `mklink /J`, using the volume path that `mountvol` prints.
