@@ -5,7 +5,7 @@
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
+import {linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -118,6 +118,33 @@ test('--stale does not follow a link on the way to a file, and does not read thr
   assert.doesNotMatch(r.out, /: no longer holds "/);
 });
 
+// A junction to a volume path (\\?\Volume{GUID}\...), which lstat reports as a
+// plain folder, not a link. Any user can make one. Returns false where none can be made.
+function volumeJunction(at, target) {
+  if (process.platform !== 'win32') return false;
+  const root = target.slice(0, 3);
+  const vol = spawnSync('mountvol', [root, '/L'], {encoding: 'utf8'}).stdout?.trim();
+  if (!/^\\\\\?\\Volume\{[0-9a-f-]+\}\\$/i.test(vol ?? '')) return false;
+  const r = spawnSync('cmd', ['/c', 'mklink', '/J', at, vol + target.slice(root.length)], {encoding: 'utf8'});
+  if (r.status !== 0) return false;
+  folders.unshift(at); // removed first, as the junction itself, before its folder
+  return !lstatSync(at).isSymbolicLink();
+}
+
+test('--stale does not read through a junction to a volume path, which lstat calls a folder', (t) => {
+  const outside = folder();
+  writeFileSync(join(outside, 'a.md'), 'held text\n');
+  const dir = repo([
+    entry('Held outside', '`docs/a.md`, search "held text"'),
+    entry('Not held outside', '`docs/a.md`, search "other text"'),
+  ]);
+  if (!volumeJunction(join(dir, 'docs'), outside)) return t.skip('no junction to a volume path can be made here');
+  const r = stale(dir);
+  assert.equal(r.code, 0, r.out);
+  assert.equal((r.out.match(/`docs\/a\.md`: not checked: a link on the way leads elsewhere/g) || []).length, 2, r.out);
+  assert.doesNotMatch(r.out, /: no longer holds "/);
+});
+
 test('--stale searches only a regular file of at most 1 MB with one hard link', () => {
   const big = 'x'.repeat(MAX_SEARCH - 4) + 'end\n';
   const dir = repo(
@@ -144,13 +171,52 @@ test('--stale checks 100 file names, and counts the ones past that', () => {
   assert.equal((r.out.match(/: no such file/g) || []).length, 100);
 });
 
-test('--stale spells out hidden characters in the text it quotes, and cuts it short', () => {
+test('--stale spells out hidden characters in the text it quotes, and cuts a long name short', () => {
   const rlo = String.fromCodePoint(0x202e);
-  const dir = repo([entry('Hidden', `\`a.md\`, search "abc${rlo}def${'z'.repeat(500)}"`)], {'a.md': 'nothing\n'});
+  const long = `docs/${'z'.repeat(500)}.md`;
+  const dir = repo([entry('Hidden', `\`a.md\`, search "abc${rlo}def"; \`${long}\``)], {'a.md': 'nothing\n'});
   const r = stale(dir);
   assert.ok(!r.out.includes(rlo), 'U+202E reached the output');
-  assert.match(r.out, /no longer holds "abc<U\+202E>def/);
-  assert.match(r.out, /\[cut: \d+ more characters\]/);
+  assert.match(r.out, /no longer holds "abc<U\+202E>def"/);
+  assert.match(r.out, /`docs\/z+ \[cut: \d+ more characters\]`: no such file/);
+});
+
+test('--stale does not search for text over 200 characters, and does not quote it', () => {
+  const text = 'q'.repeat(201);
+  const dir = repo([entry('At the limit', `\`a.md\`, search "${'q'.repeat(200)}"`), entry('Over the limit', `\`a.md\`, search "${text}"`)], {'a.md': 'q'.repeat(300)});
+  const r = stale(dir);
+  assert.doesNotMatch(r.out, /"At the limit"/, r.out);
+  assert.match(r.out, /`a\.md`: not searched: search text over 200 characters/);
+  assert.ok(!r.out.includes(text), r.out);
+});
+
+// A long search text made V8's substring search take time in the product of the
+// file's length and the text's, so the run grew with the square of its input.
+// Times the full input and a quarter of it: linear work grows about 4 times,
+// quadratic about 16. Each size runs twice and the faster run counts.
+test('--stale runs in linear time when the search text is long', () => {
+  const sized = (part) => {
+    const half = 'a'.repeat(40000 * part);
+    return repo([entry('Long search', `\`big.txt\`, search "${half}b${half}"`)], {'big.txt': 'a'.repeat(800000 * part)});
+  };
+  const timed = (dir) => {
+    const started = Date.now();
+    const r = stale(dir);
+    return {took: Date.now() - started, r};
+  };
+  const small = sized(0.25);
+  const big = sized(1);
+  const quarter = [timed(small), timed(small)].reduce((a, b) => (a.took <= b.took ? a : b));
+  const full = [timed(big), timed(big)].reduce((a, b) => (a.took <= b.took ? a : b));
+  assert.ok(full.took < 8 * quarter.took + 1000, `the full input took ${full.took} ms, a quarter of it ${quarter.took} ms`);
+  assert.equal(full.r.code, 0, full.r.out);
+});
+
+test('--stale prints 50 lessons and counts the rest', () => {
+  const r = stale(repo(Array.from({length: 51}, (_, i) => entry(`Gone ${i}`, `\`gone${i}.md\``))));
+  assert.equal((r.out.match(/^2026-01-01 "Gone \d+"$/gm) || []).length, 50, r.out);
+  assert.match(r.out, /\.\.\. and 1 more lessons, not printed/);
+  assert.match(r.out, /-- 51 of 51 open or promoted lessons have evidence to review/);
 });
 
 // A property: in a repo where only an outside file exists, --stale reports

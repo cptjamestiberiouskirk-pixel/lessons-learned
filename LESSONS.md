@@ -13,7 +13,21 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - Status: open | promoted to PLAYBOOK "<section>" | closed: <why the rule no longer holds>
 ```
 
-A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds (`node dev/lessons.mjs --stale` checks both). And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
+A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds, at most 200 characters (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension, and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
+
+## 2026-11-17: --stale followed a junction to a volume path, the class 0.2.1 had already fixed in the copy
+- What went wrong: 0.3.0's `--stale` refused a link on the way to a file by `lstat` alone. Review round 1 planted a junction to a volume path at `docs`, which `lstat` reports as a plain folder, and the script searched a file outside the repo and printed whether it held the quoted text. 0.2.1 review round 8 had found the same in the copy command, and fixed it there with a real-path check, but no lesson was logged, so the new walk was written without it.
+- Why: a fix to one piece of code was not turned into a rule for the next code that walks a path.
+- Rule going forward: code that refuses a link on a path in the repo also checks that the path's real path (`realpathSync.native`) is the repo's real path plus the name, with case folded only on Windows and macOS, since `lstat` calls a junction to a volume path a plain folder. Its tests make such a junction with `mklink /J` to the volume path `mountvol` prints.
+- Evidence: `dev/lessons.mjs`, search "A junction to a volume path is a plain folder to lstat"; `tests/stale.test.mjs`, search "which lstat calls a folder"; `dev/release-state.md`, search "the same class as 0.2.1 round 8".
+- Status: open
+
+## 2026-11-17: A test asserted the cut marker's format from memory, and failed on the fixed script
+- What went wrong: a new test for a long file name expected `[cut: N more characters]` right after the name, but the script puts a space before it. The test failed on both the old and the fixed script, and only reading the actual output showed why.
+- Why: the expected format was written from memory, not copied from the script's output.
+- Rule going forward: before asserting on the script's output in a test, run the script on the test's input once and copy the format from what it printed.
+- Evidence: `tests/stale.test.mjs`, search "cuts a long name short".
+- Status: open
 
 ## 2026-11-17: Mutant runs against files that were never written looked like six caught mutants
 - What went wrong: a `node -e` mutant generator inside Git Bash failed on its quoting and wrote no files. The loop that followed ran the stale tests with `LESSONS_SCRIPT` set to each missing path, and every run showed 8 of 8 failing, the same as a mutant caught by every test.

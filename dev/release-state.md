@@ -10,7 +10,9 @@ Base: 589d37a (0.2.1). First written on 643dcdd (0.2.0) and rebased onto 0.2.1 b
 
 ### Review rounds
 
-None yet. The first round covers `--stale` in the script (fingerprint 1511467e), the playbook steps 5 and 6, the lessons header, and both skills' entry-point and `GEMINI.md` changes. For security, the reviewer should look at the file-name rule and the walk in `look()`.
+| Round | Diff | Security | Regression | Docs | Fixed in |
+|---|---|---|---|---|---|
+| 1 | 589d37a to 51c36f0 (script fingerprint 1511467e), one reviewer for all three | 1 CONFIRMED, low to medium: a junction to a volume path (`\\?\Volume{GUID}\...`), which any user can make and `lstat` calls a plain folder, was followed on the way to a name, so `--stale` searched a file outside the repo and printed whether it held the quoted text (the same class as 0.2.1 round 8); RS-A-stalerace (INFERRED) and RS-D-stalesecrets (HYPOTHESIZED) deferred; ruled out: device names (`CON`, `aux.txt`, `x/COM1`), trailing dots, streams and 8.3 names (`:` and `~` are not allowed), absolute, drive and `..` paths, a junction to a drive path | 1 CONFIRMED, medium: a long `search "text"` made the run quadratic, since V8's substring search can take time in the product of the file's and the text's lengths (a 100,000-character text took 18 s on 1 MB; at the 10 MB cap, about 15 to 30 minutes); 1 CONFIRMED test gap: no test covered the 50-lesson cap (two mutants passed every test); ruled out: the old modes print the same as 0.2.1 on 62 inputs and 9 argument sets, except the usage line | 1 CONFIRMED: evidence naming a real root-relative file with no `/` and no extension (`Makefile`), or with `[`, `]` or `@`, was skipped without a word, while the template said any path from the root counts; RS-D-staleleads and RS-A-crstrip deferred | the next commit: the file's real path must be the repo's real path plus the name (case folded only on Windows and macOS, as in the copy); search text over 200 characters is not searched; the template's "A good entry" says which names count and the 200-character limit; SECURITY.md (with RS-C-casedir extended to `--stale`) and CHANGELOG fixed. New tests: a volume-path junction, the 200-character limit and a growth test each fail on 51c36f0; the 50-lesson cap test fails on a mutant with no cap and on one that prints 49. The hidden-character test quoted 507 characters of search text, which the limit now refuses, so its cut check moved to a long file name. Script fingerprint 10c404e0 |
 
 ### Checks run before the first commit
 
@@ -20,6 +22,13 @@ None yet. The first round covers `--stale` in the script (fingerprint 1511467e),
   - Claude Code on a fresh `node-app`, turn 1 then "Go ahead." (7 and 25 turns, $0.34 and $1.38). Turn 1 named `GEMINI.md` in the path check and asked about the agents that read `AGENTS.md`. Its refused calls were the run's allow list refusing chained commands.
   - Codex, with the checkout's skill file named in the prompt so the installed plugin was left alone, on a fresh `node-app`: it created `AGENTS.md` (the repo had only `CLAUDE.md`) and every check passed. It also wrote a `STATUS.md`, which comes from the user's global `~/.codex/AGENTS.md`, not the plugin (`run-live.ps1` keeps the user's setup on).
 - An earlier pair of Claude Code runs on the 0.2.0 base (fingerprint 9653d705) also passed; they don't count for this commit, since the rebase changed the script and skills.
+
+### Deferred
+
+- **RS-A-stalerace** (INFERRED in round 1, low; the known race class). `look()` checks a file with `lstat` and `holds()` reads it by path, so a file swapped for a link or a second hard link between the two is read through it. `read()` has the same gap for the two log files; `--stale` widens it to up to 100 paths. Fix: open the file, compare `fstat` (inode, device, one link, a regular file) with the look, and read from the handle.
+- **RS-D-stalesecrets** (HYPOTHESIZED in round 1, low). `--stale` searches any file in the repo, untracked ones too (`.env`, `.git/config`), so a planted entry learns one bit per name (whether the file holds the text), and only if the session then acts on the leads where an attacker sees it. SECURITY.md frames the risk as files outside the repo. Fix: name the limit in SECURITY.md, or search only files git tracks.
+- **RS-D-staleleads** (round 1, docs). The CHANGELOG, the READMEs and step 6 say `--stale` lists files that are gone or no longer hold the text; it also lists `not checked` and `not searched` notes. This repo's own log gives 5 leads, all names that were never paths from the root (scratch files, paths inside a plugin folder).
+- **RS-A-crstrip** (INFERRED in round 1). `holds()` drops `\r` from the file before searching, but search text can't hold a line break, so the strip changes no result, and a search can never match across lines, which no doc says.
 
 ## 0.2.1
 

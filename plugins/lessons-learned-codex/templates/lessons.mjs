@@ -28,7 +28,7 @@
 // repo root (for trying the script on a sample log). --stale looks for the files
 // the evidence names in that folder too.
 
-import {lstatSync, readFileSync} from 'node:fs';
+import {lstatSync, readFileSync, realpathSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -41,6 +41,7 @@ const MAX_SHOWN = 50; // lessons printed by a lookup or --all
 const MAX_NAME = 200; // characters of a title or section name in a problem message
 const MAX_REFS = 100; // file names --stale checks
 const MAX_SEARCH = 1024 * 1024; // bytes of a file --stale searches
+const MAX_QUOTE = 200; // characters of search text --stale looks for
 
 // Characters that can hide or disguise text: controls (Cc), format characters
 // (Cf: bidi marks and overrides, zero-width characters, the BOM, Unicode tag
@@ -343,9 +344,13 @@ for (const section of sections.values()) {
 // `src/app.ts`), with no empty, '.' or '..' part. `, search "text"` right after
 // it names text the file should still hold. The name is looked up under the
 // repo root one part at a time, and a link anywhere on the way is not followed.
-// Only a regular file of at most MAX_SEARCH bytes with one hard link is read, to
-// search it, and its text is never printed. Backticks pair left to right, as in
-// Markdown, so a span with a space in it (a command) doesn't shift the pairs.
+// A junction to a volume path is a plain folder to lstat, so the file's real path
+// must also be the root's real path plus the name (case folded only on Windows
+// and macOS). Only a regular file of at most MAX_SEARCH bytes with one hard link
+// is read, to search it for text of at most MAX_QUOTE characters (a longer one
+// would make the search slow), and its text is never printed. Backticks pair
+// left to right, as in Markdown, so a span with a space in it (a command)
+// doesn't shift the pairs.
 const EVIDENCE_REF = /`([^`]*)`(?:,? search "([^"]+)")?/g;
 function isFileName(name) {
   if (!/^[A-Za-z0-9._/-]+$/.test(name)) return false;
@@ -371,11 +376,21 @@ function look(name) {
     else if (k < parts.length - 1 && !stat.isDirectory()) found = {problem: 'no such file'};
     else if (k === parts.length - 1) found = {stat, path: at};
   }
+  if (found.path) {
+    const fold = (p) => (/^(win32|darwin)$/.test(process.platform) ? p.toLowerCase() : p);
+    try {
+      if (fold(realpathSync.native(found.path)) !== fold(join(realpathSync.native(dir), ...parts)))
+        found = {problem: 'not checked: a link on the way leads elsewhere'};
+    } catch {
+      found = {problem: 'no such file'};
+    }
+  }
   looked.set(name, found);
   return found;
 }
 // What is wrong with the file found for text the evidence says it holds, or ''.
 function holds(found, text) {
+  if (text.length > MAX_QUOTE) return `not searched: search text over ${MAX_QUOTE} characters`;
   const {stat, path} = found;
   if (!stat.isFile()) return 'not searched: not a regular file';
   if (stat.nlink > 1) return 'not searched: a file with a second hard link';
