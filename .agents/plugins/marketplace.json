@@ -1,0 +1,20 @@
+{
+  "name": "lessons-learned-codex",
+  "interface": {
+    "displayName": "Lessons Learned for Codex"
+  },
+  "plugins": [
+    {
+      "name": "lessons-learned-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/lessons-learned-codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

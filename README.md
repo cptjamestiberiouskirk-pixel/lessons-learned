@@ -1,20 +1,33 @@
 # lessons-learned
 
-A Claude Code plugin that adds a lessons-learned log (`LESSONS.md`) and a playbook (`PLAYBOOK.md`) to a repo, so Claude stops repeating the same mistakes in that project.
+A plugin for Claude Code and Codex that adds a lessons-learned log (`LESSONS.md`) and a playbook (`PLAYBOOK.md`) to a repo, so the agent stops repeating the same mistakes in that project.
 
-This repo is a plugin marketplace with one plugin. See [plugins/lessons-learned/README.md](plugins/lessons-learned/README.md) for what it does and how to use it.
+This repo holds two copies of the plugin, with the same templates:
 
-```
-/plugin marketplace add cptjamestiberiouskirk-pixel/lessons-learned
-/plugin install lessons-learned@lessons-learned
-```
+- **Claude Code**: [plugins/lessons-learned](plugins/lessons-learned/README.md)
+
+  ```
+  /plugin marketplace add cptjamestiberiouskirk-pixel/lessons-learned
+  /plugin install lessons-learned@lessons-learned
+  ```
+
+- **Codex**: [plugins/lessons-learned-codex](plugins/lessons-learned-codex/README.md)
+
+  ```
+  codex plugin marketplace add cptjamestiberiouskirk-pixel/lessons-learned
+  codex plugin add lessons-learned-codex@lessons-learned-codex
+  ```
+
+Setup writes everything into the repo, so a repo set up from one tool works from the other too, once the entry line is in both `CLAUDE.md` and `AGENTS.md` (setup offers this). It can be installed next to a handoff plugin such as [Trailmark](https://github.com/cptjamestiberiouskirk-pixel/trailmark): they write to different places and do different jobs.
+
+Security: [SECURITY.md](SECURITY.md).
 
 ## Working on the plugin
 
 This repo uses its own lessons check: see [CLAUDE.md](CLAUDE.md) and [PLAYBOOK.md](PLAYBOOK.md).
 
-- Tests: `node --test`
-- Validation: `claude plugin validate .` and `claude plugin validate plugins/lessons-learned --profile directory`
+- Every check a release needs: `node dev/release-check.mjs`
+- Tests alone: `node --test`
 - End-to-end runs of the setup skill (billed): [dev/e2e/README.md](dev/e2e/README.md)
 - The icon is drawn by `node dev/make-icon.mjs`.
 

@@ -16,7 +16,9 @@ $ErrorActionPreference = 'Stop'
 $plugin = Join-Path $PSScriptRoot '..\..\plugins\lessons-learned' | Resolve-Path
 $allowed = @('Read', 'Glob', 'Grep', 'Write', 'Edit', 'Skill',
   'Bash(node:*)', 'Bash(git:*)', 'Bash(npm:*)', 'Bash(mkdir:*)', 'Bash(cp:*)',
-  'Bash(rm:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(tar:*)', 'Bash(mktemp:*)')
+  'Bash(rm:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(tar:*)', 'Bash(mktemp:*)',
+  # On Windows the agent may send the same commands through its PowerShell tool.
+  'PowerShell(node:*)', 'PowerShell(git:*)', 'PowerShell(npm:*)', 'PowerShell(Get-ChildItem:*)')
 $session = if ($Resume) { @('--resume', $SessionId) } else { @('--session-id', $SessionId) }
 $mode = if ($ReadOnly) { 'plan' } else { 'acceptEdits' }
 

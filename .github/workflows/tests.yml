@@ -2,10 +2,16 @@ name: tests
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+# A new commit on a pull request cancels that pull request's older run.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -16,12 +22,27 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [22, 24]
+        node: ['22', '24']
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      # Actions are pinned to a commit, so a moved tag can't change what runs.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: ${{ matrix.node }}
+      # Once per run: the files the two plugin copies share word for word, and
+      # this repo's own script, haven't drifted apart.
+      - name: Shared files
+        if: runner.os == 'Linux' && matrix.node == '24'
+        shell: bash
+        run: |
+          for f in LICENSE templates/LESSONS.md templates/PLAYBOOK.md templates/lessons.mjs; do
+            cmp plugins/lessons-learned/$f plugins/lessons-learned-codex/$f || { echo "::error file=plugins/lessons-learned-codex/$f::differs from plugins/lessons-learned/$f"; bad=1; }
+          done
+          cmp plugins/lessons-learned/templates/lessons.mjs dev/lessons.mjs || { echo "::error file=dev/lessons.mjs::differs from the template"; bad=1; }
+          cmp plugins/lessons-learned-codex/plugin.json plugins/lessons-learned-codex/.codex-plugin/plugin.json || { echo "::error::the two Codex manifests differ"; bad=1; }
+          [ -z "$bad" ]
       - name: Tests
         run: node --test
       - name: This repo's own lessons log

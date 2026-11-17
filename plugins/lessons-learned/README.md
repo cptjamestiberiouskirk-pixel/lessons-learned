@@ -5,9 +5,9 @@ A lessons-learned log and a playbook for Claude Code, kept in each repo.
 Claude Code forgets a project's mistakes between sessions, so the same ones come back. This plugin sets up a small system in the repo that stops that:
 
 - **`LESSONS.md`**: a dated log of what went wrong, why, and the rule going forward, with evidence.
-- **`PLAYBOOK.md`**: checklists for the project's recurring work. Its first section, "The lessons check", is what Claude runs before each significant step: look up the lessons that apply, write a visible `Lessons checked:` line, follow the rules, and log anything that goes wrong before moving on. A lesson seen twice becomes a playbook step.
+- **`PLAYBOOK.md`**: checklists for the project's recurring work. Its first section, "The lessons check", is what Claude runs before each significant step: look up the lessons that apply, write a visible `Lessons checked:` line, follow the rules, and log anything that goes wrong before moving on. A lesson seen twice becomes a playbook step. Its second section, "Checking your work", says what to run and report before calling a change done: run it the way it is used, list what ran and what didn't, make a test for a fix fail before the fix, never weaken a check to pass it, and stop after three failed fixes.
 - **`dev/lessons.mjs`**: finds lessons by topic and checks the format of both files. It reads and never writes.
-- **One line in `CLAUDE.md`** (or `AGENTS.md`) that points every session at the lessons check.
+- **One line in `CLAUDE.md`** that points every session at the lessons check, and in `AGENTS.md` too when the repo is also worked on from Codex.
 
 All of it lives in the repo, so it keeps working for anyone who clones the repo, with or without this plugin.
 
@@ -64,7 +64,7 @@ Lessons checked: "A test read the save once, right after a toast, and saw old va
 
 ## Requirements
 
-Node.js for `dev/lessons.mjs`. It uses only Node's built-in modules. In a project without Node, setup asks whether to use it anyway or port the script.
+Node.js 22 or later for `dev/lessons.mjs`. It uses only Node's built-in modules. In a project without Node, setup asks whether to use it anyway or port the script.
 
 ## Limits
 

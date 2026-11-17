@@ -12,3 +12,5 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - Evidence: a commit, a file and the text to search for, a test, a run, or the user's words
 - Status: open | promoted to PLAYBOOK "<section>" | closed: <why the rule no longer holds>
 ```
+
+Entries go below this line, newest first: a new one goes right here, above the others. An entry inside the block above is never read.

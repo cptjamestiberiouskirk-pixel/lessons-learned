@@ -1,6 +1,6 @@
 {
   "name": "lessons-learned",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Adds a lessons-learned log (LESSONS.md) and a playbook of checklists (PLAYBOOK.md) to a repo. Before each significant step, Claude looks up the lessons that apply and says which ones it checked. Anything that goes wrong is logged right away, and a lesson seen twice becomes a playbook step. A small script finds lessons by topic and checks the log's format. Setup checks what the repo already has and adds only what's missing. Once set up, the repo needs no plugin to keep using it.",
   "author": {
     "name": "Jim Burke"
