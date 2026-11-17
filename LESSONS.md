@@ -82,8 +82,8 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: the first run of the new property tests found rules that `--check` called "missing or empty" and "not a field", though each had its `- Rule going forward:` line. The lookup printed them as empty rules. Unit tests had never put a line separator inside a field.
 - Why: in a JavaScript regex, `.` doesn't match U+2028 or U+2029, which it treats as line ends. The field and heading patterns end in `(.*)$`, so a line holding one never matched.
 - Rule going forward: a regex that must match a whole line of untrusted text uses the `s` flag (or `[^]`), and a new parsing rule gets a property test with random text, not only examples.
-- Evidence: `tests/property.test.mjs`, seeds 1 to 5, fail on the script before the `s` flag; `tests/hardening.test.mjs`, "a line separator (U+2028) in a rule is reported as hidden".
-- Status: open
+- Evidence: `tests/property.test.mjs`, seeds 1 to 5, fail on the script before the `s` flag; `tests/hardening.test.mjs`, "a line separator (U+2028) in a rule is reported as hidden". Seen again in 0.3.0: the `--stale` evidence parser was written with example tests only, though the lookup had printed this rule, and paired backticks wrongly (a command in backticks, a slash, then a file name in backticks hid the file name) until a property test with random text was written; `tests/stale.test.mjs`, search "property: --stale reports the file names a plain parser finds".
+- Status: promoted to PLAYBOOK "Parsing untrusted text"
 
 ## 2026-11-16: A timing test passed on the slow script it was written to catch
 - What went wrong: the first version of the `From:` timing test passed on the round-3 script, which round 3 had shown takes 24 seconds on such input. The test used keys of different lengths.

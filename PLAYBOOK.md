@@ -55,3 +55,10 @@ From: 2026-11-16 "A commit message passed with -F - in PowerShell was read as a 
 From: 2026-11-17 "Backslashes in a Git Bash heredoc were lost before the text reached the file"
 
 1. Text that holds a backslash (a regex, an escape, a Windows path) goes into a file through the Edit or Write tool, not through a Git Bash heredoc.
+
+## Parsing untrusted text
+
+From: 2026-11-16 "A rule holding U+2028 was read as a broken field"
+
+1. A regex that must match a whole line of untrusted text uses the `s` flag, or `[^]` in place of `.`, so that `.` also matches U+2028 and U+2029.
+2. A new parsing rule gets a property test with random text, not only example tests.
