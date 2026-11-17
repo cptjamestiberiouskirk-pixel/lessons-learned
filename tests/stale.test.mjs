@@ -5,7 +5,7 @@
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
+import {existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -145,6 +145,47 @@ test('--stale does not read through a junction to a volume path, which lstat cal
   assert.doesNotMatch(r.out, /: no longer holds "/);
 });
 
+// The Kelvin sign (U+212A) lowercases to "k", but NTFS keeps "kit" and "Kit"
+// (with the Kelvin sign) apart, so a check that folds the whole path with
+// toLowerCase lets a junction into the second through.
+test('--stale compares the repo\'s real path exactly, so a folder that differs from it only by Unicode case is outside', (t) => {
+  const base = folder();
+  const repoDir = join(base, 'kit', 'repo');
+  const outside = join(base, `${String.fromCodePoint(0x212a)}it`, 'repo', 'docs');
+  mkdirSync(repoDir, {recursive: true});
+  mkdirSync(outside, {recursive: true});
+  if (readdirSync(base).length !== 2) return t.skip('this file system folds the Kelvin sign to "k"');
+  writeFileSync(join(repoDir, 'LESSONS.md'), LESSONS + entry('Held outside', '`docs/a.md`, search "held text"'));
+  writeFileSync(join(repoDir, 'PLAYBOOK.md'), PLAYBOOK);
+  writeFileSync(join(outside, 'a.md'), 'held text\n');
+  if (!volumeJunction(join(repoDir, 'docs'), outside)) return t.skip('no junction to a volume path can be made here');
+  const r = stale(repoDir);
+  assert.match(r.out, /`docs\/a\.md`: not checked: a link on the way leads elsewhere/, r.out);
+});
+
+test('--stale finds a file named in another case where the file system ignores case', (t) => {
+  const dir = repo([entry('Other case', '`Docs/A.md`, search "held text"')], {'docs/a.md': 'held text\n'});
+  if (!existsSync(join(dir, 'DOCS', 'A.MD'))) return t.skip('this file system tells case apart');
+  const r = stale(dir);
+  assert.doesNotMatch(r.out, /"Other case"/, r.out);
+  assert.match(r.out, /-- 0 of 1 open or promoted lessons have evidence to review; 1 file names checked/);
+});
+
+test('--stale gives the same leads for a repo opened through a link to it', (t) => {
+  const dir = repo(
+    [entry('Gone file', '`src/old.ts`'), entry('Still holds', '`src/app.ts`, search "pollSave"')],
+    {'src/app.ts': 'export function pollSave() {}\n'},
+  );
+  const via = join(folder(), 'via');
+  // A junction on Windows needs no extra rights; elsewhere the type is ignored.
+  if (!link(dir, via, 'junction')) return t.skip('links are not allowed here');
+  folders.unshift(via); // removed first, as the link itself, before its folder
+  const direct = stale(dir);
+  const linked = stale(via);
+  assert.match(direct.out, /`src\/old\.ts`: no such file/);
+  assert.equal(linked.out, direct.out);
+});
+
 test('--stale searches only a regular file of at most 1 MB with one hard link', () => {
   const big = 'x'.repeat(MAX_SEARCH - 4) + 'end\n';
   const dir = repo(
@@ -188,6 +229,17 @@ test('--stale does not search for text over 200 characters, and does not quote i
   assert.doesNotMatch(r.out, /"At the limit"/, r.out);
   assert.match(r.out, /`a\.md`: not searched: search text over 200 characters/);
   assert.ok(!r.out.includes(text), r.out);
+});
+
+test('--stale counts the 200 characters as code points, so 200 emoji are searched', () => {
+  const face = String.fromCodePoint(0x1f600); // two UTF-16 units
+  const dir = repo(
+    [entry('Two hundred', `\`a.md\`, search "${face.repeat(200)}"`), entry('Two hundred and one', `\`a.md\`, search "${face.repeat(201)}"`)],
+    {'a.md': face.repeat(200)},
+  );
+  const r = stale(dir);
+  assert.doesNotMatch(r.out, /"Two hundred"\n/, r.out);
+  assert.match(r.out, /"Two hundred and one"\n {4}`a\.md`: not searched: search text over 200 characters/);
 });
 
 // A long search text made V8's substring search take time in the product of the

@@ -345,12 +345,13 @@ for (const section of sections.values()) {
 // it names text the file should still hold. The name is looked up under the
 // repo root one part at a time, and a link anywhere on the way is not followed.
 // A junction to a volume path is a plain folder to lstat, so the file's real path
-// must also be the root's real path plus the name (case folded only on Windows
-// and macOS). Only a regular file of at most MAX_SEARCH bytes with one hard link
-// is read, to search it for text of at most MAX_QUOTE characters (a longer one
-// would make the search slow), and its text is never printed. Backticks pair
-// left to right, as in Markdown, so a span with a space in it (a command)
-// doesn't shift the pairs.
+// must also start with the root's real path, exactly, and go on with the name,
+// with only ASCII case ignored and only on Windows and macOS: full case folding
+// would match the Kelvin sign to "k", where NTFS keeps two folders apart. Only a
+// regular file of at most MAX_SEARCH bytes with one hard link is read, to search
+// it for text of at most MAX_QUOTE characters (a longer one would make the
+// search slow), and its text is never printed. Backticks pair left to right, as
+// in Markdown, so a span with a space in it (a command) doesn't shift the pairs.
 const EVIDENCE_REF = /`([^`]*)`(?:,? search "([^"]+)")?/g;
 function isFileName(name) {
   if (!/^[A-Za-z0-9._/-]+$/.test(name)) return false;
@@ -358,6 +359,8 @@ function isFileName(name) {
   return name.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
 }
 const looked = new Map(); // a file name -> {problem} or {stat, path}
+let rootReal; // the root's real path with a separator at the end, found once
+const foldAscii = (p) => (/^(win32|darwin)$/.test(process.platform) ? p.replace(/[A-Z]/g, (c) => c.toLowerCase()) : p);
 function look(name) {
   if (looked.has(name)) return looked.get(name);
   const parts = name.split('/');
@@ -377,9 +380,10 @@ function look(name) {
     else if (k === parts.length - 1) found = {stat, path: at};
   }
   if (found.path) {
-    const fold = (p) => (/^(win32|darwin)$/.test(process.platform) ? p.toLowerCase() : p);
     try {
-      if (fold(realpathSync.native(found.path)) !== fold(join(realpathSync.native(dir), ...parts)))
+      rootReal ??= join(realpathSync.native(dir), 'x').slice(0, -1);
+      const real = realpathSync.native(found.path);
+      if (!real.startsWith(rootReal) || foldAscii(real.slice(rootReal.length)) !== foldAscii(join(...parts)))
         found = {problem: 'not checked: a link on the way leads elsewhere'};
     } catch {
       found = {problem: 'no such file'};
@@ -390,7 +394,8 @@ function look(name) {
 }
 // What is wrong with the file found for text the evidence says it holds, or ''.
 function holds(found, text) {
-  if (text.length > MAX_QUOTE) return `not searched: search text over ${MAX_QUOTE} characters`;
+  // Characters are code points; a text over 2 * MAX_QUOTE UTF-16 units has more.
+  if (text.length > MAX_QUOTE && (text.length > 2 * MAX_QUOTE || [...text].length > MAX_QUOTE)) return `not searched: search text over ${MAX_QUOTE} characters`;
   const {stat, path} = found;
   if (!stat.isFile()) return 'not searched: not a regular file';
   if (stat.nlink > 1) return 'not searched: a file with a second hard link';
