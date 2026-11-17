@@ -5,7 +5,7 @@
 // LESSONS_SCRIPT=<path> runs them against another copy of the script.
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
+import {spawnSync} from './child.mjs';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';

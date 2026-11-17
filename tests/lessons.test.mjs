@@ -2,7 +2,7 @@
 // against logs built in a temp folder. Run with: node --test
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
+import {spawnSync} from './child.mjs';
 import {createHash} from 'node:crypto';
 import {mkdtempSync, readFileSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
