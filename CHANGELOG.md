@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+Ideas taken from Google's Elephant-Goldfish Model, a plugin for designing and reviewing specs with agents: a check that docs still match the code, and review by a reader with no context.
+
+- `node dev/lessons.mjs --stale` lists open and promoted lessons whose `Evidence` names a file in backticks (by its path from the repo root) that is gone, or a `search "text"` after it that the file no longer holds. It is a lead for closing a lesson, not a verdict, and exits 0. It looks a name up under the repo root one part at a time, follows no link, reads only a regular file of at most 1 MB with one hard link, never prints a file's text, and checks at most 100 names.
+- The playbook template's step 6 says when to run it: after a change that deletes, moves or renames files, and before a release.
+- The playbook template's step 5: before a promoted step goes in, a reviewer with no context (a subagent, where the tool can start one) reads only the step and its lessons, and checks that the step says what their rules say, no more and no less, and can be followed by someone who wasn't in the session. Without one, the session says so and asks the user to read the step.
+- The lessons template says what makes a good entry: a rule someone else can follow, about this project, with evidence that can be checked later, and no open lesson that already covers it (if one does, promote that one). The format's `Evidence` line shows the form `--stale` reads: `` `path/from/root`, search "text" ``.
+- Setup names the agents that read `AGENTS.md` (Cursor, Windsurf, OpenCode, GitHub Copilot) and offers the entry line in `GEMINI.md` for Gemini CLI, which reads that file unless its settings name `AGENTS.md`. It looks for rules kept in `GEMINI.md` too, and the path check covers it.
+- The README notes that a design-review plugin such as Elephant-Goldfish Model works beside this one: it writes specs under `docs/designs/` and review reports, not these files.
+
+Tests: `tests/stale.test.mjs` covers `--stale`. Each of its guards (a link on the way, a hard link, the size limit, `..` in a name, the 100-name cap, the cut of quoted text, skipping closed lessons) has a test that fails on a mutant with that guard removed.
+
+Updating: the playbook and lessons template changes don't reach a repo set up with 0.2.1 or earlier on their own, since setup keeps an existing `PLAYBOOK.md` and `LESSONS.md`. Run setup again to replace the script (it reports "other version (not run)" and asks), and ask it to bring in steps 5 and 6 of "The lessons check" and the lessons header.
 ## 0.2.1 (unreleased)
 
 Closes the two items left open by 0.2.0's review.

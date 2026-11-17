@@ -4,6 +4,23 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
+## 0.3.0
+
+Base: 589d37a (0.2.1). First written on 643dcdd (0.2.0) and rebased onto 0.2.1 before its first commit.
+
+### Review rounds
+
+None yet. The first round covers `--stale` in the script (fingerprint 1511467e), the playbook steps 5 and 6, the lessons header, and both skills' entry-point and `GEMINI.md` changes. For security, the reviewer should look at the file-name rule and the walk in `look()`.
+
+### Checks run before the first commit
+
+- `node dev/release-check.mjs`: 6 of 6 passed. `node --test` on Windows: 126 pass, 0 fail, 5 skipped (0.2.1's symlink and case-folder tests); under WSL (Node 18.19.1, from a copy on its own file system): 126 pass, 0 fail, 3 skipped.
+- Mutants of each `--stale` guard (a link on the way, a hard link, the size limit, `..` in a name, the 100-name cap, the cut of quoted text, skipping closed lessons): each fails its own test; the `..` mutant also fails the property test. The regex before the pairing fix fails the pairing test and the property test.
+- End-to-end, each repo checked afterwards (fingerprint 1511467e, `--check` 0 bad, `LESSONS.md` equal to the template, `PLAYBOOK.md` differing only in its topic words, three plain files with one link each, no staging folder or `.lessons-copy-` file left):
+  - Claude Code on a fresh `node-app`, turn 1 then "Go ahead." (7 and 25 turns, $0.34 and $1.38). Turn 1 named `GEMINI.md` in the path check and asked about the agents that read `AGENTS.md`. Its refused calls were the run's allow list refusing chained commands.
+  - Codex, with the checkout's skill file named in the prompt so the installed plugin was left alone, on a fresh `node-app`: it created `AGENTS.md` (the repo had only `CLAUDE.md`) and every check passed. It also wrote a `STATUS.md`, which comes from the user's global `~/.codex/AGENTS.md`, not the plugin (`run-live.ps1` keeps the user's setup on).
+- An earlier pair of Claude Code runs on the 0.2.0 base (fingerprint 9653d705) also passed; they don't count for this commit, since the rebase changed the script and skills.
+
 ## 0.2.1
 
 Base: 643dcdd (0.2.0 and its post-release records, on main). Closes RS-A-claudewrite and RS-A-fromlabel.

@@ -9,7 +9,7 @@ This sets up the lessons check in the current repo. It has five parts:
 
 1. **`LESSONS.md`** at the repo root: a dated log, newest first. Each entry is `## YYYY-MM-DD: short title` followed by the fields `What went wrong`, `Why`, `Rule going forward`, `Evidence`, `Status`, in that order. Status is `open`, `promoted to PLAYBOOK "<section>"` or `closed: <why the rule no longer holds>`. Entries are never deleted.
 2. **`PLAYBOOK.md`** at the repo root: checklists for the project's recurring work. Its first section, "The lessons check", lists the steps a session runs before each significant step. Its second, "Checking your work", lists what a session runs and reports before it calls a change done or commits it. Every later section has a `From:` line naming the lessons it came from.
-3. **`dev/lessons.mjs`**: finds lessons by topic and checks the format of both files. It reads and never writes.
+3. **`dev/lessons.mjs`**: finds lessons by topic, checks the format of both files, and lists lessons whose evidence names a file that is gone or no longer holds the text it quotes. It reads and never writes.
 4. **One entry-point line** in the file agents read at session start (`AGENTS.md`, which Codex reads, or `CLAUDE.md`), pointing at "The lessons check".
 5. **Exclusion from what ships**: both files and the script stay out of whatever the project builds, packages or releases.
 
@@ -33,7 +33,7 @@ To tell whether a repo's `dev/lessons.mjs` is this plugin's version, run this fr
 node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha256').update(f.readFileSync('dev/lessons.mjs','utf8').replace(/\r\n/g,'\n')).digest('hex'))"
 ```
 
-This plugin's version prints `ec55848c3c07540568dd52be8e0a2cba47408f153490ae7976b9cd591333e455`. For a script kept in another folder, change the path in the command.
+This plugin's version prints `1511467ee21a41ed43ba72274fdaaaf806c3c925ce4e2554173455e975270263`. For a script kept in another folder, change the path in the command.
 
 ## Before any `node` command
 
@@ -44,7 +44,7 @@ On Windows, cmd looks for a command in the current folder before `PATH`, and run
 A file or folder that setup reads or writes may be a symbolic link (or, on Windows, a junction) that points out of the repo. Writing through one would change a file elsewhere. Run this from the repo root; it only looks at the paths:
 
 ```
-node -e "const f=require('fs');for(const p of process.argv.slice(1)){let s;try{s=f.lstatSync(p)}catch{console.log(p+': absent');continue}console.log(p+': '+(s.isSymbolicLink()?'LINK':s.isDirectory()?'folder':s.isFile()?(s.nlink>1?'HARDLINK':'file'):'other'))}" LESSONS.md PLAYBOOK.md dev dev/lessons.mjs AGENTS.md CLAUDE.md .gitattributes .npmignore package.json
+node -e "const f=require('fs');for(const p of process.argv.slice(1)){let s;try{s=f.lstatSync(p)}catch{console.log(p+': absent');continue}console.log(p+': '+(s.isSymbolicLink()?'LINK':s.isDirectory()?'folder':s.isFile()?(s.nlink>1?'HARDLINK':'file'):'other'))}" LESSONS.md PLAYBOOK.md dev dev/lessons.mjs AGENTS.md CLAUDE.md GEMINI.md .gitattributes .npmignore package.json
 ```
 
 Add to the command every other path the plan will write, by its name as it is in the repo: a script folder other than `dev`, a CI file. On a stop, tell the user which path it is (and where a link points), and change nothing until they decide.
@@ -59,7 +59,7 @@ A project may also have a handoff or memory plugin installed, such as Trailmark.
 
 ### 1. Check what's here (read-only)
 
-Find the repo root (`git rev-parse --show-toplevel`, or the working directory if it isn't a git repo). List the root as "Before any `node` command" says, then run the path check. Look for each of the five parts, under these names and under others: `lessons*`, `learnings`, `gotchas`, `pitfalls`, `playbook*`, `runbook`, `checklist`, a `tasks/lessons.md`, rules kept in `AGENTS.md`, `CLAUDE.md`, `.claude/rules/` or `.claude/skills/`, and any memory or handoff folder the project uses. Match names without regard to case. Skip `node_modules`, `.git`, build output and vendored folders.
+Find the repo root (`git rev-parse --show-toplevel`, or the working directory if it isn't a git repo). List the root as "Before any `node` command" says, then run the path check. Look for each of the five parts, under these names and under others: `lessons*`, `learnings`, `gotchas`, `pitfalls`, `playbook*`, `runbook`, `checklist`, a `tasks/lessons.md`, rules kept in `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/rules/` or `.claude/skills/`, and any memory or handoff folder the project uses. Match names without regard to case. Skip `node_modules`, `.git`, build output and vendored folders.
 
 If the script is present, run the fingerprint command first. Only if it prints this plugin's value, run `node dev/lessons.mjs --check`. Otherwise don't run the repo's script: report it as **present, other version (not run)**.
 
@@ -84,6 +84,7 @@ List each file to create or change, with one line on what changes: the file that
 - **Only `AGENTS.md`:** the line goes there. Ask in the plan whether the repo is also worked on from Claude Code; if so, offer to create `CLAUDE.md` with the line, or with `@AGENTS.md` if the user wants all of `AGENTS.md` loaded.
 - **Only `CLAUDE.md`:** the line goes there, and Codex won't read it there, so the plan also creates `AGENTS.md` with the line.
 - **Neither:** create `AGENTS.md` with the line. Ask whether the repo is also worked on from Claude Code; if so, offer `CLAUDE.md` with the line too.
+- **Other agents:** Cursor, Windsurf, OpenCode and GitHub Copilot read `AGENTS.md`, so the line there reaches them too. Gemini CLI reads `GEMINI.md` unless its settings name `AGENTS.md`: if the repo has a `GEMINI.md`, or the user says Gemini CLI is used, offer the line there too. Don't make a rule file of any other kind.
 
 Wait for the user's go-ahead.
 
