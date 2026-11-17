@@ -421,6 +421,42 @@ test('a lesson named on a From: line is cut short in its problem message, so the
   assert.match(r.out, /\[cut: \d+ more characters\], which is not a lesson promoted to this section/, r.out);
 });
 
+test('a bad From: name past the 50 printed is never made into a message (the work stays the same for 100 names and 2,000)', () => {
+  // Making a message cuts the name, which walks it with codePointAt. A preload
+  // counts those calls; the names are plain ASCII, so nothing else makes them.
+  const counter = join(folder(), 'count.cjs');
+  writeFileSync(counter, `let n=0;const c=String.prototype.codePointAt;
+String.prototype.codePointAt=function(...a){n++;return c.apply(this,a)};
+process.on('exit',()=>process.stderr.write('codePointAt calls '+n+'\\n'));`);
+  const calls = (names) => {
+    const keys = Array.from({length: names}, (_, k) => `2026-01-01 "${`k${k}`.padEnd(300, 'x')}"`);
+    const dir = withFiles({playbook: PLAYBOOK + `\n## S\n\nFrom: ${keys.join(', ')}\n\n1. x\n`});
+    const r = spawnSync(process.execPath, ['-r', counter, SCRIPT, '--dir', dir, '--check'], {encoding: 'utf8'});
+    assert.equal(r.status, 1, r.stderr.slice(-300));
+    return Number(r.stderr.match(/codePointAt calls (\d+)/)[1]);
+  };
+  const few = calls(100);
+  const many = calls(2000);
+  assert.ok(many < 2 * few, `2,000 names: ${many} calls; 100 names: ${few}`);
+});
+
+test('465,000 bad From: names are counted, not each made into a message (it runs in 192 MB of heap)', () => {
+  // --check prints 50 problems. Building and keeping a message for every bad
+  // name needs 256 MB of heap on Node 18 and on Node 26; counting the rest
+  // needs 128 MB on Node 18 and 40 MB on Node 26. A heap limit tests it
+  // without timing, and 192 MB tells the two apart on both.
+  const section = (i) => {
+    const keys = Array.from({length: 155}, (_, k) => `2026-01-01 "${String.fromCharCode(97 + (k % 26))}${k}"`);
+    return `\n## ${`S${i}-`.padEnd(200, 'x')}\n\nFrom: ${keys.join(', ')}\n\n1. x\n`;
+  };
+  const dir = withFiles({playbook: PLAYBOOK + Array.from({length: 3000}, (_, i) => section(i)).join('')});
+  const r = spawnSync(process.execPath, ['--max-old-space-size=192', SCRIPT, '--dir', dir, '--check'], {encoding: 'utf8'});
+  const out = r.stdout + r.stderr;
+  assert.equal(r.status, 1, out.slice(-500));
+  assert.match(out, /BAD {3}\.\.\. and 464950 more, not printed/);
+  assert.match(out, /; 465000 bad$/m);
+});
+
 test('a cut inside an emoji sequence spells out the joiner it leaves at the end', () => {
   const family = [0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467].map(ch).join('');
   const out = run(withFiles({lessons: LESSONS + entry('Family', 'x'.repeat(1994) + family)}), ['family']).out;

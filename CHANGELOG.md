@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 (unreleased)
+
+Closes the two items left open by 0.2.0's review.
+
+- Both setup skills bring a template in with one copy command that no longer relies on a create-only write, which isn't enough on Windows: through a dangling junction it creates an empty folder where the junction points, and in a probe it wrote through a dangling file symbolic link. It writes the template under a random name beside the target and gives it the target's name with a hard link, which fails on anything at that name and follows no link. If the hard link fails for any other reason (Codex's sandbox on Windows refuses one, and a FAT drive has none), it renames the file into place, which also writes through no link. It refuses a target given as an absolute path, and a source folder or target folder that is a link. It also refuses a target folder or relative source folder whose real path is not the one its path names, such as a junction to a volume path, which 0.2.0 took for a plain folder. At the end it checks that the target's folder is still the one it looked at, and that the target is the very file it wrote, with one name. It also refuses a source that isn't a plain file with one name, or that changes between its look and its read. A repo opened through a junction is accepted, where the 0.2.0 Codex copy refused it.
+- The Claude Code skill no longer writes a template straight to its place with the Write tool. It writes it into a staging folder with a random name and brings it in with the same copy command as Codex, so a link made at the target after the path check isn't followed.
+- In Claude Code, setup now runs a few more `node` commands (making and removing the staging folder, and one copy for each template), so it may ask for approval more often.
+- `--check` keeps a message only for the 50 problems it prints, and counts the rest. A bad `From:` name past those 50 isn't made into a message at all. A `PLAYBOOK.md` with 465,000 bad `From:` names now runs in 40 MB of heap on Node 26, where 0.2.0 needed 256 MB (128 MB against 256 MB on Node 18).
+
 ## 0.2.0 (2026-11-16)
 
 Codex support, and hardening against untrusted repo content.
