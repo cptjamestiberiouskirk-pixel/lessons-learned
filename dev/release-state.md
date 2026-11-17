@@ -28,9 +28,11 @@ Round 5 reviewed c98089f5 and the round-4 fixes. The check for an entry inside a
 
 The first live run (Claude Code with Trailmark, before round 1's fixes) found one more: the Write tool turned the script's BOM escape into the character itself, so a user's setup would miss the fingerprint. The template now holds no such escape, and a test checks it.
 
+After the release, on 2026-11-17, a setup run in a fresh test repo with an empty `node.js` at its root stopped after `git rev-parse --show-toplevel; ls -a` and a read of that file, and named it, with no `node` command run (the session transcript's tool calls, in order).
+
 ### Deferred
 
-- **RS-T-winsymlink** (CONFIRMED skip). The three tests that make a file symbolic link skip on Windows without Developer Mode or admin rights, so they run only in Linux and macOS CI. Repro: `node --test` on such a machine reports `skipped 3`.
+- **RS-T-winsymlink** (CONFIRMED skip). The three tests that make a file symbolic link skip on Windows without Developer Mode or admin rights, so they run only in Linux and macOS CI. Repro: `node --test` on such a machine reports `skipped 3`. With the rights they pass on Windows too: on 2026-11-17, `node --test` run elevated through gsudo (Developer Mode off) reported 81 pass, 0 skipped.
 - **RS-A-claudewrite** (INFERRED). The Claude Code skill writes templates with the Write tool after a path check, so a file swapped for a link between the check and the write isn't caught. Listed in SECURITY.md, "Known limits". The Codex copy narrows it: its copy command refuses anything already at the target, and only a dangling link made in the instant between that test and the create-only write would be followed.
 - **RS-A-fromlabel** (INFERRED, efficiency). `--check` cuts every `From:` name that is a problem, not only the 50 it prints, so a PLAYBOOK.md with hundreds of thousands of bad names takes about twice as long. It stays linear. Repro: round 7's 465,000 one-letter keys over 3,000 sections. Fix: build a problem message only while fewer than 50 are kept, and count the rest.
-- **RS-H-codexapp** (HYPOTHESIZED to work, not tried). The Codex copy was installed and run with the Codex CLI (`codex plugin add`, `codex exec`). Installing it from the ChatGPT desktop app's Plugins directory hasn't been tried.
+- **RS-H-codexapp** (INFERRED to work, not tried in the app). The Codex copy was installed and run with the Codex CLI (`codex plugin add`, `codex exec`). The desktop app and the CLI share `~/.codex/config.toml`, which lists the app's own bundled plugins and `lessons-learned-codex@lessons-learned-codex` from the GitHub marketplace, so the app most likely sees it installed. Installing it, or running `lessons-setup`, from the app hasn't been tried.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-11-16)
 
 Codex support, and hardening against untrusted repo content.
 
