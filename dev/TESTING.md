@@ -46,7 +46,7 @@ A commit message ends its body with a `Verified:` line naming the checks that ra
 
 ## Turn misses into rules, and prune them
 
-This repo's own method is the plugin's: a mistake gets a `LESSONS.md` entry, and one seen twice becomes a step in `PLAYBOOK.md`. A bug a review or a live run found, that a test should have caught, gets a test that fails before the fix. Checks and notes only grow unless they are pruned. Close a lesson whose rule no longer holds, drop a test that another test fully covers, and keep `dev/release-state.md` to the current release.
+This repo's own method is the plugin's: a mistake gets a `LESSONS.md` entry, and one seen twice becomes a step in `PLAYBOOK.md`. A bug a review or a live run found, that a test should have caught, gets a test that fails before the fix. Checks and notes only grow unless they are pruned. Close a lesson whose rule no longer holds (`node dev/lessons.mjs --stale` finds leads: evidence naming a file that is gone or no longer holds the quoted text), drop a test that another test fully covers, and keep `dev/release-state.md` to the current release.
 
 ## Not used here
 

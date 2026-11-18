@@ -9,9 +9,67 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - What went wrong:
 - Why:
 - Rule going forward:
-- Evidence: a commit, a file and the text to search for, a test, a run, or the user's words
+- Evidence: a commit, a test, a run, the user's words, or a file and text it holds: `path/from/root`, search "text"
 - Status: open | promoted to PLAYBOOK "<section>" | closed: <why the rule no longer holds>
 ```
+
+A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
+
+## 2026-11-17: A new lesson quoted its evidence from memory, and --stale flagged it the day it was written
+- What went wrong: the exFAT lesson's evidence quoted a test name as "a rename changes a file's ID (exFAT)". The test name is in single quotes, so the file holds `file\'s`, and the search text never matched. Review round 5 found it with `--stale`.
+- Why: the search text was typed from the test's meaning, not copied from the file, and `--stale` was not run after the entry was added.
+- Rule going forward: copy an evidence search text from the file itself, and after adding or changing a lesson's Evidence, run `node dev/lessons.mjs --stale` and check it lists no lead for that lesson.
+- Evidence: `dev/release-state.md`, search "the new lesson's evidence quotes".
+- Status: promoted to PLAYBOOK "Quoting text that must match"
+
+## 2026-11-17: The copy's end check assumed a rename keeps a file's ID, and failed every copy on exFAT
+- What went wrong: the copy command falls back to a rename where a hard link fails, and its docs name a FAT drive as one such place. Its last check compared the target's ID with the ID it read from its file before the move. exFAT has no hard links, and a rename there changes a file's ID, so every copy on an exFAT drive failed with "is not the file this copy wrote", though the file was right. Another session found it with a test run on an exFAT disk.
+- Why: the fallback was probed only where hard links are refused on NTFS (the Codex sandbox), where a rename keeps the ID. The FAT case was written down as a reason for the fallback but never run.
+- Rule going forward: a path the code takes for a named file system or platform is run there before it ships: for the copy, an exFAT drive (a virtual disk) with the repo and `TEMP` on it. A check that compares file IDs across a move reads the moved file's ID after the move, from a handle it holds. This widens the probe rule in "A create-only write was trusted to refuse a link".
+- Evidence: `tests/codex.test.mjs`, search "the copy renames the file into place and accepts it"; `dev/release-state.md`, search "exFAT".
+- Status: open
+
+## 2026-11-17: Counting the search limit in code points let text past V8's slow-search threshold
+- What went wrong: round 1 capped --stale's search text at 200 to keep the search fast. Round 2 made the cap count code points, as the docs say, which lets up to 400 UTF-16 units through. V8's `includes` can turn about 100 times slower per search once the pattern is longer than about 250 units (it did for emoji), so 100 searches of 200 emoji on 1 MB took 5.7 s, against 0.4 s for the worst case under the old cap.
+- Why: the change was checked for what it counts, not for the cost the cap was there to bound, and no test timed the case at the new limit.
+- Rule going forward: a change to a limit that bounds a cost is tested at the new limit for that cost: time the worst input the new limit lets through, and compare it with the old limit's worst.
+- Evidence: `dev/release-state.md`, search "V8's slow substring search".
+- Status: open
+
+## 2026-11-17: A real-path check folded the whole path with toLowerCase, and let a Kelvin-sign folder through
+- What went wrong: round 1's fix for --stale compared real paths after `toLowerCase` on Windows and macOS, as the 0.2.1 copy does. Review round 2 put the repo under `kit` and a junction to a volume path into `Kit` spelled with the Kelvin sign (U+212A) beside it. `toLowerCase` makes both `kit`, NTFS keeps them apart, and the script searched the outside file.
+- Why: the fold was copied from the copy command, which had passed its own review rounds, without asking whether Unicode case folding matches what the file system treats as one name.
+- Rule going forward: a real-path check compares the repo's real path exactly (both sides come from the same `realpathSync.native` call), and folds only ASCII case in the rest, which comes from a name of ASCII characters. Never fold a whole path with `toLowerCase`.
+- Evidence: `dev/lessons.mjs`, search "full case folding"; `tests/stale.test.mjs`, search "only by Unicode case"; `dev/release-state.md`, search "the Kelvin sign".
+- Status: promoted to PLAYBOOK "Walking a path in the repo"
+
+## 2026-11-17: --stale followed a junction to a volume path, the class 0.2.1 had already fixed in the copy
+- What went wrong: 0.3.0's `--stale` refused a link on the way to a file by `lstat` alone. Review round 1 planted a junction to a volume path at `docs`, which `lstat` reports as a plain folder, and the script searched a file outside the repo and printed whether it held the quoted text. 0.2.1 review round 8 had found the same in the copy command, and fixed it there with a real-path check, but no lesson was logged, so the new walk was written without it.
+- Why: a fix to one piece of code was not turned into a rule for the next code that walks a path.
+- Rule going forward: code that refuses a link on a path in the repo also checks that the path's real path (`realpathSync.native`) is the repo's real path plus the name, with case folded only on Windows and macOS, since `lstat` calls a junction to a volume path a plain folder. Its tests make such a junction with `mklink /J` to the volume path `mountvol` prints.
+- Evidence: `dev/lessons.mjs`, search "A junction to a volume path is a plain folder to lstat"; `tests/stale.test.mjs`, search "which lstat calls a folder"; `dev/release-state.md`, search "the same class as 0.2.1 round 8".
+- Status: promoted to PLAYBOOK "Walking a path in the repo"
+
+## 2026-11-17: A test asserted the cut marker's format from memory, and failed on the fixed script
+- What went wrong: a new test for a long file name expected `[cut: N more characters]` right after the name, but the script puts a space before it. The test failed on both the old and the fixed script, and only reading the actual output showed why.
+- Why: the expected format was written from memory, not copied from the script's output.
+- Rule going forward: before asserting on the script's output in a test, run the script on the test's input once and copy the format from what it printed.
+- Evidence: `tests/stale.test.mjs`, search "cuts a long name short".
+- Status: promoted to PLAYBOOK "Quoting text that must match"
+
+## 2026-11-17: Mutant runs against files that were never written looked like six caught mutants
+- What went wrong: a `node -e` mutant generator inside Git Bash failed on its quoting and wrote no files. The loop that followed ran the stale tests with `LESSONS_SCRIPT` set to each missing path, and every run showed 8 of 8 failing, the same as a mutant caught by every test.
+- Why: the loop didn't check that each mutant file existed, and a missing script fails every test the same way a broken one does.
+- Rule going forward: write a mutant or copy generator as a script file, not nested quotes in `node -e`, and check each mutant exists and differs from the original before reading its test results. A mutant should fail the one test written for its guard, not all of them.
+- Evidence: the 0.3.0 session: the "Expected ',', got 'string literal'" error above six "fail 8" lines; rerun from a script file, each mutant failed only its own test.
+- Status: open
+
+## 2026-11-17: A scripted edit across four files wrote three before it found the fourth didn't match
+- What went wrong: a node script replaced text in both playbook templates and in this repo's own `PLAYBOOK.md` and `LESSONS.md`. It wrote the first three, then stopped on the repo's `LESSONS.md`, which has no "Entries go below this line" sentence. An earlier script for the two setup skills expected a line in both word orders, which each skill holds only one of.
+- Why: the script checked and wrote each file in turn, and assumed this repo's own files and the two skills hold the same text as the template where they differ.
+- Rule going forward: a scripted edit across several files checks every replacement in every file before it writes any of them, and this repo's `LESSONS.md`, `PLAYBOOK.md` and the two skills are each checked for the text, not assumed to match the template.
+- Evidence: the 0.3.0 session: the "MISSING in LESSONS.md" stop, after three files were written; `LESSONS.md` has no "Entries go below this line".
+- Status: open
 
 ## 2026-11-17: Two tests that passed on Windows failed on Linux, found only by a reviewer's WSL probe
 - What went wrong: for eleven review rounds of 0.2.1 every test ran on Windows only. A reviewer used WSL for a probe; running the suite there then showed two failures that CI (ubuntu, windows and macOS) would have shown only after a push. The copy command's end check passed a swapped-in file, because the random-name file's handle was closed and Linux gave the next new file the same inode number. The heap test's 96 MB limit was too little for the new script on Node 18, which needs 128 MB (Node 26 needs 40).
@@ -66,8 +124,8 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - What went wrong: the first run of the new property tests found rules that `--check` called "missing or empty" and "not a field", though each had its `- Rule going forward:` line. The lookup printed them as empty rules. Unit tests had never put a line separator inside a field.
 - Why: in a JavaScript regex, `.` doesn't match U+2028 or U+2029, which it treats as line ends. The field and heading patterns end in `(.*)$`, so a line holding one never matched.
 - Rule going forward: a regex that must match a whole line of untrusted text uses the `s` flag (or `[^]`), and a new parsing rule gets a property test with random text, not only examples.
-- Evidence: `tests/property.test.mjs`, seeds 1 to 5, fail on the script before the `s` flag; `tests/hardening.test.mjs`, "a line separator (U+2028) in a rule is reported as hidden".
-- Status: open
+- Evidence: `tests/property.test.mjs`, seeds 1 to 5, fail on the script before the `s` flag; `tests/hardening.test.mjs`, "a line separator (U+2028) in a rule is reported as hidden". Seen again in 0.3.0: the `--stale` evidence parser was written with example tests only, though the lookup had printed this rule, and paired backticks wrongly (a command in backticks, a slash, then a file name in backticks hid the file name) until a property test with random text was written; `tests/stale.test.mjs`, search "property: --stale reports the file names a plain parser finds".
+- Status: promoted to PLAYBOOK "Parsing untrusted text"
 
 ## 2026-11-16: A timing test passed on the slow script it was written to catch
 - What went wrong: the first version of the `From:` timing test passed on the round-3 script, which round 3 had shown takes 24 seconds on such input. The test used keys of different lengths.

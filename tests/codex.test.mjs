@@ -9,6 +9,7 @@ import {existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, r
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {can, NO_FOLDER_LINKS, NO_HARD_LINKS, REFUSED} from './links.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CLAUDE = join(REPO, 'plugins', 'lessons-learned');
@@ -126,7 +127,7 @@ test('the Codex copy command does not write through a link at the target, even a
   try {
     symlinkSync(elsewhere, join(repo, 'PLAYBOOK.md'), 'file');
   } catch (e) {
-    if (e.code === 'EPERM' || e.code === 'EACCES') return t.skip('this system does not allow symbolic links here');
+    if (REFUSED.includes(e.code)) return t.skip('this system does not allow symbolic links here');
     throw e;
   }
   const r = runNode(code, [join(CODEX, 'templates', 'PLAYBOOK.md'), 'PLAYBOOK.md'], repo);
@@ -134,9 +135,12 @@ test('the Codex copy command does not write through a link at the target, even a
   assert.ok(!existsSync(elsewhere), 'the copy wrote through the link');
 });
 
-test('the path check reports a file, a folder, an absent path, a link (a junction on Windows) and a hard link', () => {
+test('the path check reports a file, a folder, an absent path, a link (a junction on Windows) and a hard link', (t) => {
   const {code, rest} = nodeCommand(claudeSkill, 'lstatSync');
   assert.match(rest, /^LESSONS\.md PLAYBOOK\.md dev /);
+  assert.match(rest, / \.gitattributes \.npmignore package\.json$/);
+  if (!can.folderLink) return t.skip(NO_FOLDER_LINKS);
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
   const repo = folder();
   writeFileSync(join(repo, 'LESSONS.md'), 'x');
   mkdirSync(join(repo, 'dev'));
@@ -150,10 +154,10 @@ test('the path check reports a file, a folder, an absent path, a link (a junctio
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.stdout.trim().split(/\r?\n/),
     ['LESSONS.md: file', 'PLAYBOOK.md: absent', 'dev: folder', 'linked: LINK', 'AGENTS.md: HARDLINK']);
-  assert.match(rest, / \.gitattributes \.npmignore package\.json$/);
 });
 
-test('the Codex copy command refuses a dangling junction at the target, and creates nothing where it points', () => {
+test('the Codex copy command refuses a dangling junction at the target, and creates nothing where it points', (t) => {
+  if (!can.folderLink) return t.skip(NO_FOLDER_LINKS);
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
   const repo = folder();
   const elsewhere = join(folder(), 'not-yet');
@@ -165,7 +169,8 @@ test('the Codex copy command refuses a dangling junction at the target, and crea
   assert.ok(!existsSync(elsewhere), 'the copy created something where the junction points');
 });
 
-test('the Codex copy command refuses a target whose folder is a link (a junction on Windows)', () => {
+test('the Codex copy command refuses a target whose folder is a link (a junction on Windows)', (t) => {
+  if (!can.folderLink) return t.skip(NO_FOLDER_LINKS);
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
   const repo = folder();
   const outside = folder();
@@ -213,7 +218,7 @@ for (const [type, name] of [['file', 'symbolic link'], ['junction', 'junction']]
     try {
       symlinkSync(elsewhere, join(repo, 'PLAYBOOK.md'), type);
     } catch (e) {
-      if (e.code === 'EPERM' || e.code === 'EACCES') return t.skip('this system does not allow symbolic links here');
+      if (REFUSED.includes(e.code)) return t.skip('this system does not allow symbolic links here');
       throw e;
     }
     // The look at the target sees nothing, as if the link were made just after it.
@@ -233,7 +238,8 @@ f.lstatSync=(p,...a)=>{if(p==='PLAYBOOK.md'){const e=new Error('absent');e.code=
   });
 }
 
-test('the copy command refuses a source that is a second name for a file elsewhere (a hard link)', () => {
+test('the copy command refuses a source that is a second name for a file elsewhere (a hard link)', (t) => {
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
   const repo = folder();
   const secret = join(folder(), 'secret.txt');
@@ -246,7 +252,10 @@ test('the copy command refuses a source that is a second name for a file elsewhe
   assert.ok(!existsSync(join(repo, 'LESSONS.md')), 'the copy brought the other file\'s text in');
 });
 
-test('the copy command keeps a file made at the target after its look, and leaves nothing under the random name', () => {
+test('the copy command keeps a file made at the target after its look, and leaves nothing under the random name', (t) => {
+  // Without hard links the copy renames into place, which replaces a file made
+  // there in that instant (SECURITY.md, "The path check and the write are two steps").
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
   const repo = folder();
   writeFileSync(join(repo, 'PLAYBOOK.md'), 'the user\'s own playbook\n');
@@ -260,7 +269,8 @@ f.lstatSync=(p,...a)=>{if(p==='PLAYBOOK.md'){const e=new Error('absent');e.code=
   assert.deepEqual(readdirSync(repo), ['PLAYBOOK.md']);
 });
 
-test('the copy command refuses a source whose folder is a link (a junction on Windows)', () => {
+test('the copy command refuses a source whose folder is a link (a junction on Windows)', (t) => {
+  if (!can.folderLink) return t.skip(NO_FOLDER_LINKS);
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
   const repo = folder();
   const outside = folder();
@@ -302,6 +312,37 @@ f.linkSync=()=>{const e=new Error('operation not permitted');e.code='EPERM';thro
   assert.deepEqual(readdirSync(repo), ['LESSONS.md']);
 });
 
+// A preload that makes fs act as on exFAT, as probed on Windows 11: a hard link
+// fails with EISDIR, a file's ID comes from where its entry is (here, its path),
+// so a rename changes it, and an open file's ID follows the file when it moves.
+// `before` runs at the fallback rename, before the file is moved.
+const exfat = (before = '') => `const f=require('fs'),path=require('path'),c=require('crypto');
+const at=new Map(),abs=(p)=>path.resolve(String(p));
+const id=(p,big)=>{const n=BigInt('0x'+c.createHash('sha256').update(abs(p)).digest('hex').slice(0,12));return big?n:Number(n)};
+const slot=(s,p,a)=>{if(s&&p&&s.isFile())s.ino=id(p,a&&a.bigint);return s};
+const o=f.openSync;f.openSync=(p,...a)=>{const fd=o(p,...a);at.set(fd,abs(p));return fd};
+const mv=f.renameSync,move=(a,b)=>{mv(a,b);for(const [fd,p] of at)if(p===abs(a))at.set(fd,abs(b))};
+const ls=f.lstatSync;f.lstatSync=(p,a)=>slot(ls(p,a),p,a);
+const fs=f.fstatSync;f.fstatSync=(fd,a)=>slot(fs(fd,a),at.get(fd),a);
+f.linkSync=()=>{const e=new Error('illegal operation on a directory');e.code='EISDIR';throw e};
+f.renameSync=(a,b)=>{${before}move(a,b)};`;
+
+test('on a drive where a rename changes a file\'s ID (exFAT), the copy renames the file into place and accepts it', () => {
+  const {r, repo} = copyWith(exfat());
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(readFileSync(join(repo, 'LESSONS.md')).equals(readFileSync(join(CODEX, 'templates', 'LESSONS.md'))));
+  assert.deepEqual(readdirSync(repo), ['LESSONS.md']);
+});
+
+test('on exFAT, the copy still fails when its random-name file is moved away and another put in its place before the rename', () => {
+  // exFAT keeps an unlinked open file's name until it is closed, so a swap there
+  // moves the file away instead. The held file's ID then follows it elsewhere.
+  const {r, repo} = copyWith(exfat("move(a,path.join(path.dirname(a),'away'));f.writeFileSync(a,'NOT THE TEMPLATE');"));
+  assert.equal(r.status, 1, 'the copy said it worked');
+  assert.match(r.stderr, /LESSONS\.md: is not the file this copy wrote: check it/);
+  assert.equal(readFileSync(join(repo, 'LESSONS.md'), 'utf8'), 'NOT THE TEMPLATE');
+});
+
 // Runs the copy command with a preload, from a fresh repo; returns the run and the repo.
 function copyWith(preloadSource, src = join(CODEX, 'templates', 'LESSONS.md'), dst = 'LESSONS.md', repo = folder()) {
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
@@ -309,7 +350,8 @@ function copyWith(preloadSource, src = join(CODEX, 'templates', 'LESSONS.md'), d
   return {r, repo};
 }
 
-test('the copy command fails, and names the file, when it cannot remove the random name after the hard link', () => {
+test('the copy command fails, and names the file, when it cannot remove the random name after the hard link', (t) => {
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
   const {r, repo} = copyWith(`const f=require('fs'),u=f.unlinkSync;
 f.unlinkSync=(p,...a)=>{if(String(p).includes('.lessons-copy-')){const e=new Error('busy');e.code='EBUSY';throw e}return u(p,...a)};`);
   assert.equal(r.status, 1, r.stderr);
@@ -381,7 +423,8 @@ f.openSync=(p,...a)=>{if(p==='staged.md'){const e=new Error('gone');e.code='ENOE
   assert.deepEqual(readdirSync(repo), ['staged.md']);
 });
 
-test('the copy command refuses a source whose folder is swapped for a junction before its look at the file and back after its read', () => {
+test('the copy command refuses a source whose folder is swapped for a junction before its look at the file and back after its read', (t) => {
+  if (!can.folderLink) return t.skip(NO_FOLDER_LINKS);
   const repo = folder();
   const outside = folder();
   writeFileSync(join(outside, 'LESSONS.md'), 'TEXT FROM OUTSIDE THE REPO');
@@ -399,7 +442,8 @@ f.openSync=(p,...a)=>{const fd=o(p,...a);if(p==='stage/LESSONS.md'&&swapped){f.u
 });
 
 for (const [how, refuseLink] of [['hard link', false], ['fallback rename', true]]) {
-  test(`the copy command fails when its random-name file is swapped for a second name of a file outside before the ${how}`, () => {
+  test(`the copy command fails when its random-name file is swapped for a second name of a file outside before the ${how}`, (t) => {
+    if (!can.hardLink) return t.skip(NO_HARD_LINKS);
     const repo = folder();
     const outside = join(folder(), 'secret.txt');
     writeFileSync(outside, 'AKIA-SECRET');
@@ -439,7 +483,8 @@ f.openSync=(p,...a)=>{if(p==='staged.md')f.renameSync(other,'staged.md');return 
   assert.ok(!existsSync(join(repo, 'LESSONS.md')), 'the copy brought the other file\'s text in');
 });
 
-test('the copy command fails when the target gains a second name during the copy', () => {
+test('the copy command fails when the target gains a second name during the copy', (t) => {
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
   const repo = folder();
   const {r} = copyWith(`const f=require('fs'),k=f.linkSync;
 f.linkSync=(t,d)=>{k(t,d);k(d,'second-name')};`, undefined, 'LESSONS.md', repo);
@@ -447,7 +492,8 @@ f.linkSync=(t,d)=>{k(t,d);k(d,'second-name')};`, undefined, 'LESSONS.md', repo);
   assert.match(r.stderr, /LESSONS\.md: is not the file this copy wrote: check it/);
 });
 
-test('the copy command fails when its random-name file is replaced by another plain file before the fallback rename', () => {
+test('the copy command fails when its random-name file is replaced by another plain file before the fallback rename', (t) => {
+  if (!can.freesUnlinkedName) return t.skip('this file system keeps an open file\'s name after unlink (exFAT); a test above moves the file away instead');
   const repo = folder();
   const {r} = copyWith(`const f=require('fs');
 f.linkSync=(t)=>{f.unlinkSync(t);f.writeFileSync(t,'NOT THE TEMPLATE');const e=new Error('not permitted');e.code='EPERM';throw e};`, undefined, 'LESSONS.md', repo);
@@ -455,7 +501,8 @@ f.linkSync=(t)=>{f.unlinkSync(t);f.writeFileSync(t,'NOT THE TEMPLATE');const e=n
   assert.match(r.stderr, /LESSONS\.md: is not the file this copy wrote: check it/);
 });
 
-test('the copy command copies into a repo opened through a junction', () => {
+test('the copy command copies into a repo opened through a junction', (t) => {
+  if (!can.folderLink) return t.skip(NO_FOLDER_LINKS);
   // A repo reached through a junction (one on another drive, say) keeps that
   // path as the working folder, so the repo's own folder looks like a link.
   const real = folder();
@@ -538,7 +585,8 @@ test('the copy command refuses a target folder whose real path differs from its 
   assert.deepEqual(readdirSync(join(base, 'REPO', 'a', 'b')), []);
 });
 
-test('the copy command copies the text it read through the handle it checked, not what the path holds later', () => {
+test('the copy command copies the text it read through the handle it checked, not what the path holds later', (t) => {
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
   const repo = folder();
   writeFileSync(join(repo, 'staged.md'), 'the template');
   const outside = join(folder(), 'secret.txt');
@@ -556,7 +604,8 @@ f.closeSync=(fd)=>{if(fd===src&&swapped){f.unlinkSync('staged.md');f.renameSync(
 });
 
 for (const [how, refuseLink] of [['hard link', false], ['fallback rename', true]]) {
-  test(`the copy command fails when the target's folder is swapped for a junction after its look (${how})`, () => {
+  test(`the copy command fails when the target's folder is swapped for a junction after its look (${how})`, (t) => {
+    if (!can.folderLink) return t.skip(NO_FOLDER_LINKS);
     const repo = folder();
     const outside = folder();
     mkdirSync(join(repo, 'dev'));

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// lessons.mjs from the lessons-learned plugin, version 0.2.1.
+// lessons.mjs from the lessons-learned plugin, version 0.3.0.
 // Prints the rules in LESSONS.md for the lessons check in PLAYBOOK.md, and checks
-// the log's format. Reads LESSONS.md and PLAYBOOK.md and writes nothing.
+// the log's format. Reads LESSONS.md and PLAYBOOK.md (and, for --stale, the repo
+// files their evidence names) and writes nothing.
 //
 // Both files are repo content, so the script treats them as untrusted. It reads
 // only regular files of at most 10 MB that sit in the folder itself (a symbolic
@@ -18,21 +19,29 @@
 //   node dev/lessons.mjs             counts and this usage only
 //   node dev/lessons.mjs --all       every lesson with its status and rule
 //   node dev/lessons.mjs --check     checks the format; exit 1 if anything is wrong
+//   node dev/lessons.mjs --stale     open and promoted lessons whose Evidence names
+//                                    a file in backticks that is gone, or a
+//                                    search "text" after it that the file no
+//                                    longer holds: leads to review, not verdicts
 //
 // --dir <folder> reads LESSONS.md and PLAYBOOK.md from that folder instead of the
-// repo root (for trying the script on a sample log).
+// repo root (for trying the script on a sample log). --stale looks for the files
+// the evidence names in that folder too.
 
-import {lstatSync, readFileSync} from 'node:fs';
+import {lstatSync, readFileSync, realpathSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const USAGE = 'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | <word>...]';
+const USAGE = 'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | <word>...]';
 const FIELDS = ['What went wrong', 'Why', 'Rule going forward', 'Evidence', 'Status'];
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_LINE = 2000; // characters of one printed line
 const MAX_BAD = 50; // BAD lines printed by --check
 const MAX_SHOWN = 50; // lessons printed by a lookup or --all
 const MAX_NAME = 200; // characters of a title or section name in a problem message
+const MAX_REFS = 100; // file names --stale checks
+const MAX_SEARCH = 1024 * 1024; // bytes of a file --stale searches
+const MAX_QUOTE = 200; // UTF-16 units of search text --stale looks for
 
 // Characters that can hide or disguise text: controls (Cc), format characters
 // (Cf: bidi marks and overrides, zero-width characters, the BOM, Unicode tag
@@ -153,7 +162,7 @@ for (let i = 0; i < args.length; i++) {
   if (a === '--dir') {
     if (!args[i + 1] || args[i + 1].startsWith('-')) fail(USAGE);
     dir = resolve(args[++i]);
-  } else if (a === '--check' || a === '--all') {
+  } else if (a === '--check' || a === '--all' || a === '--stale') {
     if (mode !== 'counts' || words.length) fail(USAGE);
     mode = a.slice(2);
   } else if (a.startsWith('-')) {
@@ -329,6 +338,81 @@ for (const section of sections.values()) {
   }
 }
 
+// --stale. A file name in an Evidence field is text in backticks with no space,
+// made only of ASCII letters, digits, '.', '_', '-' and '/', that holds a '/' or
+// ends in an extension that starts with a letter (`.gitattributes`,
+// `src/app.ts`), with no empty, '.' or '..' part. `, search "text"` right after
+// it names text the file should still hold. The name is looked up under the
+// repo root one part at a time, and a link anywhere on the way is not followed.
+// A junction to a volume path is a plain folder to lstat, so the file's real path
+// must also start with the root's real path, exactly, and go on with the name,
+// with only ASCII case ignored and only on Windows and macOS: full case folding
+// would match the Kelvin sign to "k", where NTFS keeps two folders apart. Only a
+// regular file of at most MAX_SEARCH bytes with one hard link is read, to search
+// it for text of at most MAX_QUOTE UTF-16 units (a longer one would make the
+// search slow), and its text is never printed. Backticks pair left to right, as
+// in Markdown, so a span with a space in it (a command) doesn't shift the pairs.
+const EVIDENCE_REF = /`([^`]*)`(?:,? search "([^"]+)")?/g;
+function isFileName(name) {
+  if (!/^[A-Za-z0-9._/-]+$/.test(name)) return false;
+  if (!name.includes('/') && !/\.[A-Za-z][A-Za-z0-9]*$/.test(name)) return false;
+  return name.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+}
+const looked = new Map(); // a file name -> {problem} or {stat, path}
+let rootReal; // the root's real path with a separator at the end, found once
+const foldAscii = (p) => (/^(win32|darwin)$/.test(process.platform) ? p.replace(/[A-Z]/g, (c) => c.toLowerCase()) : p);
+function look(name) {
+  if (looked.has(name)) return looked.get(name);
+  const parts = name.split('/');
+  let found = null;
+  let at = dir;
+  for (let k = 0; k < parts.length && !found; k++) {
+    at = join(at, parts[k]);
+    let stat;
+    try {
+      stat = lstatSync(at);
+    } catch {
+      found = {problem: 'no such file'};
+      break;
+    }
+    if (stat.isSymbolicLink()) found = {problem: 'not checked: a symbolic link on the way'};
+    else if (k < parts.length - 1 && !stat.isDirectory()) found = {problem: 'no such file'};
+    else if (k === parts.length - 1) found = {stat, path: at};
+  }
+  if (found.path) {
+    try {
+      // With the separator at the end, so a sibling such as `repo2` doesn't
+      // start with it; join adds none to a drive root's `C:\`, which has one.
+      rootReal ??= join(realpathSync.native(dir), 'x').slice(0, -1);
+      const real = realpathSync.native(found.path);
+      if (!real.startsWith(rootReal) || foldAscii(real.slice(rootReal.length)) !== foldAscii(join(...parts)))
+        found = {problem: 'not checked: a link on the way leads elsewhere'};
+    } catch {
+      found = {problem: 'no such file'};
+    }
+  }
+  looked.set(name, found);
+  return found;
+}
+// What is wrong with the file found for text the evidence says it holds, or ''.
+function holds(found, text) {
+  // Counted in UTF-16 units, as V8 counts a pattern: past about 250 its
+  // substring search can turn about 100 times slower, so a limit in code points
+  // (200 emoji are 400 units) would let that through.
+  if (text.length > MAX_QUOTE) return `not searched: search text over ${MAX_QUOTE} UTF-16 units`;
+  const {stat, path} = found;
+  if (!stat.isFile()) return 'not searched: not a regular file';
+  if (stat.nlink > 1) return 'not searched: a file with a second hard link';
+  if (stat.size > MAX_SEARCH) return `not searched: over ${MAX_SEARCH} bytes`;
+  let content;
+  try {
+    content = readFileSync(path, 'utf8');
+  } catch {
+    return 'not searched: cannot read it';
+  }
+  return content.replace(/\r/g, '').includes(text) ? '' : `no longer holds "${label(text)}"`;
+}
+
 const count = (s) => entries.filter((e) => e.status === s).length;
 const totals = `${entries.length} lessons: ${count('open')} open, ${count('promoted')} promoted, ${count('closed')} closed`;
 
@@ -346,6 +430,38 @@ if (mode === 'counts') {
   entries.slice(0, MAX_SHOWN).forEach((e) => say(`[${e.fields.Status || '?'}] ${e.key}\n    ${e.fields['Rule going forward'] || ''}`));
   if (entries.length > MAX_SHOWN) say(`... and ${entries.length - MAX_SHOWN} more lessons, not printed`);
   say(`-- ${totals}`);
+} else if (mode === 'stale') {
+  let reviewed = 0; // open and promoted lessons
+  let refs = 0; // file names checked
+  let over = 0; // file names past MAX_REFS, not checked
+  let unnamed = 0; // lessons whose evidence names no file
+  const leads = [];
+  for (const e of entries) {
+    if (e.status === 'closed') continue;
+    reviewed++;
+    let named = false;
+    const notes = [];
+    for (const m of (e.fields.Evidence || '').matchAll(EVIDENCE_REF)) {
+      if (!isFileName(m[1])) continue;
+      named = true;
+      if (refs >= MAX_REFS) {
+        over++;
+        continue;
+      }
+      refs++;
+      const found = look(m[1]);
+      const wrong = found.problem || (m[2] === undefined ? '' : holds(found, m[2]));
+      if (wrong) notes.push(`    \`${label(m[1])}\`: ${wrong}`);
+    }
+    if (!named) unnamed++;
+    const where = e.status === 'promoted' ? `, promoted to PLAYBOOK "${label(e.section)}"` : '';
+    if (notes.length) leads.push(`${e.date} "${e.label}"${where}\n${notes.join('\n')}`);
+  }
+  leads.slice(0, MAX_SHOWN).forEach((l) => say(l));
+  if (leads.length > MAX_SHOWN) say(`... and ${leads.length - MAX_SHOWN} more lessons, not printed`);
+  const past = over ? `, and ${over} more not checked (the limit is ${MAX_REFS})` : '';
+  say(`-- ${leads.length} of ${reviewed} open or promoted lessons have evidence to review; ${refs} file names checked${past}; ${unnamed} name no file`);
+  say('-- a lead, not a verdict: read the lesson, and close it only if its rule no longer holds');
 } else {
   let shown = 0;
   const open = []; // matching open lessons with their rules
