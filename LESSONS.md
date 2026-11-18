@@ -76,14 +76,14 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: I ran `node --test` and the release check on this Windows machine only, and took one machine's numbers (inode behavior, heap use) as the code's.
 - Rule going forward: before a release commit, also run `node --test` under WSL (Linux) from a copy on its own file system. A test that measures a resource (heap, time) gets its limit from runs on more than one Node version and OS, with room on both sides.
 - Evidence: the 0.2.1 work: `not ok 35 - the copy command fails when its random-name file is replaced by another plain file before the fallback rename` under WSL, and the probe showing the same inode after unlink with the handle closed and a new one with it held; `heapfloor.mjs`: new script 128 MB and old 256 MB on Node 18, 40 MB and 256 MB on Node 26.
-- Status: open
+- Status: promoted to PLAYBOOK "Testing on more than one system"
 
 ## 2026-11-17: Review rounds re-reviewed the whole release instead of the diff since the last round
 - What went wrong: rounds 6 to 9 of the 0.2.1 review each had a fresh reviewer look at the whole diff from 643dcdd, not at the previous round's fixes. Each round found something new in that large surface, so the stop rule was never near. A reviewer quoted REVIEW.md's "Rounds" section back, which I had not read for this release.
 - Why: I wrote each round's brief from the one before it, not from REVIEW.md, and only read REVIEW.md's file path into the brief for the reviewer to follow.
 - Rule going forward: before writing a review round's brief, read REVIEW.md's "Rounds" section and scope the round to the diff since the last reviewed state; save that state (a copy of the changed folders and docs) before applying each round's fixes, so the next round can diff against it, and run fail-before checks in another copy, never in that one.
 - Evidence: the 0.2.1 session's briefs for rounds 6 to 9 ("the uncommitted diff from commit 643dcdd to the working tree" in each) and round 10's, scoped to round 9's fixes; REVIEW.md on main, "Each round reviews the diff since the last reviewed state".
-- Status: open
+- Status: promoted to PLAYBOOK "Running a review round"
 
 ## 2026-11-17: Backslashes in a Git Bash heredoc were lost before the text reached the file
 - What went wrong: an edit script for 0.2.1, written through a quoted Git Bash heredoc (`<<'EOF'`), searched for a test line holding `/staged\.md/` and found nothing: the script Node read had lost a backslash. The 0.2.0 work hit the same loss in a RegExp template, fixed then with the Edit tool and `String.raw`, but logged no lesson.
