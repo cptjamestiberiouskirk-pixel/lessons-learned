@@ -20,14 +20,14 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: each sentence was written from what the code was meant to do for a group of cases, and only one case of the group had been run.
 - Rule going forward: a doc sentence that says what the script prints, or whether it reads a file, names only cases that were run, and quotes each message from that run's output.
 - Evidence: `CHANGELOG.md`, search "is refused as over it"
-- Status: open
+- Status: promoted to PLAYBOOK "Quoting text that must match"
 
 ## 2026-11-18: A fail-before copy of the repo was made from the working tree, so it ran the new skills
 - What went wrong: to run the new `..` test against 0.3.0's copy command, a copy of the repo was made with `git ls-files` and `tar`, which copy the working tree. The test passed there, on the new skills. A `grep` for the new check in the copy showed it; the run was redone with the two skills from `git show HEAD:<path>`, checked with `git hash-object`, and then the test failed as it should.
 - Why: "Running a test against old code" says to check the copy's hash, and that step was skipped because the copy was of the whole repo, not one file.
 - Rule going forward: in a copy of the repo made for a fail-before run, every file the fix changed comes from `git show <rev>:<path>` and is checked with `git hash-object` against `git rev-parse <rev>:<path>` before the run.
 - Evidence: `tests/codex.test.mjs`, search "the copy command refuses a relative target that climbs out of the repo with .."
-- Status: open
+- Status: promoted to PLAYBOOK "Running a test against old code"
 
 ## 2026-11-17: A commit's Verified line was written from memory, and said --stale listed nothing it did list
 - What went wrong: the commit that promoted "Testing on more than one system" said `--stale` gave "none for these lessons' sections". The `--stale` output run just before it listed the Linux lesson, for its scratch file. The message was amended before any push.
