@@ -39,10 +39,11 @@ From: 2026-11-16 "A shell copy out of the plugin folder was refused", 2026-11-16
 
 ## Running a test against old code
 
-From: 2026-11-16 "A fail-before run used a copy of the old script that was one line long"
+From: 2026-11-16 "A fail-before run used a copy of the old script that was one line long", 2026-11-18 "A fail-before copy of the repo was made from the working tree, so it ran the new skills"
 
 1. In pwsh, copy an old version of a file with a byte-exact redirect: `cmd /c "git show <rev>:<path> > <file>"`. Not `| Set-Content -NoNewline`, which joins the lines, and not from Git Bash, which rewrites `/c`.
 2. Check the copy before using it: `git hash-object <file>` must print what `git rev-parse <rev>:<path>` prints.
+3. A fail-before run can use a copy of the whole repo. In that copy, every file the fix changed, other than the tests written for it, comes from `git show <rev>:<path>`, where `<rev>` is the commit before the fix. Copy each one as step 1 says, and check each one as step 2 says before the run.
 
 ## Testing on more than one system
 
@@ -53,10 +54,11 @@ From: 2026-11-17 "Two tests that passed on Windows failed on Linux, found only b
 
 ## Quoting text that must match
 
-From: 2026-11-17 "A test asserted the cut marker's format from memory, and failed on the fixed script", 2026-11-17 "A new lesson quoted its evidence from memory, and --stale flagged it the day it was written"
+From: 2026-11-17 "A test asserted the cut marker's format from memory, and failed on the fixed script", 2026-11-17 "A new lesson quoted its evidence from memory, and --stale flagged it the day it was written", 2026-11-18 "The CHANGELOG named the script's message for cases that were never run, twice in one release"
 
 1. Before a test asserts on the output of `dev/lessons.mjs`, run the version the test should pass on once, on the test's input. Copy the text the test checks from what it printed, spaces and punctuation included.
 2. A lesson's Evidence line can name a file and quote a search text after it (`search "text"`). Copy that text from the named file, character for character. After adding or changing a lesson's Evidence, run `node dev/lessons.mjs --stale` and check that its output does not list that lesson's title.
+3. A sentence in the docs (the CHANGELOG, a README, SECURITY.md or a skill) can say what `dev/lessons.mjs` prints, or whether it reads a file. It names only cases that were run. A case is one kind of input or file state, not a group of them. Quote each message from the output of that case's run.
 
 ## Running a review round
 
