@@ -34,7 +34,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: the Verified line was written from what the check was expected to show, not copied from what it printed, the same mistake as "A new lesson quoted its evidence from memory", in a commit message.
 - Rule going forward: a commit's Verified line states each check's result as its output printed it, read again while writing the line.
 - Evidence: commit 41d3148, amended as 87860c4, which says "one is the Linux lesson's scratch file".
-- Status: open
+- Status: promoted to PLAYBOOK "Quoting text that must match"
 
 ## 2026-11-17: A test's child process hung in CI, and the log named no test
 - What went wrong: on PR 2's first CI run, a child process started by `tests/hardening.test.mjs` never exited on ubuntu Node 24. The job waited until its 10-minute limit cancelled it, and the log named no test, because `node --test` prints a file's results only when the file ends. A rerun passed in 11 s, and 60 local runs on Node 18 and 26 did not hang, so the cause was not found.
