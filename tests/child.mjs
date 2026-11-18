@@ -1,7 +1,7 @@
 // spawnSync for the tests, with a time limit. A child process that never exits
 // would otherwise hold its test file until CI cancels the whole job, and the
 // log would name no test: node --test prints a file's results only when the
-// file ends. In 0.2.1's CI this cost one job its full 10 minutes.
+// file ends. In PR 2's CI this cost one job its full 10 minutes.
 //
 // After 60 seconds the child is killed and the test fails with an error that
 // names the command. The slowest child in these tests takes about a second.
