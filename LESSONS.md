@@ -15,11 +15,18 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-17: A new lesson quoted its evidence from memory, and --stale flagged it the day it was written
+- What went wrong: the exFAT lesson's evidence quoted a test name as "a rename changes a file's ID (exFAT)". The test name is in single quotes, so the file holds `file\'s`, and the search text never matched. Review round 5 found it with `--stale`.
+- Why: the search text was typed from the test's meaning, not copied from the file, and `--stale` was not run after the entry was added.
+- Rule going forward: copy an evidence search text from the file itself, and after adding or changing a lesson's Evidence, run `node dev/lessons.mjs --stale` and check it lists no lead for that lesson.
+- Evidence: `dev/release-state.md`, search "the new lesson's evidence quotes".
+- Status: open
+
 ## 2026-11-17: The copy's end check assumed a rename keeps a file's ID, and failed every copy on exFAT
 - What went wrong: the copy command falls back to a rename where a hard link fails, and its docs name a FAT drive as one such place. Its last check compared the target's ID with the ID it read from its file before the move. exFAT has no hard links, and a rename there changes a file's ID, so every copy on an exFAT drive failed with "is not the file this copy wrote", though the file was right. Another session found it with a test run on an exFAT disk.
 - Why: the fallback was probed only where hard links are refused on NTFS (the Codex sandbox), where a rename keeps the ID. The FAT case was written down as a reason for the fallback but never run.
 - Rule going forward: a path the code takes for a named file system or platform is run there before it ships: for the copy, an exFAT drive (a virtual disk) with the repo and `TEMP` on it. A check that compares file IDs across a move reads the moved file's ID after the move, from a handle it holds. This widens the probe rule in "A create-only write was trusted to refuse a link".
-- Evidence: `tests/codex.test.mjs`, search "a rename changes a file's ID (exFAT)"; `dev/release-state.md`, search "exFAT".
+- Evidence: `tests/codex.test.mjs`, search "the copy renames the file into place and accepts it"; `dev/release-state.md`, search "exFAT".
 - Status: open
 
 ## 2026-11-17: Counting the search limit in code points let text past V8's slow-search threshold
