@@ -9,7 +9,8 @@ import {existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, re
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {can, REFUSED} from './links.mjs';
+import {can, NO_HARD_LINKS, REFUSED} from './links.mjs';
+import {realpathFails, swapAfterLook} from './swap.mjs';
 
 const TEMPLATES = resolve(dirname(fileURLToPath(import.meta.url)), '../plugins/lessons-learned/templates');
 const SCRIPT = process.env.LESSONS_SCRIPT ? resolve(process.env.LESSONS_SCRIPT) : join(TEMPLATES, 'lessons.mjs');
@@ -312,25 +313,71 @@ for (const sibling of ['repoZdocs', 'repodocs']) {
   });
 }
 
+test('--stale does not search a file swapped for a hard link to another file after its look', (t) => {
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
+  const outside = folder();
+  const secret = join(outside, 'secret.txt');
+  writeFileSync(secret, 'SECRET-TEXT\n');
+  const dir = repo([entry('Swapped', '`notes.txt`, search "SECRET-TEXT"')], {'notes.txt': 'nothing here\n'});
+  const r = spawnSync(process.execPath, ['--require', swapAfterLook(outside, 'notes.txt', secret), SCRIPT, '--dir', dir, '--stale'], {encoding: 'utf8'});
+  const out = r.stdout + r.stderr;
+  assert.equal(lstatSync(secret).nlink, 2, 'the preload did not swap the file');
+  assert.equal(r.status, 0, out);
+  // Searched, the secret would match and the lesson would show no lead at all.
+  assert.match(out, /`notes\.txt`: not searched: it changed while it was read/);
+});
+
+test('--stale says a file whose real path cannot be read was not checked, not that it is missing', () => {
+  const outside = folder();
+  const dir = repo([entry('Unreadable path', '`docs/a.md`')], {'docs/a.md': 'text\n'});
+  const r = spawnSync(process.execPath, ['--require', realpathFails(outside, 'a.md', 'EACCES'), SCRIPT, '--dir', dir, '--stale'], {encoding: 'utf8'});
+  const out = r.stdout + r.stderr;
+  assert.equal(r.status, 0, out);
+  assert.match(out, /`docs\/a\.md`: not checked: its real path cannot be read/);
+  assert.doesNotMatch(out, /no such file/);
+});
+
+// --stale ignores ASCII case in a name on macOS as on Windows. Faked here by
+// setting process.platform before the script runs, on a file system that
+// ignores case; where the file system tells case apart the test has nothing to
+// show and skips.
+test('--stale folds ASCII case in a name on macOS too', (t) => {
+  const dir = repo([entry('Case', '`docs/a.md`, search "held text"')], {'Docs/a.md': 'held text\n'});
+  if (!existsSync(join(dir, 'docs', 'a.md'))) return t.skip('this file system tells case apart');
+  const preload = join(folder(), 'darwin.cjs');
+  writeFileSync(preload, "Object.defineProperty(process, 'platform', {value: 'darwin'});\n");
+  const r = spawnSync(process.execPath, ['--require', preload, SCRIPT, '--dir', dir, '--stale'], {encoding: 'utf8'});
+  const out = r.stdout + r.stderr;
+  assert.equal(r.status, 0, out);
+  assert.match(out, /^-- 0 of 1 open or promoted lessons have evidence to review/m);
+});
+
 // A long search text made V8's substring search take time in the product of the
 // file's length and the text's, so the run grew with the square of its input.
-// Times the full input and a quarter of it: linear work grows about 4 times,
-// quadratic about 16. Each size runs twice and the faster run counts.
+// Times the full input and an eighth of it, each less the time of a run that
+// reads no file, which is mostly Node's start: linear work grows about 8 times,
+// quadratic about 64. Without the start taken off, it padded both runs, and the
+// script without the limit failed by only 1.3 times (RS-T-growthguard); now by
+// about 3 times (6225 ms against a limit of 2036). Each runs twice and the
+// faster run counts.
 test('--stale runs in linear time when the search text is long', () => {
   const sized = (part) => {
     const half = 'a'.repeat(40000 * part);
     return repo([entry('Long search', `\`big.txt\`, search "${half}b${half}"`)], {'big.txt': 'a'.repeat(800000 * part)});
   };
-  const timed = (dir) => {
-    const started = Date.now();
-    const r = stale(dir);
-    return {took: Date.now() - started, r};
+  const fastest = (dir) => {
+    const runs = [0, 1].map(() => {
+      const started = performance.now();
+      const r = stale(dir);
+      return {took: performance.now() - started, r};
+    });
+    return runs[0].took <= runs[1].took ? runs[0] : runs[1];
   };
-  const small = sized(0.25);
-  const big = sized(1);
-  const quarter = [timed(small), timed(small)].reduce((a, b) => (a.took <= b.took ? a : b));
-  const full = [timed(big), timed(big)].reduce((a, b) => (a.took <= b.took ? a : b));
-  assert.ok(full.took < 8 * quarter.took + 1000, `the full input took ${full.took} ms, a quarter of it ${quarter.took} ms`);
+  const start = fastest(repo([entry('No file', '`gone.md`')])).took;
+  const eighth = Math.max(0, fastest(sized(1 / 8)).took - start);
+  const full = fastest(sized(1));
+  const fullWork = full.took - start;
+  assert.ok(fullWork < 16 * eighth + 500, `the full input took ${Math.round(fullWork)} ms and an eighth of it ${Math.round(eighth)} ms, past a run that reads no file (${Math.round(start)} ms)`);
   assert.equal(full.r.code, 0, full.r.out);
 });
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// lessons.mjs from the lessons-learned plugin, version 0.3.0.
+// lessons.mjs from the lessons-learned plugin, version 0.3.1.
 // Prints the rules in LESSONS.md for the lessons check in PLAYBOOK.md, and checks
 // the log's format. Reads LESSONS.md and PLAYBOOK.md (and, for --stale, the repo
 // files their evidence names) and writes nothing.
@@ -28,7 +28,7 @@
 // repo root (for trying the script on a sample log). --stale looks for the files
 // the evidence names in that folder too.
 
-import {lstatSync, readFileSync, realpathSync} from 'node:fs';
+import {closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -179,6 +179,38 @@ function fail(message) {
   process.exit(2);
 }
 
+// Reads the file a look found at `path`, through one handle, so a file put in
+// its place after the look is not read: the handle must be the file the look
+// saw (the same device and file ID), still a regular file with one hard link,
+// of at most `max` bytes, and give exactly as many bytes as it has. The open
+// doesn't follow a link where the system can refuse one, and doesn't wait on a
+// FIFO. Returns {text}, or {problem}: 'changed', 'too big' or 'cannot read'.
+const OPEN = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+function readSame(path, seen, max) {
+  let fd;
+  try {
+    fd = openSync(path, OPEN);
+  } catch {
+    return {problem: 'cannot read'};
+  }
+  try {
+    const now = fstatSync(fd, {bigint: true});
+    if (now.dev !== seen.dev || now.ino !== seen.ino || !now.isFile() || now.nlink !== 1n) return {problem: 'changed'};
+    if (now.size > BigInt(max)) return {problem: 'too big'};
+    // One byte more than the size, so a file that grew is caught too.
+    const size = Number(now.size);
+    const buf = Buffer.alloc(size + 1);
+    let got = 0;
+    for (let n; got < buf.length && (n = readSync(fd, buf, got, buf.length - got, null)) > 0; ) got += n;
+    if (got !== size) return {problem: 'changed'};
+    return {text: buf.toString('utf8', 0, got)};
+  } catch {
+    return {problem: 'cannot read'};
+  } finally {
+    closeSync(fd);
+  }
+}
+
 // One of the two files, as lines. Refuses a symbolic link, anything that isn't a
 // regular file, a file with a second hard link and a file over MAX_BYTES, so a
 // repo can't make the script read a file from somewhere else or a huge one.
@@ -186,20 +218,19 @@ function read(name) {
   const path = join(dir, name);
   let stat;
   try {
-    stat = lstatSync(path);
+    stat = lstatSync(path, {bigint: true});
   } catch {
     fail(`lessons: cannot read ${path}`);
   }
   if (stat.isSymbolicLink()) fail(`lessons: ${path} is a symbolic link; the script reads only a regular file there`);
   if (!stat.isFile()) fail(`lessons: ${path} is not a regular file`);
-  if (stat.nlink > 1) fail(`lessons: ${path} has ${stat.nlink} hard links; the script reads only a file with one`);
-  if (stat.size > MAX_BYTES) fail(`lessons: ${path} is over ${MAX_BYTES} bytes`);
-  let text;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch {
-    fail(`lessons: cannot read ${path}`);
-  }
+  if (stat.nlink > 1n) fail(`lessons: ${path} has ${stat.nlink} hard links; the script reads only a file with one`);
+  if (stat.size > BigInt(MAX_BYTES)) fail(`lessons: ${path} is over ${MAX_BYTES} bytes`);
+  const got = readSame(path, stat, MAX_BYTES);
+  if (got.problem === 'changed') fail(`lessons: ${path} changed while it was read`);
+  if (got.problem === 'too big') fail(`lessons: ${path} is over ${MAX_BYTES} bytes`);
+  if (got.problem) fail(`lessons: cannot read ${path}`);
+  let text = got.text;
   // A BOM at the very start is dropped. It is matched by its code, not written
   // as an escape: a tool that writes this file out can turn an escape into the
   // invisible character itself.
@@ -370,7 +401,7 @@ function look(name) {
     at = join(at, parts[k]);
     let stat;
     try {
-      stat = lstatSync(at);
+      stat = lstatSync(at, {bigint: true});
     } catch {
       found = {problem: 'no such file'};
       break;
@@ -387,8 +418,10 @@ function look(name) {
       const real = realpathSync.native(found.path);
       if (!real.startsWith(rootReal) || foldAscii(real.slice(rootReal.length)) !== foldAscii(join(...parts)))
         found = {problem: 'not checked: a link on the way leads elsewhere'};
-    } catch {
-      found = {problem: 'no such file'};
+    } catch (e) {
+      // Only a file that is gone is missing; a real path the system won't give
+      // (a folder that can't be listed) leaves the file unchecked.
+      found = {problem: e.code === 'ENOENT' ? 'no such file' : 'not checked: its real path cannot be read'};
     }
   }
   looked.set(name, found);
@@ -402,15 +435,13 @@ function holds(found, text) {
   if (text.length > MAX_QUOTE) return `not searched: search text over ${MAX_QUOTE} UTF-16 units`;
   const {stat, path} = found;
   if (!stat.isFile()) return 'not searched: not a regular file';
-  if (stat.nlink > 1) return 'not searched: a file with a second hard link';
-  if (stat.size > MAX_SEARCH) return `not searched: over ${MAX_SEARCH} bytes`;
-  let content;
-  try {
-    content = readFileSync(path, 'utf8');
-  } catch {
-    return 'not searched: cannot read it';
-  }
-  return content.replace(/\r/g, '').includes(text) ? '' : `no longer holds "${label(text)}"`;
+  if (stat.nlink > 1n) return 'not searched: a file with a second hard link';
+  if (stat.size > BigInt(MAX_SEARCH)) return `not searched: over ${MAX_SEARCH} bytes`;
+  const got = readSame(path, stat, MAX_SEARCH);
+  if (got.problem === 'changed') return 'not searched: it changed while it was read';
+  if (got.problem === 'too big') return `not searched: over ${MAX_SEARCH} bytes`;
+  if (got.problem) return 'not searched: cannot read it';
+  return got.text.replace(/\r/g, '').includes(text) ? '' : `no longer holds "${label(text)}"`;
 }
 
 const count = (s) => entries.filter((e) => e.status === s).length;
