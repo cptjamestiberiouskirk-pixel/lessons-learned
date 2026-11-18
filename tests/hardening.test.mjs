@@ -9,6 +9,7 @@ import {copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {can, NO_FOLDER_LINKS, NO_HARD_LINKS, REFUSED} from './links.mjs';
 
 const TEMPLATES = resolve(dirname(fileURLToPath(import.meta.url)), '../plugins/lessons-learned/templates');
 const SCRIPT = process.env.LESSONS_SCRIPT ? resolve(process.env.LESSONS_SCRIPT) : join(TEMPLATES, 'lessons.mjs');
@@ -49,7 +50,7 @@ function link(target, path, type) {
     symlinkSync(target, path, type);
     return true;
   } catch (e) {
-    if (e.code === 'EPERM' || e.code === 'EACCES') return false;
+    if (REFUSED.includes(e.code)) return false;
     throw e;
   }
 }
@@ -239,7 +240,8 @@ test('other default-ignorable characters are reported too', () => {
   }
 });
 
-test('a LESSONS.md with a second hard link is refused', () => {
+test('a LESSONS.md with a second hard link is refused', (t) => {
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
   const secret = join(folder(), 'secret.txt');
   writeFileSync(secret, '## 2026-01-01: leak\n- What went wrong: x\n- Why: x\n- Rule going forward: SECRET-RULE\n- Evidence: x\n- Status: open\n');
   const dir = folder();
@@ -251,7 +253,8 @@ test('a LESSONS.md with a second hard link is refused', () => {
   assert.doesNotMatch(r.out, /SECRET-RULE/);
 });
 
-test('a dev folder that is a link to another project still reads this repo\'s files', () => {
+test('a dev folder that is a link to another project still reads this repo\'s files', (t) => {
+  if (!can.folderLink) return t.skip(NO_FOLDER_LINKS);
   const other = folder();
   mkdirSync(join(other, 'dev'));
   copyFileSync(SCRIPT, join(other, 'dev', 'lessons.mjs'));

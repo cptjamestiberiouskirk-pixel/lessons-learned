@@ -396,9 +396,9 @@ function look(name) {
 }
 // What is wrong with the file found for text the evidence says it holds, or ''.
 function holds(found, text) {
-  // Counted in UTF-16 units, as V8 counts a pattern: past about 250 its substring
-  // search turns about 100 times slower, so a limit in code points (200 emoji are
-  // 400 units) would let that through.
+  // Counted in UTF-16 units, as V8 counts a pattern: past about 250 its
+  // substring search can turn about 100 times slower, so a limit in code points
+  // (200 emoji are 400 units) would let that through.
   if (text.length > MAX_QUOTE) return `not searched: search text over ${MAX_QUOTE} UTF-16 units`;
   const {stat, path} = found;
   if (!stat.isFile()) return 'not searched: not a regular file';

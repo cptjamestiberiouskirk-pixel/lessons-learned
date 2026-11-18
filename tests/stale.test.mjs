@@ -9,6 +9,7 @@ import {existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, re
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {can, REFUSED} from './links.mjs';
 
 const TEMPLATES = resolve(dirname(fileURLToPath(import.meta.url)), '../plugins/lessons-learned/templates');
 const SCRIPT = process.env.LESSONS_SCRIPT ? resolve(process.env.LESSONS_SCRIPT) : join(TEMPLATES, 'lessons.mjs');
@@ -47,7 +48,7 @@ function link(target, path, type) {
     symlinkSync(target, path, type);
     return true;
   } catch (e) {
-    if (e.code === 'EPERM' || e.code === 'EACCES') return false;
+    if (REFUSED.includes(e.code)) return false;
     throw e;
   }
 }
@@ -197,12 +198,13 @@ test('--stale searches only a regular file of at most 1 MB with one hard link', 
     ],
     {'exact.txt': big, 'over.txt': big + 'y', 'src/lib/a.ts': '', 'linked.txt': 'no match here\n'},
   );
-  linkSync(join(dir, 'linked.txt'), join(dir, 'second-name.txt'));
+  // Where the file system has no hard links (exFAT, FAT), that one case can't be staged.
+  if (can.hardLink) linkSync(join(dir, 'linked.txt'), join(dir, 'second-name.txt'));
   const r = stale(dir);
   assert.doesNotMatch(r.out, /"At the limit"/, r.out);
   assert.match(r.out, /`over\.txt`: not searched: over 1048576 bytes/);
   assert.match(r.out, /`src\/lib`: not searched: not a regular file/);
-  assert.match(r.out, /`linked\.txt`: not searched: a file with a second hard link/);
+  if (can.hardLink) assert.match(r.out, /`linked\.txt`: not searched: a file with a second hard link/);
 });
 
 test('--stale checks 100 file names, and counts the ones past that', () => {
@@ -260,10 +262,14 @@ test('--stale costs no more for emoji search text than for ASCII at the limit', 
   };
   const best = (dir) => [timed(dir), timed(dir)].reduce((a, b) => (a.took <= b.took ? a : b));
   const base = best(ascii);
-  for (const [what, dir] of [['at the limit', atLimit], ['200 emoji', longer]]) {
+  // At the limit the search runs, so it gets room on both sides. Past the limit
+  // the text is refused before any read, so that run is only Node's start and
+  // gets a tight bound: a script that searches it takes 6 times the ASCII case
+  // or more, and the fixed one under a quarter of it.
+  for (const [what, dir, limit] of [['at the limit', atLimit, 4 * base.took + 500], ['200 emoji', longer, 1.5 * base.took]]) {
     const run = best(dir);
     assert.equal(run.r.code, 0, run.r.out);
-    assert.ok(run.took < 4 * base.took + 500, `${what} took ${run.took} ms, the ASCII worst case ${base.took} ms`);
+    assert.ok(run.took < limit, `${what} took ${run.took} ms, the ASCII worst case ${base.took} ms`);
   }
 });
 
@@ -287,20 +293,24 @@ test('--stale refuses a junction into a folder that differs from the repo only i
 });
 
 // The repo's real path ends in a separator in the comparison, so a sibling
-// folder whose name starts with the repo's (`repoZdocs`) is outside.
-test('--stale refuses a junction into a sibling folder whose name starts with the repo\'s', (t) => {
-  const base = folder();
-  const repoDir = join(base, 'repo');
-  const outside = join(base, 'repoZdocs');
-  mkdirSync(repoDir);
-  mkdirSync(outside);
-  writeFileSync(join(repoDir, 'LESSONS.md'), LESSONS + entry('Held outside', '`docs/a.md`, search "held text"'));
-  writeFileSync(join(repoDir, 'PLAYBOOK.md'), PLAYBOOK);
-  writeFileSync(join(outside, 'a.md'), 'held text\n');
-  if (!volumeJunction(join(repoDir, 'docs'), outside)) return t.skip('no junction to a volume path can be made here');
-  const r = stale(repoDir);
-  assert.match(r.out, /`docs\/a\.md`: not checked: a link on the way leads elsewhere/, r.out);
-});
+// folder whose name starts with the repo's is outside. Two names, since each
+// gets past a different wrong comparison: `repoZdocs` past one that skips a
+// character after the root, `repodocs` past one that strips a separator there.
+for (const sibling of ['repoZdocs', 'repodocs']) {
+  test(`--stale refuses a junction into a sibling folder whose name starts with the repo's (${sibling})`, (t) => {
+    const base = folder();
+    const repoDir = join(base, 'repo');
+    const outside = join(base, sibling);
+    mkdirSync(repoDir);
+    mkdirSync(outside);
+    writeFileSync(join(repoDir, 'LESSONS.md'), LESSONS + entry('Held outside', '`docs/a.md`, search "held text"'));
+    writeFileSync(join(repoDir, 'PLAYBOOK.md'), PLAYBOOK);
+    writeFileSync(join(outside, 'a.md'), 'held text\n');
+    if (!volumeJunction(join(repoDir, 'docs'), outside)) return t.skip('no junction to a volume path can be made here');
+    const r = stale(repoDir);
+    assert.match(r.out, /`docs\/a\.md`: not checked: a link on the way leads elsewhere/, r.out);
+  });
+}
 
 // A long search text made V8's substring search take time in the product of the
 // file's length and the text's, so the run grew with the square of its input.
