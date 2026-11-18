@@ -549,6 +549,63 @@ for (const [what, args] of [
   });
 }
 
+// NTFS keeps `kit` and `Kit` spelled with the Kelvin sign (U+212A) apart, and a
+// check that folds the whole path with toLowerCase makes both `kit`, so a junction
+// into the second got past it. The repo's part of the real path is compared exactly.
+test('the copy command compares the repo\'s real path exactly, so a folder that differs from it only by Unicode case is outside', (t) => {
+  const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
+  const base = folder();
+  const repo = join(base, 'kit', 'repo');
+  const outside = join(base, `${String.fromCodePoint(0x212a)}it`, 'repo', 'dev');
+  mkdirSync(repo, {recursive: true});
+  mkdirSync(outside, {recursive: true});
+  if (readdirSync(base).length !== 2) return t.skip('this file system folds the Kelvin sign to "k"');
+  if (!volumeJunction(join(repo, 'dev'), outside)) return t.skip('no junction to a volume path can be made here');
+  const r = runNode(code, [join(CODEX, 'templates', 'lessons.mjs'), 'dev/lessons.mjs'], repo);
+  assert.equal(r.status, 1, 'the copy said it worked');
+  assert.equal(r.stderr.trim(), 'dev: leads outside the repo');
+  assert.deepEqual(readdirSync(outside), []);
+});
+
+// A folder marked case-sensitive (no admin needed) can hold `repo` and `REPO`
+// side by side, so the repo's part of the real path must keep its case.
+test('the copy command refuses a junction into a folder that differs from the repo only in case, in a case-sensitive folder', (t) => {
+  if (process.platform !== 'win32') return t.skip('folders marked case-sensitive are a Windows feature');
+  const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
+  const base = folder();
+  const mark = spawnSync('fsutil', ['file', 'setCaseSensitiveInfo', base, 'enable'], {encoding: 'utf8'});
+  if (mark.status !== 0) return t.skip('this folder cannot be marked case-sensitive here');
+  const repo = join(base, 'repo');
+  const outside = join(base, 'REPO', 'dev');
+  mkdirSync(repo);
+  mkdirSync(outside, {recursive: true});
+  if (!volumeJunction(join(repo, 'dev'), outside)) return t.skip('no junction to a volume path can be made here');
+  const r = runNode(code, [join(CODEX, 'templates', 'lessons.mjs'), 'dev/lessons.mjs'], repo);
+  assert.equal(r.status, 1, 'the copy said it worked');
+  assert.equal(r.stderr.trim(), 'dev: leads outside the repo');
+  assert.deepEqual(readdirSync(outside), []);
+});
+
+// The repo's real path ends in a separator in the comparison, so a sibling
+// folder whose name starts with the repo's is outside. Two names, since each
+// gets past a different wrong comparison: `repoZdev` past one that skips a
+// character after the root, `repodev` past one that drops the separator there.
+for (const sibling of ['repoZdev', 'repodev']) {
+  test(`the copy command refuses a junction into a sibling folder whose name starts with the repo's (${sibling})`, (t) => {
+    const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
+    const base = folder();
+    const repo = join(base, 'repo');
+    const outside = join(base, sibling);
+    mkdirSync(repo);
+    mkdirSync(outside);
+    if (!volumeJunction(join(repo, 'dev'), outside)) return t.skip('no junction to a volume path can be made here');
+    const r = runNode(code, [join(CODEX, 'templates', 'lessons.mjs'), 'dev/lessons.mjs'], repo);
+    assert.equal(r.status, 1, 'the copy said it worked');
+    assert.equal(r.stderr.trim(), 'dev: leads outside the repo');
+    assert.deepEqual(readdirSync(outside), []);
+  });
+}
+
 test('the copy command refuses a target given as an absolute path, which the real-path check would not cover', () => {
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
   const repo = folder();
@@ -559,6 +616,21 @@ test('the copy command refuses a target given as an absolute path, which the rea
   assert.deepEqual(readdirSync(join(repo, 'dev')), []);
 });
 
+// 0.3.0 compared the folder's real path with the repo's joined to the path,
+// which `..` takes out of the repo on both sides, so the two matched.
+test('the copy command refuses a relative target that climbs out of the repo with ..', () => {
+  const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
+  const base = folder();
+  const repo = join(base, 'repo');
+  const outside = join(base, 'outside');
+  mkdirSync(repo);
+  mkdirSync(outside);
+  const r = runNode(code, [join(CODEX, 'templates', 'LESSONS.md'), '../outside/LESSONS.md'], repo);
+  assert.equal(r.status, 1, 'the copy said it worked');
+  assert.equal(r.stderr.trim(), '../outside: leads outside the repo');
+  assert.deepEqual(readdirSync(outside), []);
+});
+
 test('the copy command takes a folder named in another case than its target path gives, where the file system ignores case', (t) => {
   // There a path's case need not match the folder's, and the real path may give the folder's own.
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
@@ -566,6 +638,18 @@ test('the copy command takes a folder named in another case than its target path
   mkdirSync(join(repo, 'Dev'));
   if (!existsSync(join(repo, 'dev'))) return t.skip('this file system tells folder names apart by case');
   const r = runNode(code, [join(CODEX, 'templates', 'lessons.mjs'), 'dev/lessons.mjs'], repo);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(readFileSync(join(repo, 'Dev', 'lessons.mjs')).equals(readFileSync(join(CODEX, 'templates', 'lessons.mjs'))));
+});
+
+// The fold runs on macOS too, whose usual file system ignores case. No CI runner
+// gives a real path in the folder's own case there, so the platform is set to
+// darwin with a preload, on a file system here that ignores case.
+test('the copy command folds ASCII case in the folder name on macOS too', (t) => {
+  const repo = folder();
+  mkdirSync(join(repo, 'Dev'));
+  if (!existsSync(join(repo, 'dev'))) return t.skip('this file system tells folder names apart by case');
+  const {r} = copyWith("Object.defineProperty(process,'platform',{value:'darwin'});", join(CODEX, 'templates', 'lessons.mjs'), 'dev/lessons.mjs', repo);
   assert.equal(r.status, 0, r.stderr);
   assert.ok(readFileSync(join(repo, 'Dev', 'lessons.mjs')).equals(readFileSync(join(CODEX, 'templates', 'lessons.mjs'))));
 });

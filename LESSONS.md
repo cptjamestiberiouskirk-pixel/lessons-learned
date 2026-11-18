@@ -13,7 +13,21 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 - Status: open | promoted to PLAYBOOK "<section>" | closed: <why the rule no longer holds>
 ```
 
-A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
+A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
+
+## 2026-11-18: The CHANGELOG named the script's message for cases that were never run, twice in one release
+- What went wrong: 0.3.1's CHANGELOG said a symbolic link swapped in gives "changed while it was read"; on Linux and macOS it gives "cannot read" (review round 1). After that fix, a rewording said a file that is "grown" is not read and gives "changed"; a file grown before the open is read, and one grown past the cap gives "is over ... bytes" (review round 3).
+- Why: each sentence was written from what the code was meant to do for a group of cases, and only one case of the group had been run.
+- Rule going forward: a doc sentence that says what the script prints, or whether it reads a file, names only cases that were run, and quotes each message from that run's output.
+- Evidence: `CHANGELOG.md`, search "is refused as over it"
+- Status: open
+
+## 2026-11-18: A fail-before copy of the repo was made from the working tree, so it ran the new skills
+- What went wrong: to run the new `..` test against 0.3.0's copy command, a copy of the repo was made with `git ls-files` and `tar`, which copy the working tree. The test passed there, on the new skills. A `grep` for the new check in the copy showed it; the run was redone with the two skills from `git show HEAD:<path>`, checked with `git hash-object`, and then the test failed as it should.
+- Why: "Running a test against old code" says to check the copy's hash, and that step was skipped because the copy was of the whole repo, not one file.
+- Rule going forward: in a copy of the repo made for a fail-before run, every file the fix changed comes from `git show <rev>:<path>` and is checked with `git hash-object` against `git rev-parse <rev>:<path>` before the run.
+- Evidence: `tests/codex.test.mjs`, search "the copy command refuses a relative target that climbs out of the repo with .."
+- Status: open
 
 ## 2026-11-17: A commit's Verified line was written from memory, and said --stale listed nothing it did list
 - What went wrong: the commit that promoted "Testing on more than one system" said `--stale` gave "none for these lessons' sections". The `--stale` output run just before it listed the Linux lesson, for its scratch file. The message was amended before any push.

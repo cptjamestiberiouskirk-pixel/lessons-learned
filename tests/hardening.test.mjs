@@ -5,11 +5,12 @@
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from './child.mjs';
-import {copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
+import {copyFileSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {can, NO_FOLDER_LINKS, NO_HARD_LINKS, REFUSED} from './links.mjs';
+import {growAfterFstat, swapAfterLook} from './swap.mjs';
 
 const TEMPLATES = resolve(dirname(fileURLToPath(import.meta.url)), '../plugins/lessons-learned/templates');
 const SCRIPT = process.env.LESSONS_SCRIPT ? resolve(process.env.LESSONS_SCRIPT) : join(TEMPLATES, 'lessons.mjs');
@@ -251,6 +252,101 @@ test('a LESSONS.md with a second hard link is refused', (t) => {
   assert.equal(r.code, 2, r.out);
   assert.match(r.out, /has 2 hard links/);
   assert.doesNotMatch(r.out, /SECRET-RULE/);
+});
+
+test('a LESSONS.md swapped for a hard link to another file after its look is not read', (t) => {
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
+  const outside = folder();
+  const secret = join(outside, 'secret.txt');
+  writeFileSync(secret, LESSONS + entry('leak', 'SECRET-RULE'));
+  const dir = withFiles();
+  const r = spawnSync(process.execPath, ['--require', swapAfterLook(outside, 'LESSONS.md', secret), SCRIPT, '--dir', dir, 'leak'], {encoding: 'utf8'});
+  const out = r.stdout + r.stderr;
+  // The swap happened: the secret now has the repo's name as a second link.
+  assert.equal(lstatSync(secret).nlink, 2, 'the preload did not swap the file');
+  assert.equal(r.status, 2, out);
+  assert.match(out, /LESSONS\.md changed while it was read/);
+  assert.doesNotMatch(out, /SECRET-RULE/);
+});
+
+// Each of these is caught by its own check of the read. A file renamed in is
+// caught by its file ID, a second name for the same file by its link count, and
+// a symbolic link by the open (on Windows, by its file ID). A FIFO is caught by
+// the open not waiting on it, then by its file ID (or by its type, where the
+// FIFO gets the file's freed ID, as on ext4). A file that grew past the cap is
+// caught by the size of its handle, and one that grew after that by the bytes
+// read. No swap on one file system reaches the device check, and the type check
+// has no test of its own.
+function runSwapped(preload, dir, options = {}) {
+  const r = spawnSync(process.execPath, ['--require', preload, SCRIPT, '--dir', dir, 'leak'], {encoding: 'utf8', ...options});
+  return {code: r.status, out: r.stdout + r.stderr};
+}
+test('a LESSONS.md swapped for another file renamed in after its look is not read', () => {
+  const outside = folder();
+  const secret = join(outside, 'secret.txt');
+  writeFileSync(secret, LESSONS + entry('leak', 'SECRET-RULE'));
+  const dir = withFiles();
+  const r = runSwapped(swapAfterLook(outside, 'LESSONS.md', secret, 'rename'), dir);
+  assert.match(readFileSync(join(dir, 'LESSONS.md'), 'utf8'), /SECRET-RULE/, 'the preload did not swap the file');
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, /LESSONS\.md changed while it was read/);
+  assert.doesNotMatch(r.out, /SECRET-RULE/);
+});
+test('a LESSONS.md given a second name after its look is not read', (t) => {
+  if (!can.hardLink) return t.skip(NO_HARD_LINKS);
+  const outside = folder();
+  const dir = withFiles();
+  const r = runSwapped(swapAfterLook(outside, 'LESSONS.md', join(outside, 'second.md'), 'second-link'), dir);
+  assert.equal(lstatSync(join(dir, 'LESSONS.md')).nlink, 2, 'the preload did not make the second name');
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, /LESSONS\.md changed while it was read/);
+});
+test('a LESSONS.md swapped for a symbolic link after its look is not read', (t) => {
+  const outside = folder();
+  const secret = join(outside, 'secret.txt');
+  writeFileSync(secret, LESSONS + entry('leak', 'SECRET-RULE'));
+  try {
+    symlinkSync(secret, join(outside, 'probe'));
+  } catch (e) {
+    if (REFUSED.includes(e.code)) return t.skip('this system does not allow symbolic links here');
+    throw e;
+  }
+  const dir = withFiles();
+  const r = runSwapped(swapAfterLook(outside, 'LESSONS.md', secret, 'symlink'), dir);
+  assert.ok(lstatSync(join(dir, 'LESSONS.md')).isSymbolicLink(), 'the preload did not swap the file');
+  assert.equal(r.code, 2, r.out);
+  // Where the open can refuse a link (O_NOFOLLOW), it does; on Windows the
+  // handle is the link's target, whose file ID is not the look's.
+  assert.match(r.out, process.platform === 'win32' ? /LESSONS\.md changed while it was read/ : /cannot read .*LESSONS\.md/);
+  assert.doesNotMatch(r.out, /SECRET-RULE/);
+});
+test('a LESSONS.md swapped for a FIFO after its look is refused, without waiting for a writer', (t) => {
+  if (process.platform === 'win32') return t.skip('a FIFO is not a Windows file');
+  const outside = folder();
+  const dir = withFiles();
+  // A blocking open of a FIFO waits for a writer, which never comes; 10 s is
+  // far past the run's usual 100 ms.
+  const r = runSwapped(swapAfterLook(outside, 'LESSONS.md', '', 'fifo'), dir, {timeout: 10_000});
+  assert.ok(lstatSync(join(dir, 'LESSONS.md')).isFIFO(), 'the preload did not swap the file');
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, /LESSONS\.md changed while it was read/);
+});
+test('a LESSONS.md that grows past 10 MB after its look is refused', () => {
+  const max = 10 * 1024 * 1024;
+  const outside = folder();
+  const dir = withFiles({lessons: LESSONS + ' '.repeat(max - Buffer.byteLength(LESSONS))});
+  const r = runSwapped(swapAfterLook(outside, 'LESSONS.md', ' ', 'grow'), dir);
+  assert.equal(lstatSync(join(dir, 'LESSONS.md')).size, max + 1, 'the preload did not grow the file');
+  assert.equal(r.code, 2, r.out.slice(0, 500));
+  assert.match(r.out, /is over 10485760 bytes/);
+});
+test('a LESSONS.md that grows between the check of its handle and the read is not read', () => {
+  const outside = folder();
+  const dir = withFiles();
+  const r = runSwapped(growAfterFstat(outside, 'LESSONS.md', entry('leak', 'GROWN-RULE')), dir);
+  assert.match(readFileSync(join(dir, 'LESSONS.md'), 'utf8'), /GROWN-RULE/, 'the preload did not grow the file');
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, /LESSONS\.md changed while it was read/);
 });
 
 test('a dev folder that is a link to another project still reads this repo\'s files', (t) => {
