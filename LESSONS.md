@@ -15,6 +15,20 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-17: A commit's Verified line was written from memory, and said --stale listed nothing it did list
+- What went wrong: the commit that promoted "Testing on more than one system" said `--stale` gave "none for these lessons' sections". The `--stale` output run just before it listed the Linux lesson, for its scratch file. The message was amended before any push.
+- Why: the Verified line was written from what the check was expected to show, not copied from what it printed, the same mistake as "A new lesson quoted its evidence from memory", in a commit message.
+- Rule going forward: a commit's Verified line states each check's result as its output printed it, read again while writing the line.
+- Evidence: commit 41d3148, amended as 87860c4, which says "one is the Linux lesson's scratch file".
+- Status: open
+
+## 2026-11-17: A test's child process hung in CI, and the log named no test
+- What went wrong: on PR 2's first CI run, a child process started by `tests/hardening.test.mjs` never exited on ubuntu Node 24. The job waited until its 10-minute limit cancelled it, and the log named no test, because `node --test` prints a file's results only when the file ends. A rerun passed in 11 s, and 60 local runs on Node 18 and 26 did not hang, so the cause was not found.
+- Why: the tests called `spawnSync` with no time limit, so one stuck child held its file until the job limit, with nothing to say which test it was.
+- Rule going forward: a test starts a child process through the `spawnSync` that `tests/child.mjs` exports, never straight from `node:child_process`. It kills the child after 60 seconds and fails the test with the command named.
+- Evidence: `tests/child.mjs`, search "A child process that never exits"; commit c5e46ae.
+- Status: open
+
 ## 2026-11-17: A new lesson quoted its evidence from memory, and --stale flagged it the day it was written
 - What went wrong: the exFAT lesson's evidence quoted a test name as "a rename changes a file's ID (exFAT)". The test name is in single quotes, so the file holds `file\'s`, and the search text never matched. Review round 5 found it with `--stale`.
 - Why: the search text was typed from the test's meaning, not copied from the file, and `--stale` was not run after the entry was added.
