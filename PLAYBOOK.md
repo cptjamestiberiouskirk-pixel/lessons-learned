@@ -44,12 +44,28 @@ From: 2026-11-16 "A fail-before run used a copy of the old script that was one l
 1. In pwsh, copy an old version of a file with a byte-exact redirect: `cmd /c "git show <rev>:<path> > <file>"`. Not `| Set-Content -NoNewline`, which joins the lines, and not from Git Bash, which rewrites `/c`.
 2. Check the copy before using it: `git hash-object <file>` must print what `git rev-parse <rev>:<path>` prints.
 
+## Testing on more than one system
+
+From: 2026-11-17 "Two tests that passed on Windows failed on Linux, found only by a reviewer's WSL probe"
+
+1. Before a release commit, also run `node --test` on Linux. On Windows, run it under WSL, from a copy inside WSL's own file system (under its home folder, say), not from `/mnt/c` or another Windows drive. `node dev/release-check.mjs` does this in its check "node --test on Linux". On Linux, the plain `node --test` run covers it.
+2. When you add a test that measures a resource (heap, time), or change its limit, take the limit from runs on more than one Node version and OS. Leave room on both sides: the limit sits well above the most the code needed in any of those runs, and well below the least the code the test should catch needed.
+
 ## Quoting text that must match
 
 From: 2026-11-17 "A test asserted the cut marker's format from memory, and failed on the fixed script", 2026-11-17 "A new lesson quoted its evidence from memory, and --stale flagged it the day it was written"
 
 1. Before a test asserts on the output of `dev/lessons.mjs`, run the version the test should pass on once, on the test's input. Copy the text the test checks from what it printed, spaces and punctuation included.
 2. A lesson's Evidence line can name a file and quote a search text after it (`search "text"`). Copy that text from the named file, character for character. After adding or changing a lesson's Evidence, run `node dev/lessons.mjs --stale` and check that its output does not list that lesson's title.
+
+## Running a review round
+
+From: 2026-11-17 "Review rounds re-reviewed the whole release instead of the diff since the last round"
+
+1. Before writing a round's brief, read the "Rounds" section of `REVIEW.md`.
+2. Scope the round to the diff since the last reviewed state, not to the whole release. For the first round, that is the release's base, which `dev/release-state.md` names.
+3. Before applying a round's fixes, save the reviewed state: copy the folders and docs the release changes to a folder outside the repo. The next round diffs against that copy (`git diff --no-index <copy>/<folder> <folder>`).
+4. Run fail-before checks (a new test run against the code before its fix, as "Running a test against old code" says) in a separate copy, never in the saved review state, which must stay as it was reviewed.
 
 ## Committing
 
