@@ -20,7 +20,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: the search text was typed from the test's meaning, not copied from the file, and `--stale` was not run after the entry was added.
 - Rule going forward: copy an evidence search text from the file itself, and after adding or changing a lesson's Evidence, run `node dev/lessons.mjs --stale` and check it lists no lead for that lesson.
 - Evidence: `dev/release-state.md`, search "the new lesson's evidence quotes".
-- Status: open
+- Status: promoted to PLAYBOOK "Quoting text that must match"
 
 ## 2026-11-17: The copy's end check assumed a rename keeps a file's ID, and failed every copy on exFAT
 - What went wrong: the copy command falls back to a rename where a hard link fails, and its docs name a FAT drive as one such place. Its last check compared the target's ID with the ID it read from its file before the move. exFAT has no hard links, and a rename there changes a file's ID, so every copy on an exFAT drive failed with "is not the file this copy wrote", though the file was right. Another session found it with a test run on an exFAT disk.
@@ -55,7 +55,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: the expected format was written from memory, not copied from the script's output.
 - Rule going forward: before asserting on the script's output in a test, run the script on the test's input once and copy the format from what it printed.
 - Evidence: `tests/stale.test.mjs`, search "cuts a long name short".
-- Status: open
+- Status: promoted to PLAYBOOK "Quoting text that must match"
 
 ## 2026-11-17: Mutant runs against files that were never written looked like six caught mutants
 - What went wrong: a `node -e` mutant generator inside Git Bash failed on its quoting and wrote no files. The loop that followed ran the stale tests with `LESSONS_SCRIPT` set to each missing path, and every run showed 8 of 8 failing, the same as a mutant caught by every test.

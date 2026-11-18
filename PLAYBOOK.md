@@ -44,6 +44,13 @@ From: 2026-11-16 "A fail-before run used a copy of the old script that was one l
 1. In pwsh, copy an old version of a file with a byte-exact redirect: `cmd /c "git show <rev>:<path> > <file>"`. Not `| Set-Content -NoNewline`, which joins the lines, and not from Git Bash, which rewrites `/c`.
 2. Check the copy before using it: `git hash-object <file>` must print what `git rev-parse <rev>:<path>` prints.
 
+## Quoting text that must match
+
+From: 2026-11-17 "A test asserted the cut marker's format from memory, and failed on the fixed script", 2026-11-17 "A new lesson quoted its evidence from memory, and --stale flagged it the day it was written"
+
+1. Before a test asserts on the output of `dev/lessons.mjs`, run the version the test should pass on once, on the test's input. Copy the text the test checks from what it printed, spaces and punctuation included.
+2. A lesson's Evidence line can name a file and quote a search text after it (`search "text"`). Copy that text from the named file, character for character. After adding or changing a lesson's Evidence, run `node dev/lessons.mjs --stale` and check that its output does not list that lesson's title.
+
 ## Committing
 
 From: 2026-11-16 "A commit message passed with -F - in PowerShell was read as a path"
