@@ -54,11 +54,12 @@ From: 2026-11-17 "Two tests that passed on Windows failed on Linux, found only b
 
 ## Quoting text that must match
 
-From: 2026-11-17 "A test asserted the cut marker's format from memory, and failed on the fixed script", 2026-11-17 "A new lesson quoted its evidence from memory, and --stale flagged it the day it was written", 2026-11-18 "The CHANGELOG named the script's message for cases that were never run, twice in one release"
+From: 2026-11-17 "A test asserted the cut marker's format from memory, and failed on the fixed script", 2026-11-17 "A new lesson quoted its evidence from memory, and --stale flagged it the day it was written", 2026-11-18 "The CHANGELOG named the script's message for cases that were never run, twice in one release", 2026-11-17 "A commit's Verified line was written from memory, and said --stale listed nothing it did list"
 
 1. Before a test asserts on the output of `dev/lessons.mjs`, run the version the test should pass on once, on the test's input. Copy the text the test checks from what it printed, spaces and punctuation included.
 2. A lesson's Evidence line can name a file and quote a search text after it (`search "text"`). Copy that text from the named file, character for character. After adding or changing a lesson's Evidence, run `node dev/lessons.mjs --stale` and check that its output does not list that lesson's title.
 3. A sentence in the docs (the CHANGELOG, a README, SECURITY.md or a skill) can say what `dev/lessons.mjs` prints, or whether it reads a file. It names only cases that were run. A case is one kind of input or file state, not a group of them. Quote each message from the output of that case's run.
+4. A commit's `Verified:` line states each check's result as that check's output printed it. Read the output again while writing the line.
 
 ## Running a review round
 
