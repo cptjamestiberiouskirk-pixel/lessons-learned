@@ -20,7 +20,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: each expected verdict was written from what the parser was thought to do, without running the gate on that input first.
 - Rule going forward: before a gate test asserts a verdict for a new kind of input, run the gate once on that input and read why it gives that verdict. An input meant to tell two dialects apart is one whose verdict the shared walker's code shows differs between them.
 - Evidence: `tests/gate-codex.test.mjs`, search "sh runs a backtick substitution; PowerShell reads a backtick as an escape."
-- Status: open
+- Status: promoted to PLAYBOOK "Quoting text that must match"
 
 ## 2026-11-22: A property test's generator made PowerShell that pwsh refuses
 - What went wrong: in review round 4's fixes, the new property test for `$( )` inside PowerShell double quotes was built from pieces each checked alone. Run through pwsh 7, some of its inputs did not parse: a string holding `` `" ``, `""`, `)`, `#`, or nothing, inside a `$( )` inside double quotes. It took three changes to the generator before 40 of 40 inputs ran, in several batches.
@@ -97,7 +97,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: the new entries were written from what had just happened, without a lookup for the words of their own rules.
 - Rule going forward: before adding a lesson, run `node dev/lessons.mjs` with two to four words from its rule. If an open lesson's rule covers it, promote that lesson as step 5 says, instead of adding a new open one.
 - Evidence: `PLAYBOOK.md`, search "## Starting a child process in a test"
-- Status: open
+- Status: promoted to PLAYBOOK "The lessons check"
 
 ## 2026-11-22: A fail-before test for the BOM fix passed on the old gate
 - What went wrong: the test for "a PLAYBOOK.md with a BOM goes ungated" put the BOM before the template's first line, `# PLAYBOOK`, so the heading was on a later line and the old gate found it too. The fail-before run showed it passing on both versions. With the heading as the first line after the BOM, as the review's probe had it, it failed on the old gate and passed on the new.
@@ -181,7 +181,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: the fallback was probed only where hard links are refused on NTFS (the Codex sandbox), where a rename keeps the ID. The FAT case was written down as a reason for the fallback but never run.
 - Rule going forward: a path the code takes for a named file system or platform is run there before it ships: for the copy, an exFAT drive (a virtual disk) with the repo and `TEMP` on it. A check that compares file IDs across a move reads the moved file's ID after the move, from a handle it holds. This widens the probe rule in "A create-only write was trusted to refuse a link".
 - Evidence: `tests/codex.test.mjs`, search "the copy renames the file into place and accepts it"; `dev/release-state.md`, search "exFAT".
-- Status: open
+- Status: promoted to PLAYBOOK "Testing on more than one system"
 
 ## 2026-11-17: Counting the search limit in code points let text past V8's slow-search threshold
 - What went wrong: round 1 capped --stale's search text at 200 to keep the search fast. Round 2 made the cap count code points, as the docs say, which lets up to 400 UTF-16 units through. V8's `includes` can turn about 100 times slower per search once the pattern is longer than about 250 units (it did for emoji), so 100 searches of 200 emoji on 1 MB took 5.7 s, against 0.4 s for the worst case under the old cap.
@@ -258,7 +258,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: on Linux and macOS, `O_CREAT | O_EXCL` fails on any link at the name. Windows has no such rule for `CREATE_NEW`: it follows the link, so "create only" holds for the target, not for the name.
 - Rule going forward: to create a file at a name where a link may appear, write it under a random name beside it and give it the name with a hard link (`linkSync`), which fails on anything at the name and follows nothing. Where the hard link fails for any other reason (Codex's Windows sandbox refuses it with `EPERM`), rename it into place, which replaces the name and writes through nothing. Probe a guard's behavior on Windows, and in the Codex sandbox, before relying on it.
 - Evidence: the probes in the 0.2.1 work (a dangling file link: "WROTE", the text at the target; a dangling junction: `EISDIR` and an empty folder; `linkSync` over either: `EEXIST`, nothing made; `renameSync` over a junction: `EPERM`, nothing made), the Codex end-to-end run for 0.2.1 (`LESSONS.md: cannot be made (EPERM)` from `linkSync` in the sandbox), and `tests/codex.test.mjs`, "the copy command is not led by a dangling junction made after its look at the target".
-- Status: open
+- Status: promoted to PLAYBOOK "Testing on more than one system"
 
 ## 2026-11-16: A growth test was claimed to guard a cost that an output cap keeps linear
 - What went wrong: I said the 4 MB title test guarded the change that cuts a title once for all its problem messages. Review round 6 showed it passed on the script before that change, and on a mutant that cut the title again in each message.
@@ -292,7 +292,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: a batch of text replacements written as `@( ,@('old', 'new' + "`n" + 'more') )` replaced each old text with only the part before the first `+`. A table row in SECURITY.md lost its end and merged with the next row, two bullets were dropped, and two script edits never landed. The loop reported no missing anchor.
 - Why: in PowerShell the comma binds tighter than `+`, so `'a', 'b' + 'c'` is the array `'a', 'b'` with `'c'` added as a third item. The pair's second item was only `'b'`.
 - Rule going forward: in a PowerShell array of replacement pairs, wrap a joined item in parentheses (`@('old', ('new' + "`n" + 'more'))`) or write it as one here-string, and read each changed file back before going on.
-- Evidence: the 0.2.0 session: SECURITY.md held the `node` row and the `dev/lessons.mjs` row on one line; the hard-link and `byKey` edits to `lessons.mjs` were missing until redone with parentheses.
+- Evidence: the 0.2.0 session: SECURITY.md held the `node` row and the `dev/lessons.mjs` row on one line; the hard-link and `byKey` edits to `plugins/lessons-learned/templates/lessons.mjs` were missing until redone with parentheses.
 - Status: open
 
 ## 2026-11-16: A setup run wrote the script's BOM escape as the character itself
@@ -313,19 +313,19 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: an edit to `templates/lessons.mjs` meant to add `.replace(/^\uFEFF/, '')` left an invisible U+FEFF character between `^` and `/` instead of the six-character escape. The code still worked, but it hid a character in the source of a change about hidden characters.
 - Why: the Edit tool turned `\uFEFF` in the new text into the character itself, in the script and in this entry too (three times). `\x00`-style escapes and doubled-backslash `\\u0000` came through as text.
 - Rule going forward: after an edit whose text holds a `\u` escape, in any file, scan the file for non-ASCII characters (`[^\x00-\x7F]`). Write a regex escape for an invisible character with a doubled backslash inside a string (`new RegExp('\\uFEFF')`), or fix it with a byte-level replace.
-- Evidence: the 0.2.0 hardening session: a scan found 1 literal U+FEFF in `templates/lessons.mjs`; after the replace, 0 non-ASCII characters.
+- Evidence: the 0.2.0 hardening session: a scan found 1 literal U+FEFF in `plugins/lessons-learned/templates/lessons.mjs`; after the replace, 0 non-ASCII characters.
 - Status: promoted to PLAYBOOK "Changing the setup skill or templates"
 
 ## 2026-11-16: CI ran the tests with a folder argument, and Node 22 read it as a module
 - What went wrong: the first CI run (43957308380) failed on Node 22 on all three systems with "Cannot find module '.../tests'", while Node 20 passed. Locally, `node --test tests/` had passed on Node 26.
-- Why: INFERRED from the log: Node 22 took the `tests/` argument as a module to load, not a folder to search. How `--test` reads its arguments differs between Node versions.
+- Why: CONFIRMED from the log (`gh run view 43957308380 --log-failed`, read again 2026-11-22: on Node 22, on Windows and on macOS, `node --test tests/` printed "Cannot find module" for the `tests` folder): Node 22 took the `tests/` argument as a module to load, not a folder to search. How `--test` reads its arguments differs between Node versions.
 - Rule going forward: run the tests with `node --test` and no path argument. It finds `*.test.mjs` files the same way on every version CI uses.
 - Evidence: `gh run view 43957308380 --log-failed`; after 52e4438, run 43957556091 passed all six jobs (three systems, Node 22 and 24).
 - Status: open
 
 ## 2026-11-16: Listing a git archive through a pipe in PowerShell ran past the 2-minute limit
 - What went wrong: `git archive $tree | tar -t` in the PowerShell tool ran past the 2-minute limit and was moved to the background, though the archive has 20 entries. The same listing through a file (`git archive -o <file>`, then `tar -tf <file>`) took 176 ms.
-- Why: HYPOTHESIZED: the pipe between the two native programs in pwsh 7.7. Not looked into further.
+- Why: HYPOTHESIZED: the pipe between the two native programs in pwsh 7.7. On 2026-11-22, `git archive HEAD | tar -t` in pwsh 7.7.0 took 0.11 s, so the hang did not reproduce, and the cause is still not known.
 - Rule going forward: in the PowerShell tool, list an archive through a temp file, not a pipe.
 - Evidence: the MVP session, 2026-11-16: the backgrounded call, then the timed file-based listing.
 - Status: open
