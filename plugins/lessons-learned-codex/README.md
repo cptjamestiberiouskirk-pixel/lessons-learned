@@ -12,7 +12,7 @@ You need Node.js 22 or later and the Codex CLI.
 codex plugin marketplace add cptjamestiberiouskirk-pixel/lessons-learned
 ```
 
-Then install **lessons-learned-codex** from that marketplace: in the ChatGPT desktop app, open the Plugins directory and choose it, or with the CLI run `codex plugin add lessons-learned-codex@lessons-learned-codex`. The plugin has no hooks, so either way works. To confirm it is installed, run `codex plugin list` and look for `lessons-learned-codex ... installed, enabled`; a new chat then has the `lessons-setup` skill.
+Then install **lessons-learned-codex** from that marketplace: in the ChatGPT desktop app, open the Plugins directory and choose it, or with the CLI run `codex plugin add lessons-learned-codex@lessons-learned-codex`. The plugin has no hooks, so either way works, and in Codex the lessons check is followed by hand. (The Claude Code plugin has a hook that checks for the `Lessons checked:` line before edits, commits and pushes; a Codex copy of it waits until Codex's hook input for its tools is confirmed.) To confirm it is installed, run `codex plugin list` and look for `lessons-learned-codex ... installed, enabled`; a new chat then has the `lessons-setup` skill.
 
 ## Use
 

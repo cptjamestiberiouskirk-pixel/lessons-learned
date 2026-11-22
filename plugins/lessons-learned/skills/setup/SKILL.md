@@ -51,7 +51,7 @@ Any `LINK`, `HARDLINK` or `other` is a stop. A hard link is a second name for a 
 
 ## When a handoff or memory plugin is installed too
 
-A project may also have a handoff or memory plugin installed, such as Trailmark. Trailmark keeps its notes outside the repo and brings them into each session through hooks. This plugin has no hooks and keeps everything in the repo. Both run in the same session without overlap: the handoff says where the work stands, and `LESSONS.md` and `PLAYBOOK.md` say how to do it without repeating mistakes. Leave the other plugin's files and settings alone, report its memory in step 1 as "other memory, kept separate" if you see it, and don't move its notes into `LESSONS.md` unless the user asks. A handoff may point to a lesson by its title but doesn't repeat its rule.
+A project may also have a handoff or memory plugin installed, such as Trailmark. Trailmark keeps its notes outside the repo and brings them into each session through hooks. This plugin keeps everything in the repo. Its one hook, the lessons gate, only reads: before an edit, commit or push in a repo with the lessons check, it asks for a `Lessons checked:` line (`LESSONS_GATE=off` turns it off). Both run in the same session without overlap: the handoff says where the work stands, and `LESSONS.md` and `PLAYBOOK.md` say how to do it without repeating mistakes. Leave the other plugin's files and settings alone, report its memory in step 1 as "other memory, kept separate" if you see it, and don't move its notes into `LESSONS.md` unless the user asks. A handoff may point to a lesson by its title but doesn't repeat its rule.
 
 ## Steps
 
@@ -91,6 +91,8 @@ If the project doesn't use Node, say so in the plan: the script needs Node to ru
 ### 4. Build
 
 List the root and run the path check again right before writing, and stop as they say.
+
+This plugin's lessons gate denies an edit in a repo whose `PLAYBOOK.md` has the lessons check, until the turn holds a visible `Lessons checked:` line and, once `dev/lessons.mjs` is this plugin's script, a lookup with it. So before the first write of this step, write the line `Lessons checked: none apply (setting up the lessons check)`. Right after `dev/lessons.mjs` is copied, run `node dev/lessons.mjs setup` once. If a write is still denied with the gate's reason, do what it says and retry that write once.
 
 Bring each template in through a staging folder, so the Write tool never writes to a template's own place in the repo, where a link made after the path check would lead it out:
 

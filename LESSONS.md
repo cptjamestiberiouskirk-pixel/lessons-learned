@@ -15,6 +15,125 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-22: A property test's generator made PowerShell that pwsh refuses
+- What went wrong: in review round 4's fixes, the new property test for `$( )` inside PowerShell double quotes was built from pieces each checked alone. Run through pwsh 7, some of its inputs did not parse: a string holding `` `" ``, `""`, `)`, `#`, or nothing, inside a `$( )` inside double quotes. It took three changes to the generator before 40 of 40 inputs ran, in several batches.
+- Why: the pieces were checked one at a time, not in the nestings the generator makes, so the test would have checked the gate against input no shell runs.
+- Rule going forward: before trusting a property test that builds shell input, run a batch of its generated inputs (40 or more, more than once) in the real shell, and change the generator until every one runs as the test expects.
+- Evidence: `tests/gate.test.mjs`, search "inside double quotes, so those come only in a string at the top"
+- Status: open
+
+## 2026-11-22: The case fix missed an esac written right before ) or ;;
+- What went wrong: in review round 4's fixes, the first version of the gate's case tracking read the case state before the word in front of a `)` or `;` was finished. In `esac)` and `esac;;` the `esac` was still pending, so the case looked open and the `)` was taken as a pattern's end. The new tests caught it (2 failures) before the report.
+- Why: the tokenizer finishes a word only at a separator, and the new branch ran before that step.
+- Rule going forward: a tokenizer branch that decides on state a word can change finishes that word first, and its tests put the word right before the separator, with no space.
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "The word before it may be the esac that ends the case."
+- Status: open
+
+## 2026-11-22: Round 3's gate cases passed with the rule they were written for removed
+- What went wrong: in review round 3's fixes, 13 of 59 mutants of the lessons gate survived the tests. Two of those had a case written for them. The case for "'@ inside a line does not close it" passed with that rule removed: the text the mutant added to the opening line opened a quote that hid the `git push` after it. The case for `Write-Host 'mail me @'` passed too: with no closer after it, the here-string was never closed and its lines were put back, so the commit was read either way.
+- Why: each case was checked against the fixed gate only, and its input let another rule (a quote, the never-closed rule) decide the result. This is the second time the rule of "Two gate tests passed with the guard they were written for removed" was seen.
+- Rule going forward: a test case written for one rule of a parser is run against a mutant that removes only that rule, and must fail there. Its input must not be decided by another rule too.
+- Evidence: `tests/gate.test.mjs`, search "write '@' at the start of a line to close it"
+- Status: promoted to PLAYBOOK "Parsing untrusted text"
+
+## 2026-11-22: A mutant pattern written through a Git Bash heredoc lost its backslashes
+- What went wrong: in review round 3, a scratch script for the growth runs was written through a quoted Git Bash heredoc. Its `hasLine-quadratic` pattern held `/[\\s>*_#-]/` in a JS string, reached the file with one backslash, and so matched nothing in the gate. The script stopped with "pattern missing or not unique", and the line was redone with the Edit tool and `String.raw`.
+- Why: the PLAYBOOK "Editing files" step was not looked up for a scratch script, though it covers any file with a backslash in it.
+- Rule going forward: text that holds a backslash goes into a file through the Edit or Write tool, scratch scripts included. This is the third time the rule of "Backslashes in a Git Bash heredoc were lost before the text reached the file" was seen.
+- Evidence: round 3's growth-run script stopping with "hasLine-quadratic: pattern missing or not unique", then the same run after the Edit tool fix (5 of 5 fail).
+- Status: promoted to PLAYBOOK "Editing files"
+
+## 2026-11-22: A growth test passed the slow version it names in 3 of 5 runs
+- What went wrong: in review round 2, two growth tests of the lessons gate passed the slow versions they were meant to catch, and were changed to time past a call the gate lets through at once (Node's start). The 20 MB transcript test then failed its slow version (`readTurn-reread`) in one run, at a ratio of 9.1, and was trusted. Review round 3 ran it 5 times against that version: it passed 3 of them (7.9 to 8.4). A gated call's own fixed cost (finding the repo, hashing its script) still diluted the growth.
+- Why: each test was run once against its slow version, and a ratio just past the limit was taken as a pass.
+- Rule going forward: a growth test times past the fixed cost of the path it measures (the same call on the smallest input), says in the test which slow version it fails on, and is run 5 times against that version before it is trusted: it must fail all 5, with its ratio well past the limit. This is the second time the rule of "A timing test passed on the slow script it was written to catch" was seen.
+- Evidence: `tests/gate.test.mjs`, search "time: a gated call on a 31 MB transcript grows linearly from a quarter of it"
+- Status: promoted to PLAYBOOK "Writing a timing test"
+
+## 2026-11-22: A here-doc test written for a review finding passed on the old gate
+- What went wrong: in review round 2's fixes, the test for "`<<` inside quotes or `$(( ))` is not a here-doc" put `git commit` on the same line as the `<<`, and the fail-before run showed it passing on the reviewed gate too: a here-doc body starts on the next line, so both gates read a commit on the `<<` line. The review's probe had the commit on the next line. With that input, the test failed on the reviewed gate and passed on the new one.
+- Why: the test's input was written from the finding's summary, not copied from the probe that found it. This is the second time the rule of "A fail-before test for the BOM fix passed on the old gate" was seen.
+- Rule going forward: a test for a review finding starts from the input of the probe that found it (the review's scratch scripts), and is run on the old code before it is trusted.
+- Evidence: `tests/gate.test.mjs`, search "<< inside quotes or $(( )) is not a here-doc"
+- Status: promoted to PLAYBOOK "Writing a test for a review finding"
+
+## 2026-11-22: A regex written through node -e in Git Bash lost its backslash
+- What went wrong: in review round 2's fixes, two changes to scratch scripts were made with a `node -e` replace run from the Bash tool. The first threw before it wrote anything. The second wrote the `\n` in a regex `[^\n]` as a line break, and the script then failed to load ("Invalid regular expression: missing /"). Both changes were then made with the Edit tool.
+- Why: the loss in "Backslashes in a Git Bash heredoc were lost before the text reached the file" also hits a script given inline in a Bash tool command, and the step in PLAYBOOK "Editing files" named only a heredoc.
+- Rule going forward: text that holds a backslash goes into a file through the Edit or Write tool, not through a Git Bash heredoc or a script given inline in Git Bash (`node -e`).
+- Evidence: the round-2 session's change to its scratch script kill.mjs ("SyntaxError: Invalid regular expression: missing /"), then the same change made with the Edit tool.
+- Status: promoted to PLAYBOOK "Editing files"
+
+## 2026-11-22: A gate deny was marked as a permission rule in the transcript
+- What went wrong: in the wake-up e2e run (session 021bca86-ff9e-40d2-978e-519cfa7e9a87), the Write the lessons gate denied got `toolDenialKind: "permission-rule"` on its tool result, not a value naming a hook. The round's notes had listed a hook kind among the values.
+- Why: the list of values was read from a survey of past transcripts, not from a run of this hook.
+- Rule going forward: code that reads `toolDenialKind` treats any non-empty value as a call that never ran, and never branches on which value it is.
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "const refused = typeof r.toolDenialKind === 'string' && r.toolDenialKind !== '';"
+- Status: open
+
+## 2026-11-22: Two gate tests passed with the guard they were written for removed
+- What went wrong: in the round-1 mutant run, removing the PowerShell here-string rule and the `--git-dir` rule left every test passing. The here-string test's body had no quote in it, so the single-quote rule already hid it; the `--git-dir` test also passed `--work-tree`, which found the repo by itself.
+- Why: each case was checked only against the fixed gate, not against the gate with that one rule taken out.
+- Rule going forward: a test case written for one rule of a parser is run against a mutant that removes only that rule, and must fail there. Its input must not be decided by another rule too.
+- Evidence: `tests/gate.test.mjs`, search "here-string with a quote in it"
+- Status: promoted to PLAYBOOK "Parsing untrusted text"
+
+## 2026-11-22: The gate's time-budget test kept a limit in milliseconds, against an open lesson that said to compare growth
+- What went wrong: the lessons gate's time-budget test asserted a gated call under 400 ms and an ungated one under 100 ms. First as wall time, where it failed at 214 ms on a busy machine; then past Node's start, as the p95 of 12 samples. Review round 1 found that version failing 3 of 3 runs with 16 busy cores: with 12 samples the p95 is the largest one, and the WSL ungated time of 98 ms sat 2 ms under its limit.
+- Why: the limits came from the plan, and the open lesson "A timing test with a limit in seconds failed on a busy machine" was not looked up with the word `time` before the test was written. The fix after the first failure kept a fixed limit.
+- Rule going forward: a timing test compares growth: it times the full input and a quarter of it, and fails when the full run takes more than 8 times as long. A budget in milliseconds is measured and recorded in `dev/release-state.md`, not asserted. This is the second time the rule of "A timing test with a limit in seconds failed on a busy machine" was seen.
+- Evidence: `tests/gate.test.mjs`, search "time: a gated call on a 31 MB transcript grows linearly from a quarter of it" (the test was renamed in review round 3)
+- Status: promoted to PLAYBOOK "Writing a timing test"
+
+## 2026-11-22: Two lessons logged in the gate work were second sightings of open lessons
+- What went wrong: "A gate test started its child with spawn..." and "Node's own start on a busy Windows machine..." were each logged as a new open lesson. Each repeated an open lesson's rule ("A test's child process hung in CI", "A timing test with a limit in seconds failed on a busy machine"), so each should have promoted that lesson (PLAYBOOK.md, "The lessons check", step 5). Review round 1 found the first; the second was found while fixing it.
+- Why: the new entries were written from what had just happened, without a lookup for the words of their own rules.
+- Rule going forward: before adding a lesson, run `node dev/lessons.mjs` with two to four words from its rule. If an open lesson's rule covers it, promote that lesson as step 5 says, instead of adding a new open one.
+- Evidence: `PLAYBOOK.md`, search "## Starting a child process in a test"
+- Status: open
+
+## 2026-11-22: A fail-before test for the BOM fix passed on the old gate
+- What went wrong: the test for "a PLAYBOOK.md with a BOM goes ungated" put the BOM before the template's first line, `# PLAYBOOK`, so the heading was on a later line and the old gate found it too. The fail-before run showed it passing on both versions. With the heading as the first line after the BOM, as the review's probe had it, it failed on the old gate and passed on the new.
+- Why: the test's input was written from the finding's one-line summary, not copied from the probe that found it.
+- Rule going forward: a test for a review finding starts from the input of the probe that found it (the review's scratch scripts), and is run on the old code before it is trusted.
+- Evidence: `tests/gate.test.mjs`, search "a BOM before the heading"
+- Status: promoted to PLAYBOOK "Writing a test for a review finding"
+
+## 2026-11-21: Two ways to see which node.exe the gate ran showed nothing
+- What went wrong: to settle whether the hook runs a `node.exe` planted in the repo, a copy of `hostname.exe` was planted as a marker, and then copies of five other System32 tools were tried; none of them would run outside System32 on this machine ("Permission denied"). A process-list poller then ran beside a billed turn of three gated calls and logged no gate process at all, though a dry run had caught 4 of 5 runs of 200 ms. Two billed runs were spent before a third settled it.
+- Why: the tests leaned on a marker program and on catching a short-lived process, and neither was tried in the way the live run would use it before the billed run.
+- Rule going forward: to test whether a hook runs a planted program, plant a file under that name that can't run (plain text), and compare the hook's answer with a control run: a planted file that runs would fail and change the answer. Try any marker outside the billed run first, in the same folder, the same way the hook would start it.
+- Evidence: `dev/release-state.md`, search "a text file named `node.exe` in its root"
+- Status: open
+
+## 2026-11-21: A gate test started its child with spawn from node:child_process, and hung on a mutant
+- What went wrong: the lessons gate's polling test started the hook with `spawn` straight from `node:child_process` and listened for its exit only after a 120 ms wait. A mutant that exits at once closed before the listener was attached, and the test waited for over four minutes with no limit, until it was killed by hand. The open lesson "A test's child process hung in CI, and the log named no test" already said not to start a child that way; its lookup was not run with the words `child` or `spawn` before the test was written.
+- Why: `tests/child.mjs` had only a `spawnSync`, and a test that must write to the transcript while the hook runs needs an async child, so the rule was set aside without saying so.
+- Rule going forward: a test that needs an async child uses the `spawn` that `tests/child.mjs` exports, which listens for the exit at once and kills the child after 60 seconds. This is the second time the rule of "A test's child process hung in CI" was seen.
+- Evidence: `tests/child.mjs`, search "spawn, for a test that must act while the child runs"
+- Status: promoted to PLAYBOOK "Starting a child process in a test"
+
+## 2026-11-21: Node's own start on a busy Windows machine was over the gate's 100 ms budget
+- What went wrong: the lessons gate's time-budget test asked for an ungated call under 100 ms p95, timed from spawn to exit. It failed at 214 ms. A plain `node -e 0` on the same machine took 90 to 445 ms (median about 120 ms), so the hook added only 20 to 30 ms.
+- Why: the budget was written as wall time, which counts Node's start, and on Windows under load that start alone can pass 100 ms.
+- Rule going forward: a time-budget test for a script started as its own process takes Node's start off its runs (the p95 of `node -e 0` runs taken in between, off the p95 of its runs), and prints the wall time beside it.
+- Evidence: `tests/gate.test.mjs`, search "Node's own start is taken off"
+- Status: closed: its rule kept a fixed limit in milliseconds, which review round 1 found failing 3 of 3 runs under load; PLAYBOOK "Writing a timing test" replaces it
+
+## 2026-11-21: The Edit tool could not match a line holding both a unicode escape and a literal accented letter
+- What went wrong: an Edit of one line in `tests/gate.test.mjs` that held two unicode escapes and a literal accented letter failed twice with "String to replace not found". Its note showed the line with an escape swapped for the character, though the file held the escape as ASCII (checked with `od -c`). A fix through a Git Bash `node -e` then failed too, its backslashes lost, as "Editing files" says they would be.
+- Why: the Edit tool swaps unicode escapes and their characters when it matches, so a line with both forms matched neither way.
+- Rule going forward: to change a line that holds a unicode escape, write a small script with the Write tool that builds the backslash with `String.fromCharCode(92)`, and replace the text in it at byte level. Then scan the file for non-ASCII characters.
+- Evidence: `tests/gate.test.mjs`, search "String.fromCodePoint(0x2028)"
+- Status: open
+
+## 2026-11-21: The lessons gate plan assumed the current tool call is in the transcript when PreToolUse fires
+- What went wrong: the plan for a PreToolUse hook that checks for the `Lessons checked:` line allowed any call whose own tool_use_id was not yet in the transcript, on the guess that this would be rare. A probe hook in two headless runs (sessions fa8bae8f-bf99-4ab5-81c7-85449fd30ace and d6359e4d-e0ba-4994-9ee7-500b48874765) read the transcript at once on 10 main-thread calls: the call was there on 1. Polling every 10 ms, it and the text before it showed up 24 to 75 ms later on all 10. So the gate would have let 9 of 10 calls through unchecked, and the work stopped before any gate was built.
+- Why: Claude Code writes the transcript asynchronously, and the hook starts before the current message is on disk. The plan named this as an open question but built the design on the hoped-for answer.
+- Rule going forward: before designing a hook that reads the transcript, run a probe hook in a headless run (`dev/e2e/run-live.ps1`) and measure what is on disk when it fires, on at least ten calls. Build on the measured answer, not the hoped-for one.
+- Evidence: the two probe runs of 2026-11-21 above. In the same runs, a subagent's payload had agent_id and the parent's transcript_path, and that file never held the subagent's own call, which was in the session's subagents folder.
+- Status: open
+
 ## 2026-11-18: The CHANGELOG named the script's message for cases that were never run, twice in one release
 - What went wrong: 0.3.1's CHANGELOG said a symbolic link swapped in gives "changed while it was read"; on Linux and macOS it gives "cannot read" (review round 1). After that fix, a rewording said a file that is "grown" is not read and gives "changed"; a file grown before the open is read, and one grown past the cap gives "is over ... bytes" (review round 3).
 - Why: each sentence was written from what the code was meant to do for a group of cases, and only one case of the group had been run.
@@ -41,7 +160,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: the tests called `spawnSync` with no time limit, so one stuck child held its file until the job limit, with nothing to say which test it was.
 - Rule going forward: a test starts a child process through the `spawnSync` that `tests/child.mjs` exports, never straight from `node:child_process`. It kills the child after 60 seconds and fails the test with the command named.
 - Evidence: `tests/child.mjs`, search "A child process that never exits"; commit c5e46ae.
-- Status: open
+- Status: promoted to PLAYBOOK "Starting a child process in a test"
 
 ## 2026-11-17: A new lesson quoted its evidence from memory, and --stale flagged it the day it was written
 - What went wrong: the exFAT lesson's evidence quoted a test name as "a rename changes a file's ID (exFAT)". The test name is in single quotes, so the file holds `file\'s`, and the search text never matched. Review round 5 found it with `--stale`.
@@ -139,14 +258,14 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: `--check` prints at most 50 problems, so cutting the title in each one costs at most 50 walks of it. That grows with the title, linearly, so full against a quarter grows about 4 times either way, and a growth test cannot tell them apart.
 - Rule going forward: when an output cap bounds how often a cost repeats, test it by holding the input the same and changing only the repeat count (50 messages against 1), and run that test on the old version before saying it guards the change.
 - Evidence: `tests/hardening.test.mjs`, "a 9 MB title named in 50 problem messages costs about what one message costs": 750 ms against 100 ms on the round-5 script, 1245 ms against 205 ms on the mutant; review round 6 in `dev/release-state.md`.
-- Status: open
+- Status: promoted to PLAYBOOK "Writing a timing test"
 
 ## 2026-11-16: A timing test with a limit in seconds failed on a busy machine
 - What went wrong: the 4 MB title test failed at 10 to 14 seconds against a 10-second limit. The current script, the round-5 script and the round-6 script all took about 14 seconds on that input, so nothing had regressed: other processes were loading the machine.
 - Why: a fixed limit in seconds measures the machine as much as the script. A limit wide enough for any load would also let a slow script pass.
 - Rule going forward: a timing test compares growth, not seconds: it times the full input and a quarter of it, and fails when the full run takes more than 8 times as long (linear work grows about 4 times, quadratic about 16).
 - Evidence: `tests/hardening.test.mjs`, the `growth` helper and its four tests, which pass under the same load and fail on the slow scripts they were written for.
-- Status: open
+- Status: promoted to PLAYBOOK "Writing a timing test"
 
 ## 2026-11-16: A rule holding U+2028 was read as a broken field
 - What went wrong: the first run of the new property tests found rules that `--check` called "missing or empty" and "not a field", though each had its `- Rule going forward:` line. The lookup printed them as empty rules. Unit tests had never put a line separator inside a field.
@@ -160,7 +279,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: comparing two strings of different lengths stops at once, so the quadratic scan cost almost nothing per step. Only keys of one length that differ at the end make each comparison run long.
 - Rule going forward: run a new timing test against the slow version before trusting it, and build its input so every step of the slow path does real work.
 - Evidence: `tests/hardening.test.mjs`, "a From: line naming 100,000 lessons": 1.5 s on the round-3 script with the first input, 23.8 s with keys of one length.
-- Status: open
+- Status: promoted to PLAYBOOK "Writing a timing test"
 
 ## 2026-11-16: A PowerShell replacement list dropped the text after a + in each pair
 - What went wrong: a batch of text replacements written as `@( ,@('old', 'new' + "`n" + 'more') )` replaced each old text with only the part before the first `+`. A table row in SECURITY.md lost its end and merged with the next row, two bullets were dropped, and two script edits never landed. The loop reported no missing anchor.

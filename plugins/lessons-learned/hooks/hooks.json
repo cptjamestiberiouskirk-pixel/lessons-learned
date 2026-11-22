@@ -1,0 +1,40 @@
+{
+  "description": "The lessons check, as a nudge. In a repo whose PLAYBOOK.md has '## The lessons check', an edit, a git commit or a git push is denied until Claude has written a visible 'Lessons checked:' line in this turn (a background task's notification carries on the turn before it), after its last commit or push, and, in the session's own repo, where its dev/lessons.mjs is this plugin's version, run a lookup with it. In other repos it does nothing. It reads the target repo's PLAYBOOK.md and dev/lessons.mjs and the session transcript, writes nothing and starts no program. Any error lets the call through. LESSONS_GATE=off turns it off.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/lessons-gate.mjs"],
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/lessons-gate.mjs"],
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/lessons-gate.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
