@@ -53,7 +53,7 @@ Any `LINK`, `HARDLINK` or `other` is a stop. A hard link is a second name for a 
 
 ## When a handoff or memory plugin is installed too
 
-A project may also have a handoff or memory plugin installed, such as Trailmark. Trailmark keeps its notes outside the repo and brings them into each chat through hooks. This plugin has no hooks and keeps everything in the repo. Both run in the same chat without overlap: the handoff says where the work stands, and `LESSONS.md` and `PLAYBOOK.md` say how to do it without repeating mistakes. Leave the other plugin's files and settings alone, report its memory in step 1 as "other memory, kept separate" if you see it, and don't move its notes into `LESSONS.md` unless the user asks. A handoff may point to a lesson by its title but doesn't repeat its rule.
+A project may also have a handoff or memory plugin installed, such as Trailmark. Trailmark keeps its notes outside the repo and brings them into each chat through hooks. This plugin has no hooks and keeps everything in the repo; in Codex, the lessons check is followed by hand. Both run in the same chat without overlap: the handoff says where the work stands, and `LESSONS.md` and `PLAYBOOK.md` say how to do it without repeating mistakes. Leave the other plugin's files and settings alone, report its memory in step 1 as "other memory, kept separate" if you see it, and don't move its notes into `LESSONS.md` unless the user asks. A handoff may point to a lesson by its title but doesn't repeat its rule.
 
 ## Steps
 
@@ -93,6 +93,8 @@ If the project doesn't use Node, say so in the plan: the script needs Node to ru
 ### 4. Build
 
 List the root and run the path check again right before writing, and stop as they say.
+
+Before the first copy of this step, write the line `Lessons checked: none apply (setting up the lessons check)`. Once `PLAYBOOK.md` is in place, its lessons check asks for that line before each edit. In Codex no hook checks it.
 
 Bring each template in with this command, run from the repo root. It copies the file exactly. It writes a new file under a random name beside the target. Then it gives the file the target's name with a hard link, which fails on anything at that name and follows no link there. If the hard link fails for another reason (Codex's sandbox on Windows refuses one, and an exFAT or FAT drive has none), it renames the file into place instead. A rename replaces the name itself, so it too writes through no link. If it can't remove the file under the random name, its message names that file. It refuses a target given as an absolute path, and anything already at the target, a link or junction included, even one that points nowhere. It refuses a target folder that is a link, or whose real path is not the repo's real path followed by the folder's path: a junction to a volume path does that without being a link, and so does a path that climbs out of the repo with `..`. The repo's part must match exactly; in the rest, only ASCII case is ignored, on Windows and macOS. The repo's own folder may be reached through a junction. It refuses a source folder that is a link, and a relative one whose real path is not the repo's real path followed by its path, compared the same way. It refuses a source that is not a plain file with one name, or that changes, with its folder, between the look and the read. Last, it checks that the target's folder is still the one it looked at, and that the target is the very file it wrote, with one name. It fails if not:
 

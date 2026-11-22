@@ -66,6 +66,16 @@ Lessons checked: "A test read the save once, right after a toast, and saw old va
 
 Node.js 22 or later for `dev/lessons.mjs`. It uses only Node's built-in modules. In a project without Node, setup asks whether to use it anyway or port the script.
 
+## The lessons gate
+
+The plugin has one hook. In a repo whose `PLAYBOOK.md` has the section "The lessons check", it runs before each edit (Edit, Write, MultiEdit, NotebookEdit), and before each Bash or PowerShell command that holds a `git commit` or `git push`. It denies the call until Claude has written a visible `Lessons checked:` line in this turn, after its last commit or push to that repo. A turn that starts with a background task's notification carries on the turn before it. In the repo the session works in, where its `dev/lessons.mjs` is this plugin's version, Claude must also have run a lookup with it (`node dev/lessons.mjs <words>`). The denial tells Claude what to do, and Claude retries:
+
+```
+Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry. To turn this check off: LESSONS_GATE=off (see the lessons-learned README).
+```
+
+A repo already set up is gated as soon as the plugin with the hook is installed or updated. Edits to the repo's own `LESSONS.md`, anything under `.git/`, and anything under `.claude/` but its `settings*.json` files, are never gated, and neither are subagents. In other repos the hook does nothing. It only reads: the repo's `PLAYBOOK.md` and `dev/lessons.mjs`, and the session's transcript. To turn it off, set `LESSONS_GATE=off` in the `env` of your Claude Code settings. See [SECURITY.md](https://github.com/cptjamestiberiouskirk-pixel/lessons-learned/blob/main/SECURITY.md).
+
 ## Limits
 
-A session follows the lessons check by hand, because the instructions tell it to. The script checks only the format of the two files, not whether the check was run.
+The gate is a nudge, not an enforcement boundary: a write through the shell or another tool gets past it, and so does a commit it can't see in the command (a git alias, or a script that commits). It lets a call through whenever it can't tell, and it checks that the line is there, not that it names the right lessons. Test runs are still checked by hand. The script checks only the format of the two files, not whether the check was run. In Codex there is no hook, and the lessons check is followed by hand.

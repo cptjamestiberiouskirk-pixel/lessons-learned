@@ -24,9 +24,10 @@ $mode = if ($ReadOnly) { 'plan' } else { 'acceptEdits' }
 
 Push-Location -LiteralPath $Repo
 try {
-  # No hooks and no MCP servers from the user's setup: the run sees only this plugin.
+  # No hooks, plugins or MCP servers from the user's setup: their settings are
+  # not loaded, so the run sees only this plugin, its lessons gate included.
   $raw = claude -p $Prompt --plugin-dir $plugin @session --permission-mode $mode `
-    --allowedTools @allowed --strict-mcp-config --settings '{"disableAllHooks": true}' `
+    --allowedTools @allowed --strict-mcp-config --setting-sources 'project,local' `
     --output-format json 2>&1
 } finally { Pop-Location }
 

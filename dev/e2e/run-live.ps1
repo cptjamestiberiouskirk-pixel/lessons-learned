@@ -1,9 +1,10 @@
 # Runs one headless turn in a test repo with this repo's plugin AND the user's
 # installed plugins active, hooks included: for testing lessons-learned next to
 # another plugin such as Trailmark, in Claude Code or in Codex. Each turn is
-# billed. Run with pwsh 7. Unlike run-setup.ps1, hooks are left on.
+# billed. Run with pwsh 7. Unlike run-setup.ps1, the user's own settings,
+# hooks and plugins are loaded too.
 #
-#   ./run-live.ps1 -Tool claude -Repo <dir> -Prompt '<text>' -Log <file.json>
+#   ./run-live.ps1 -Tool claude -Repo <dir> -Prompt '<text>' -Log <file.json> [-Settings '<json>']
 #   ./run-live.ps1 -Tool codex  -Repo <dir> -Prompt '<text>' -Log <file.jsonl> [-AddDir <dir>]
 #
 # Claude Code: this repo's plugins/lessons-learned is loaded with --plugin-dir
@@ -16,7 +17,10 @@ param(
   [Parameter(Mandatory)][string]$Repo,
   [Parameter(Mandatory)][string]$Prompt,
   [Parameter(Mandatory)][string]$Log,
-  [string]$AddDir
+  [string]$AddDir,
+  # Claude Code only: the --settings JSON. Keep the enabledPlugins entry, so an
+  # installed lessons-learned stays off and the copy on disk is the one tested.
+  [string]$Settings = '{"enabledPlugins": {"lessons-learned@lessons-learned": false}}'
 )
 $ErrorActionPreference = 'Stop'
 # Absolute paths, so -Log and Codex's --cd don't resolve inside the test repo.
@@ -31,9 +35,8 @@ try {
       'Bash(node:*)', 'Bash(git:*)', 'Bash(npm:*)', 'Bash(mkdir:*)', 'Bash(rm:*)', 'Bash(ls:*)',
       'Bash(cat:*)', 'Bash(tar:*)', 'Bash(mktemp:*)',
       'PowerShell(node *)', 'PowerShell(git *)', 'PowerShell(npm *)')
-    $settings = '{"enabledPlugins": {"lessons-learned@lessons-learned": false}}'
     claude -p $Prompt --plugin-dir $plugin --permission-mode acceptEdits --allowedTools @allowed `
-      --strict-mcp-config --settings $settings --output-format json 2>&1 | Out-File -LiteralPath $Log -Encoding utf8
+      --strict-mcp-config --settings $Settings --output-format json 2>&1 | Out-File -LiteralPath $Log -Encoding utf8
     $j = Get-Content -LiteralPath $Log -Raw | ConvertFrom-Json
     "=== session $($j.session_id)"
     "=== reply"; $j.result

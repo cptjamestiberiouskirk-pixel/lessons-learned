@@ -17,7 +17,7 @@ Edits to `LESSONS.md` and this file are ordinary project edits, not config edits
 
 A lesson's rule is written only here and in `LESSONS.md`. A memory file or a handoff note (a Trailmark checkpoint, say) names a lesson as `LESSONS.md "<title>"` and doesn't copy its rule, so a rule changed or closed here isn't left stale there.
 
-Limit: a session follows this by hand. A tool checks only the format of the two files, when step 4 runs it, and the files their evidence names, when step 6 runs it.
+Limit: a session follows this by hand. In Claude Code with the lessons-learned plugin installed, a hook also checks, before an edit, commit or push, that the turn holds the step 2 line after its last commit or push (and, in the session's own repo, where `dev/lessons.mjs` is the plugin's version, a step 1 lookup); test runs, and every step in Codex, are still followed by hand. A tool checks only the format of the two files, when step 4 runs it, and the files their evidence names, when step 6 runs it.
 
 ## Checking your work
 
@@ -70,6 +70,13 @@ From: 2026-11-17 "Review rounds re-reviewed the whole release instead of the dif
 3. Before applying a round's fixes, save the reviewed state: copy the folders and docs the release changes to a folder outside the repo. The next round diffs against that copy (`git diff --no-index <copy>/<folder> <folder>`).
 4. Run fail-before checks (a new test run against the code before its fix, as "Running a test against old code" says) in a separate copy, never in the saved review state, which must stay as it was reviewed.
 
+## Writing a test for a review finding
+
+From: 2026-11-22 "A fail-before test for the BOM fix passed on the old gate", 2026-11-22 "A here-doc test written for a review finding passed on the old gate"
+
+1. Start the test from the input of the probe that found the finding (the scratch script the review ran that showed it), not from the finding's summary.
+2. Run the test on the old code before trusting it: "Checking your work" step 3 says what result it needs, and "Running a test against old code" says how to get that code.
+
 ## Committing
 
 From: 2026-11-16 "A commit message passed with -F - in PowerShell was read as a path"
@@ -78,16 +85,17 @@ From: 2026-11-16 "A commit message passed with -F - in PowerShell was read as a 
 
 ## Editing files
 
-From: 2026-11-17 "Backslashes in a Git Bash heredoc were lost before the text reached the file"
+From: 2026-11-17 "Backslashes in a Git Bash heredoc were lost before the text reached the file", 2026-11-22 "A regex written through node -e in Git Bash lost its backslash", 2026-11-22 "A mutant pattern written through a Git Bash heredoc lost its backslashes"
 
-1. Text that holds a backslash (a regex, an escape, a Windows path) goes into a file through the Edit or Write tool, not through a Git Bash heredoc.
+1. Text that holds a backslash (a regex, an escape, a Windows path) goes into a file through the Edit or Write tool, not through a heredoc or a script given inline (for example `node -e`) in the Bash tool (Git Bash). This holds for a scratch script too, not only for files in the repo.
 
 ## Parsing untrusted text
 
-From: 2026-11-16 "A rule holding U+2028 was read as a broken field"
+From: 2026-11-16 "A rule holding U+2028 was read as a broken field", 2026-11-22 "Two gate tests passed with the guard they were written for removed", 2026-11-22 "Round 3's gate cases passed with the rule they were written for removed"
 
 1. A regex that must match a whole line of untrusted text uses the `s` flag, or `[^]` in place of `.`, so that `.` also matches U+2028 and U+2029.
 2. A new parsing rule gets a property test with random text, not only example tests.
+3. A test case written for one rule of a parser is run against a mutant that removes only that rule, and the case must fail on it. The case's input must not be decided by another rule too.
 
 ## Walking a path in the repo
 
@@ -96,3 +104,18 @@ From: 2026-11-17 "--stale followed a junction to a volume path, the class 0.2.1 
 1. If code refuses symbolic links and junctions on a path in the repo, it also checks the path's real path (`realpathSync.native`). `lstat` reports a junction to a volume path (`\\?\Volume{...}\`) as a plain folder.
 2. The real path must equal the repo's real path plus the name joined onto it. Compare the repo's part exactly: both real paths come from `realpathSync.native`, which spells it the same way. Fold case only in the name, only ASCII case, and only on Windows and macOS. Never fold a whole path with `toLowerCase`.
 3. That code's tests make a junction to a volume path with `mklink /J`, using the volume path that `mountvol` prints.
+
+## Starting a child process in a test
+
+From: 2026-11-17 "A test's child process hung in CI, and the log named no test", 2026-11-21 "A gate test started its child with spawn from node:child_process, and hung on a mutant"
+
+1. A test starts a child process through `tests/child.mjs`, never straight from `node:child_process`: its `spawnSync`, or its `spawn` when the test must act while the child runs. Both kill the child after 60 seconds and fail the test with the command named. `spawn` listens for the child's exit at once.
+
+## Writing a timing test
+
+From: 2026-11-16 "A timing test with a limit in seconds failed on a busy machine", 2026-11-22 "The gate's time-budget test kept a limit in milliseconds, against an open lesson that said to compare growth", 2026-11-16 "A timing test passed on the slow script it was written to catch", 2026-11-16 "A growth test was claimed to guard a cost that an output cap keeps linear", 2026-11-22 "A growth test passed the slow version it names in 3 of 5 runs"
+
+1. A timing test compares growth, not seconds: it times the full input and a quarter of it, and fails when the full run takes more than 8 times as long (linear work grows about 4 times, quadratic about 16). It times past the fixed cost of the path it measures: it times the same call on the smallest input and takes that from both times before comparing them.
+2. Build the input so every step of the slow path does real work. Say in the test which slow version it fails on. Run it 5 times against that version before trusting it: it must fail all 5, with its ratio well past the limit.
+3. When an output cap bounds how often a cost repeats, hold the input the same and change only the repeat count (50 messages against 1), and run that test on the old version before saying it guards the change.
+4. A budget in milliseconds is measured and recorded in `dev/release-state.md`, not asserted.

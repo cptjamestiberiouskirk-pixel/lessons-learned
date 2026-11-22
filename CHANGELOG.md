@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The Claude Code plugin has a hook, the lessons gate (`hooks/lessons-gate.mjs`). In a repo whose `PLAYBOOK.md` has "## The lessons check", it denies an edit, and a Bash or PowerShell command that runs `git commit` or `git push`, until Claude has written a visible `Lessons checked:` line in this turn, after its last commit or push to that repo, and before the call (a later call of the same message doesn't count). A turn that starts with a background task's notification (told by the record's origin fields, or by its text only in an older record that has none) carries on the turn before it. In the session's own repo, where `dev/lessons.mjs` is this release's, a lookup with it is needed too. Repos already set up are gated as soon as the plugin is updated. `LESSONS_GATE=off` turns it off, and the deny message says so. It only reads, and lets the call through when it can't tell. SECURITY.md says how it reads commands and transcripts, and what gets past it. The Codex copy has no hook yet (`dev/release-state.md`, RS-H-codexhook).
+- Both setup skills write a `Lessons checked:` line before they build. The Claude Code one also runs a lookup once the script is in place, so the gate doesn't deny setup's own writes.
+- The playbook template's "Limit:" line says what the hook checks and what is still followed by hand.
+
 ## 0.3.1 (2026-11-18)
 
 Fixes for the items 0.3.0's review left open.

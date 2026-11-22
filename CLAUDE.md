@@ -17,7 +17,7 @@ Before a commit, run the `verify` skill (`.claude/skills/verify/SKILL.md`). Why 
 
 ## Conventions
 
-- `templates/lessons.mjs` in both copies and `dev/lessons.mjs` stay the same text. After a change to the template, copy it to the other two places and update the value under "The script's fingerprint" in both `SKILL.md` files; the tests fail until all are done.
+- `templates/lessons.mjs` in both copies and `dev/lessons.mjs` stay the same text. After a change to the template, copy it to the other two places and update the value under "The script's fingerprint" in both `SKILL.md` files and `FINGERPRINT` in `plugins/lessons-learned/hooks/lessons-gate.mjs`; the tests fail until all are done.
 - A change to one setup skill gets the same change in the other, unless it is about how the two tools differ.
 - A change a user would notice gets a line in `CHANGELOG.md` and, at release, a version bump in both plugins' manifests (`.claude-plugin/plugin.json`, and the Codex pair `plugin.json` and `.codex-plugin/plugin.json`) and in the script's header.
 - Deferred findings and review rounds are recorded in `dev/release-state.md`.

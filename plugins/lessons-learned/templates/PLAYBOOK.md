@@ -17,7 +17,7 @@ Edits to `LESSONS.md` and this file are ordinary project edits, not config edits
 
 A lesson's rule is written only here and in `LESSONS.md`. A memory file or a handoff note (a Trailmark checkpoint, say) names a lesson as `LESSONS.md "<title>"` and doesn't copy its rule, so a rule changed or closed here isn't left stale there.
 
-Limit: a session follows this by hand. A tool checks only the format of the two files, when step 4 runs it, and the files their evidence names, when step 6 runs it.
+Limit: a session follows this by hand. In Claude Code with the lessons-learned plugin installed, a hook also checks, before an edit, commit or push, that the turn holds the step 2 line after its last commit or push (and, in the session's own repo, where `dev/lessons.mjs` is the plugin's version, a step 1 lookup); test runs, and every step in Codex, are still followed by hand. A tool checks only the format of the two files, when step 4 runs it, and the files their evidence names, when step 6 runs it.
 
 ## Checking your work
 
