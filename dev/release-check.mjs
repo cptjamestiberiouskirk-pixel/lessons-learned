@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Runs every check a release needs and prints what each one found.
-// Read-only: it runs the tests, the validators and this repo's own --check,
+// Read-only: it runs the tests, the validators and this repo's own --check and --doctor,
 // and compares files; it changes nothing in the repo. On Windows the Linux
 // test run copies the repo's files into a temporary folder in WSL, and
 // removes it afterwards.
@@ -52,6 +52,7 @@ record('shared files identical', differ.length ? 'FAIL' : 'PASS', differ.length 
 
 run('node --test', process.execPath, ['--test']);
 run('own LESSONS.md and PLAYBOOK.md', process.execPath, ['dev/lessons.mjs', '--check']);
+run('own rules, linted', process.execPath, ['dev/lessons.mjs', '--doctor']);
 const win = process.platform === 'win32';
 
 // node --test on Linux. Inode reuse, case and heap use differ there, and in

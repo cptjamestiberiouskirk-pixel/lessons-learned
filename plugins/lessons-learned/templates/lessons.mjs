@@ -23,10 +23,32 @@
 //                                    a file in backticks that is gone, or a
 //                                    search "text" after it that the file no
 //                                    longer holds: leads to review, not verdicts
+//   node dev/lessons.mjs --lint      what --check finds, and rules a session may
+//                                    not be able to follow: files, commands and
+//                                    flags that aren't there, evidence another
+//                                    reader can't open, unsettled labels, text
+//                                    that reads like an injected instruction,
+//                                    Markdown structure and a size budget. Each
+//                                    finding has a rule ID and is an error or a
+//                                    warning; exit 1 on an error
+//   node dev/lessons.mjs --doctor    --lint with a summary of the whole log
+//   --lint --all, --doctor --all     also list the findings silenced in place
+//   --lint --json, --doctor --json   the same as one JSON object, for CI
+//
+// A finding that is wrong can be silenced where it is, with its rule ID and a
+// reason, on a line of its own: <!-- lint-ignore <rule>: <reason> -->. In
+// LESSONS.md it is an indented line after one of the entry's fields, and covers
+// that entry; in PLAYBOOK.md and a rule file it covers the next line that isn't
+// blank. A finding about the header's settings is fixed in the setting.
+//
+// LESSONS.md's header (the text above the first entry) can hold two settings:
+//   Rule files: CLAUDE.md, AGENTS.md, docs/RULES.md   more files --lint reads
+//                (CLAUDE.md and AGENTS.md at the root are read when present)
+//   Budget: lookup 2000, all 6000, lessons 16000, section 1500   in tokens
 //
 // --dir <folder> reads LESSONS.md and PLAYBOOK.md from that folder instead of the
-// repo root (for trying the script on a sample log). --stale looks for the files
-// the evidence names in that folder too.
+// repo root (for trying the script on a sample log). --stale and --lint look for
+// the files the text names in that folder too.
 //
 // Another script can import this file: the functions it exports take the repo
 // root, keep their state per call, and return what they found. They never print
@@ -36,7 +58,9 @@ import {closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpath
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-export const USAGE = 'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | <word>...]';
+export const VERSION = '0.3.1';
+export const USAGE =
+  'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | --lint [--all] [--json] | --doctor [--all] [--json] | <word>...]';
 export const FIELDS = ['What went wrong', 'Why', 'Rule going forward', 'Evidence', 'Status'];
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_LINE = 2000; // characters of one printed line
@@ -46,6 +70,15 @@ const MAX_NAME = 200; // characters of a title or section name in a problem mess
 const MAX_REFS = 100; // file names --stale checks
 const MAX_SEARCH = 1024 * 1024; // bytes of a file --stale searches
 const MAX_QUOTE = 200; // UTF-16 units of search text --stale looks for
+const MAX_FINDINGS = 100; // findings printed by --lint
+const MAX_KEEP = 20000; // findings --lint keeps; past that it counts the errors
+const MAX_LINT_REFS = 400; // file names --lint looks up in rules, steps and rule files
+const MAX_LINT_LINE = 4000; // characters of a line the content rules read
+const MAX_RULE_FILES = 20; // rule files --lint reads
+const MAX_RULE_BYTES = 1024 * 1024; // bytes of one rule file
+// Token budgets, estimated at 4 bytes a token.
+const BUDGET = {lookup: 2000, all: 6000, lessons: 16000, section: 1500};
+const tokens = (text) => Math.ceil(Buffer.byteLength(text, 'utf8') / 4);
 
 // Characters that can hide or disguise text: controls (Cc), format characters
 // (Cf: bidi marks and overrides, zero-width characters, the BOM, Unicode tag
@@ -220,22 +253,32 @@ export function loadLog(root) {
   // it is kept; a From: message is, since a PLAYBOOK.md can hold hundreds of
   // thousands of bad From: names. Other messages are built as their problem is
   // found.
+  // --lint reports the same problems with their file, line and rule ID, from
+  // `items`, which keeps the same messages.
   let badCount = 0;
   const bad = [];
-  const problem = (line, text) => {
-    if (badCount++ < MAX_BAD) bad.push(`BAD   ${line ? `line ${line}: ` : ''}${typeof text === 'function' ? text() : text}`);
+  const items = [];
+  const problem = (line, text, where = {}) => {
+    if (badCount++ >= MAX_BAD) return;
+    const built = typeof text === 'function' ? text() : text;
+    bad.push(`BAD   ${line ? `line ${line}: ` : ''}${built}`);
+    items.push({file: where.file || 'LESSONS.md', line: where.line ?? line, rule: where.rule || 'format', text: built});
   };
 
   // PLAYBOOK.md: its "## " sections and the lessons each one's "From:" line names.
+  // `rows` keeps each line with its section and whether it is in a code block.
   const sections = new Map();
+  const rows = [];
   const playbook = readLog(root, 'PLAYBOOK.md');
   if (playbook.error) return {error: playbook.error};
   {
     let current = null;
     let fence = false;
     playbook.lines.forEach((line, i) => {
-      if (hasHidden(line)) problem(0, `PLAYBOOK.md line ${i + 1}: holds a control or invisible character: ${line}`);
-      if (line.startsWith('```')) fence = !fence;
+      if (hasHidden(line)) problem(0, `PLAYBOOK.md line ${i + 1}: holds a control or invisible character: ${line}`, {file: 'PLAYBOOK.md', line: i + 1});
+      const marker = line.startsWith('```');
+      if (marker) fence = !fence;
+      rows.push({n: i + 1, text: line, fence: fence || marker, section: current});
       if (fence) return;
       // The s flag lets . match U+2028 and U+2029 too, which JavaScript otherwise
       // treats as line ends: such a line is reported as hidden, not misread.
@@ -243,8 +286,9 @@ export function loadLog(root) {
       if (heading) {
         const name = heading[1].trim();
         current = {name, label: label(name), from: new Set(), line: i + 1};
-        if (sections.has(current.name)) problem(0, `PLAYBOOK.md line ${i + 1}: a second section named "${current.label}"`);
+        if (sections.has(current.name)) problem(0, `PLAYBOOK.md line ${i + 1}: a second section named "${current.label}"`, {file: 'PLAYBOOK.md', line: i + 1});
         else sections.set(current.name, current);
+        rows[rows.length - 1].section = current;
       } else if (current && line.startsWith('From: ')) {
         for (const m of line.matchAll(/(\d{4}-\d{2}-\d{2}) "([^"]+)"/g)) current.from.add(`${m[1]} "${m[2]}"`);
       }
@@ -252,7 +296,10 @@ export function loadLog(root) {
   }
 
   // LESSONS.md: one entry per "## YYYY-MM-DD: title" heading.
+  // Each entry also keeps its field lines (`lines`) and its lint-ignore lines
+  // (`ignores`); `header` keeps the lines above the first entry.
   const entries = [];
+  const header = [];
   const byKey = new Map(); // an entry's date and title -> the first entry with them
   const lessons = readLog(root, 'LESSONS.md');
   if (lessons.error) return {error: lessons.error};
@@ -274,8 +321,8 @@ export function loadLog(root) {
         entry.status = 'promoted';
         entry.section = m[1];
         const section = sections.get(m[1]);
-        if (!section) problem(entry.line, `${entry.label}: PLAYBOOK.md has no section "## ${label(m[1])}"`);
-        else if (!section.from.has(entry.key)) problem(entry.line, `${entry.label}: the "From:" line of "${label(m[1])}" does not name it`);
+        if (!section) problem(entry.line, `${entry.label}: PLAYBOOK.md has no section "## ${label(m[1])}"`, {rule: 'from-mismatch'});
+        else if (!section.from.has(entry.key)) problem(entry.line, `${entry.label}: the "From:" line of "${label(m[1])}" does not name it`, {rule: 'from-mismatch'});
       } else if ((m = status.match(/^closed: (.+)$/s))) {
         entry.status = 'closed';
       } else if (status) {
@@ -311,7 +358,7 @@ export function loadLog(root) {
         const key = `${date} "${title.trim()}"`;
         if (title.includes('"')) problem(n, `${shown}: a title may not hold a double quote (PLAYBOOK "From:" lines quote titles)`);
         if (byKey.has(key) || (entry && entry.key === key)) problem(n, `${shown}: a second entry with this date and title`);
-        entry = {date, title: title.trim(), label: shown, key, line: n, fields: {}, parts: {}};
+        entry = {date, title: title.trim(), label: shown, key, line: n, fields: {}, parts: {}, lines: [], ignores: []};
         field = null;
         return;
       }
@@ -324,7 +371,10 @@ export function loadLog(root) {
         }
         return;
       }
-      if (!entry) return; // the header above the first entry
+      if (!entry) {
+        header.push({n, text: line}); // the header above the first entry
+        return;
+      }
       const f = line.match(/^- ([^:]+):(.*)$/s);
       if (f && FIELDS.includes(f[1])) {
         field = f[1];
@@ -332,8 +382,16 @@ export function loadLog(root) {
         else if (Object.keys(entry.parts).some((k) => FIELDS.indexOf(k) > FIELDS.indexOf(field)))
           problem(n, `${entry.label}: "${field}" is out of order (${FIELDS.join(', ')})`);
         entry.parts[field] = [f[2].trim()];
+        entry.lines.push({n, field, text: f[2].trim()});
       } else if (/^\s+\S/.test(line) && field) {
-        entry.parts[field].push(line.trim());
+        // A lint-ignore line is a setting for --lint, not part of the field's
+        // text, so a lookup doesn't print it. An older copy of this script
+        // reads it as an ordinary continuation.
+        if (/^\s+<!--\s*lint-ignore\b/.test(line)) entry.ignores.push({n, text: line.trim()});
+        else {
+          entry.parts[field].push(line.trim());
+          entry.lines.push({n, field, text: line.trim()});
+        }
       } else if (line.trim() !== '') {
         problem(n, `${entry.label}: not a field (- ${FIELDS.join(': / - ')}:) or an indented continuation: ${line}`);
       }
@@ -347,13 +405,47 @@ export function loadLog(root) {
     for (const key of section.from) {
       const e = byKey.get(key);
       if (!e || e.status !== 'promoted' || e.section !== section.name)
-        problem(0, () => `PLAYBOOK.md line ${section.line}, "${section.label}": From: names ${label(key)}, which is not a lesson promoted to this section`);
+        problem(0, () => `PLAYBOOK.md line ${section.line}, "${section.label}": From: names ${label(key)}, which is not a lesson promoted to this section`, {
+          file: 'PLAYBOOK.md',
+          line: section.line,
+          rule: 'from-mismatch',
+        });
     }
   }
 
   const count = (s) => entries.filter((e) => e.status === s).length;
   const totals = `${entries.length} lessons: ${count('open')} open, ${count('promoted')} promoted, ${count('closed')} closed`;
-  return {root, sections, entries, byKey, bad, badCount, totals};
+  const lessonsText = lessons.lines.join('\n');
+  return {root, sections, entries, byKey, bad, badCount, items, totals, rows, header, settings: settingsOf(header), lessonsTokens: tokens(lessonsText)};
+}
+
+// The settings in LESSONS.md's header: the rule files --lint reads and the
+// token budgets, with what was wrong with them.
+function settingsOf(header) {
+  const budget = {...BUDGET};
+  let ruleFiles = null; // null: none named, so the defaults
+  const problems = [];
+  for (const {n, text} of header) {
+    let m;
+    if ((m = text.match(/^Rule files:(.*)$/s))) {
+      ruleFiles = ruleFiles || [];
+      for (const name of m[1].split(',').map((s) => s.trim()).filter(Boolean)) {
+        if (ruleFiles.length >= MAX_RULE_FILES) {
+          problems.push({line: n, text: `Rule files: past the limit of ${MAX_RULE_FILES} files, ${label(name)} is not read`});
+          break;
+        }
+        if (!isFileName(name) && !/^[A-Za-z0-9._-]+$/.test(name)) problems.push({line: n, text: `Rule files: ${label(name)} is not a path in the repo (letters, digits, . _ - and /, no .. part)`});
+        else ruleFiles.push(name);
+      }
+    } else if ((m = text.match(/^Budget:(.*)$/s))) {
+      for (const part of m[1].split(',').map((s) => s.trim()).filter(Boolean)) {
+        const b = part.match(/^(lookup|all|lessons|section) (\d{1,9})$/);
+        if (b) budget[b[1]] = Number(b[2]);
+        else problems.push({line: n, text: `Budget: ${label(part)} is not one of lookup, all, lessons or section with a number of tokens`});
+      }
+    }
+  }
+  return {budget, ruleFiles, problems};
 }
 
 // --stale. A file name in an Evidence field is text in backticks with no space,
@@ -520,12 +612,453 @@ export function lookupReport(log, words) {
   const lines = items.slice(0, MAX_SHOWN);
   if (items.length > MAX_SHOWN) lines.push(`... and ${items.length - MAX_SHOWN} more, not printed: use more specific words`);
   lines.push(`-- ${shown} shown; ${log.totals}`);
+  // Every session pays to read a lookup, so one past its budget says so.
+  const size = tokens(lines.join('\n'));
+  const budget = log.settings.budget.lookup;
+  if (size > budget) lines.push(`-- size-budget: this lookup is about ${size} tokens, over its budget of ${budget}: use more specific words, and see node dev/lessons.mjs --lint`);
   return lines;
 }
 
 // The line every mode but --check ends with when the log has format problems.
 export function problemsLine(log) {
   return log.badCount ? `lessons: the log has ${log.badCount} format problem(s): run node dev/lessons.mjs --check` : null;
+}
+
+// ---- --lint -----------------------------------------------------------------
+
+// Each rule's severity. `format` and `from-mismatch` are --check's problems;
+// they, `bad-ignore` and `unused-ignore` can't be silenced.
+export const RULES = {
+  'format': 'error',
+  'from-mismatch': 'error',
+  'stale-path': 'error', // a warning for evidence and rule files
+  'stale-flag': 'error', // a warning for scripts other than dev/lessons.mjs
+  'unopenable-evidence': 'error', // a warning for a path outside the repo
+  'outside-rule': 'warning',
+  'unsettled-label': 'warning',
+  'suspicious-instruction': 'error', // a warning for the milder patterns
+  'md-heading': 'warning',
+  'md-steps': 'warning',
+  'size-budget': 'warning',
+  'bad-setting': 'warning',
+  'bad-ignore': 'error',
+  'unused-ignore': 'warning',
+};
+const FIXED = new Set(['format', 'from-mismatch', 'bad-ignore', 'unused-ignore']);
+
+// Patterns. Each runs on one line of at most MAX_LINT_LINE characters, and none
+// can backtrack past a line: the content rules cost linear time.
+const SPAN = /`([^`\n]+)`/g; // backticks pair left to right, as in Markdown
+const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
+const TRANSCRIPT = /(?:\.claude[\\/]projects|\.codex[\\/]sessions|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl\b)/i;
+// A Codex rollout file: a word with rollout- and, after it, .jsonl. Each word
+// is tested on its own, so the cost stays linear in the line.
+const isRollout = (line) =>
+  line.split(/[\s`'"]+/).some((w) => {
+    const at = w.search(/\brollout-/i);
+    return at >= 0 && /\.jsonl\b/i.test(w.slice(at + 8));
+  });
+// A path only this machine has: a drive, a temp or mount folder, a home folder.
+const LOCAL_PATH = /(?:^|[\s`'"(=])(?:[A-Za-z]:[\\/]|\/tmp\/|\/mnt\/|\/home\/|\/Users\/|~[\\/]|%(?:TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA)%|\$env:(?:TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA)\b|\$HOME\b)/i;
+// A file in a user's own folders, such as a global CLAUDE.md or AGENTS.md.
+const USER_FILE = /(?:^|[\s`'"(=])(?:~[\\/]|%(?:USERPROFILE|APPDATA|LOCALAPPDATA)%|\$env:(?:USERPROFILE|APPDATA|LOCALAPPDATA)\b|\$HOME[\\/]|[A-Za-z]:[\\/]Users[\\/]|\/home\/[^\s/]+\/|\/Users\/[^\s/]+\/)/i;
+const LABEL = /\b(INFERRED|HYPOTHESIZED)\b/;
+// Words that say an attempt to settle a label was made and what it showed.
+// "not checked" or "never tested" is no attempt.
+const ATTEMPT = /\b(?:did not reproduce|didn't reproduce|not reproduced|could not|couldn't)\b|(?<!\b(?:not|never|nor|no one|nobody|wasn't|weren't|isn't|hasn't|haven't|hadn't) )\b(?:tried|reproduced|checked|tested|measured|probed)\b|\btook \d/i;
+const FETCH = /\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b/i;
+const TO_SHELL = /\|\s*(?:sudo\s+)?(?:sh|bash|zsh|iex|invoke-expression|python3?|node|pwsh|powershell)\b/gi;
+const SUBSHELL_FETCH = /\b(?:bash|sh)\s+<\(\s*(?:curl|wget)\b|\b(?:iex|invoke-expression)\s*\(\s*(?:iwr|irm|invoke-webrequest|invoke-restmethod|\(?\s*new-object)\b/i;
+const IGNORE_PREVIOUS = /\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+)?(?:the\s+)?(?:previous|prior|above|earlier|other)\s+(?:instructions|rules|prompts|messages)\b/i;
+const KEY_SHAPED = /\bghp_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|\bAKIA[0-9A-Z]{16}\b|-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----|\bxox[abprs]-[A-Za-z0-9-]{10,}/;
+const AUTHORITY = /\b(?:user|operator|owner) (?:has )?(?:already )?(?:approved|authori[sz]ed|pre-?approved|pre-?authori[sz]ed)\b|\bpre-?authori[sz]ed\b|\b(?:system|admin(?:istrator)?|anthropic|openai)(?: team)? (?:says|said|requires|instructs|instructed)\b|\bdo not (?:tell|inform) the user\b|\bwithout telling the user\b/i;
+const URL = /\bhttps?:\/\//i;
+// The text of a finding with each key-shaped string replaced, so no message or
+// reason prints one.
+const unkeyed = (text) => text.replace(new RegExp(KEY_SHAPED.source, 'g'), '<not printed: shaped like a key>');
+const CREDENTIAL = /(?:^|[\s`'"(=\\/])\.ssh\b|\bid_(?:rsa|ed25519|ecdsa)\b|\.aws[\\/]credentials\b|(?:^|[\s`'"(=\\/])\.(?:netrc|npmrc|pypirc)\b|(?:^|[\s`'"(=\\/])\.env(?=$|[\s`'".,;:)])|\bcredentials\.json\b/i;
+// The reason holds no "--", so text after the first --> makes the line bad.
+const IGNORE = /^<!--\s*lint-ignore\s+([a-z-]+)\s*:\s*((?:(?!--).)*?)\s*-->$/;
+const IGNORE_START = /^\s*<!--\s*lint-ignore\b/;
+
+// The rule files --lint reads: those named in the header, or CLAUDE.md and
+// AGENTS.md at the root when there are any. Each is looked up as --stale looks
+// up a file and read through one handle. Returns {files, problems}.
+function ruleFiles(log, look) {
+  const {ruleFiles: named, problems} = log.settings;
+  const files = [];
+  const out = problems.map((p) => ({...p}));
+  const names = named || ['CLAUDE.md', 'AGENTS.md'];
+  for (const name of names) {
+    if (name === 'LESSONS.md' || name === 'PLAYBOOK.md') continue;
+    const found = look(name);
+    if (found.problem) {
+      if (named) out.push({line: 0, text: `Rule files: ${label(name)}: ${found.problem}`});
+      continue;
+    }
+    const {stat, path} = found;
+    let why = '';
+    if (!stat.isFile()) why = 'not a regular file';
+    else if (stat.nlink > 1n) why = 'a file with a second hard link';
+    else if (stat.size > BigInt(MAX_RULE_BYTES)) why = `over ${MAX_RULE_BYTES} bytes`;
+    let text = null;
+    if (!why) {
+      const got = readSame(path, stat, MAX_RULE_BYTES);
+      if (got.problem) why = got.problem === 'too big' ? `over ${MAX_RULE_BYTES} bytes` : got.problem === 'changed' ? 'it changed while it was read' : 'cannot read it';
+      else text = got.text;
+    }
+    if (why) out.push({line: 0, text: `Rule files: ${label(name)}: not read: ${why}`});
+    else {
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      files.push({name, lines: text.replace(/\r/g, '').split('\n')});
+    }
+  }
+  return {files, problems: out};
+}
+
+// The flags a command in backticks gives a script in the repo, checked against
+// the script's own text: for dev/lessons.mjs (any lessons.mjs), the flags in its
+// USAGE line; for another .mjs, .js or .cjs, the flag as it is written; for a
+// .ps1, its parameter as $Name. Each script is read once and each flag looked
+// for once; a new script or flag counts against MAX_LINT_REFS. Returns
+// [{flag, script, strict}] for each flag the script doesn't know.
+function unknownFlags(span, ctx) {
+  const words = span.split(/\s+/);
+  const out = [];
+  for (let k = 0; k < words.length; k++) {
+    const script = words[k];
+    const kind = script.match(/\.(mjs|js|cjs|ps1)$/)?.[1];
+    if (!kind || !script.includes('/') || !isFileName(script)) continue;
+    if (!ctx.texts.has(script)) {
+      if (ctx.refs >= MAX_LINT_REFS) {
+        ctx.unchecked++;
+        break;
+      }
+      ctx.refs++;
+      const found = ctx.look(script);
+      let text = null;
+      if (!found.problem && found.stat.isFile() && found.stat.nlink === 1n && found.stat.size <= BigInt(MAX_SEARCH)) {
+        const got = readSame(found.path, found.stat, MAX_SEARCH);
+        if (!got.problem) text = got.text;
+      }
+      const usage = text !== null && /(^|\/)lessons\.mjs$/.test(script) ? (text.match(/const USAGE =\s*'([^'\n]*)'/)?.[1] ?? null) : null;
+      ctx.texts.set(script, {text, usage, flags: new Map()});
+    }
+    const {text, usage, flags} = ctx.texts.get(script);
+    if (text === null) break;
+    for (let j = k + 1; j < words.length; j++) {
+      const w = words[j];
+      if (/^(?:\||;|&&|\|\||>|2>|<)/.test(w)) break;
+      if (!/^-{1,2}[A-Za-z][A-Za-z0-9-]*(?:=.*)?$/s.test(w)) continue;
+      const flag = w.replace(/=.*$/s, '');
+      if (!flags.has(flag)) {
+        if (ctx.refs >= MAX_LINT_REFS) {
+          ctx.unchecked++;
+          continue;
+        }
+        ctx.refs++;
+        let known;
+        if (usage !== null) known = new RegExp(`(?:^|[^A-Za-z0-9-])${flag}(?![A-Za-z0-9-])`).test(usage);
+        else if (kind === 'ps1') known = new RegExp(`\\$${flag.replace(/^-+/, '')}(?![A-Za-z0-9_])`, 'i').test(text);
+        else known = text.includes(flag);
+        flags.set(flag, known);
+      }
+      if (!flags.get(flag)) out.push({flag, script, strict: usage !== null});
+    }
+    break;
+  }
+  return out;
+}
+
+// The findings of the content rules on one line of text. `where` says which
+// file and what kind of line it is: a lesson's field (with `field`), a
+// playbook line or a rule file's line.
+function contentFindings(text, where, ctx) {
+  const out = [];
+  const add = (rule, message, severity = RULES[rule]) => out.push({rule, severity, message});
+  const line = text.length > MAX_LINT_LINE ? text.slice(0, MAX_LINT_LINE) : text;
+  const evidence = where.field === 'Evidence';
+  const why = where.field === 'Why' || where.field === 'What went wrong';
+  const instruction = where.kind !== 'lesson' || where.field === 'Rule going forward';
+  // Files and flags named in backticks; not in a lint-ignore line's reason.
+  for (const m of where.comment ? [] : line.matchAll(SPAN)) {
+    const span = m[1];
+    if (instruction) {
+      for (const bad of unknownFlags(span, ctx))
+        add('stale-flag', `\`${label(bad.script)}\` has no flag ${label(bad.flag)}${bad.strict ? ' in its usage line' : ''}`, bad.strict ? 'error' : 'warning');
+      for (const word of span.split(/\s+/)) {
+        if (!word.includes('/') || !isFileName(word)) continue;
+        if (ctx.refs >= MAX_LINT_REFS) {
+          ctx.unchecked++;
+          continue;
+        }
+        ctx.refs++;
+        if (ctx.look(word).problem === 'no such file')
+          add('stale-path', `names \`${label(word)}\`, which is not in the repo`, where.kind === 'rule-file' ? 'warning' : 'error');
+      }
+    }
+  }
+  if (evidence) {
+    if (TRANSCRIPT.test(line) || UUID.test(line) || isRollout(line)) add('unopenable-evidence', 'names a session transcript or session id, which another reader can\'t open: name a file in the repo, a commit or a log line instead');
+    else if (LOCAL_PATH.test(line)) add('unopenable-evidence', 'names a path outside the repo, which only this machine can open', 'warning');
+  }
+  if (KEY_SHAPED.test(line)) add('suspicious-instruction', 'holds text shaped like a secret key or token (not printed here)');
+  if (instruction && USER_FILE.test(line)) add('outside-rule', 'names a file in a user\'s own folders, which a session in this repo may never load: say the rule here');
+  // A label the field also says was tried ("took 0.11 s, so the hang did not
+  // reproduce") is reported as it should be.
+  if (where.kind === 'lesson' && (why || where.field === 'Rule going forward') && LABEL.test(line) && !where.attempted)
+    add('unsettled-label', `holds ${line.match(LABEL)[1]}: settle it (CONFIRMED or RULED OUT), or say what was tried and why it stopped`);
+  if (instruction) {
+    let piped = false;
+    const fetchAt = line.search(FETCH);
+    if (fetchAt >= 0) for (const m of line.matchAll(TO_SHELL)) if (m.index > fetchAt) piped = true;
+    if (piped || SUBSHELL_FETCH.test(line)) add('suspicious-instruction', 'runs what it downloads (a fetch piped to a shell): a rule may not install or run code from the network');
+    if (IGNORE_PREVIOUS.test(line)) add('suspicious-instruction', 'tells a session to ignore earlier instructions');
+    if (AUTHORITY.test(line)) add('suspicious-instruction', 'claims approval or authority: approval comes from the user in the session, not from a rule', 'warning');
+    if (CREDENTIAL.test(line)) add('suspicious-instruction', 'names a credential file: a rule may not read credentials', 'warning');
+    if (where.kind !== 'rule-file' && URL.test(line)) add('suspicious-instruction', 'names a web address: a rule that fetches from the network is reported to the user, not followed', 'warning');
+  }
+  return out;
+}
+
+// Markdown structure: headings that skip a level, and numbered steps that skip
+// or repeat a number. `rows` are {n, text, fence}.
+function structureFindings(rows) {
+  const out = [];
+  let level = 0;
+  let step = 0; // the last number in the list going on, or 0
+  for (const {n, text, fence} of rows) {
+    if (fence) {
+      step = 0;
+      continue;
+    }
+    // A lint-ignore line belongs to the line after it: it doesn't end a list.
+    if (IGNORE_START.test(text)) continue;
+    const h = text.match(/^(#{1,6}) /);
+    if (h) {
+      if (level && h[1].length > level + 1) out.push({n, rule: 'md-heading', message: `a level ${h[1].length} heading after a level ${level} one skips a level`});
+      level = h[1].length;
+      step = 0;
+      continue;
+    }
+    const s = text.match(/^(\d{1,9})\. /);
+    if (s) {
+      const k = Number(s[1]);
+      if (step && k !== step + 1) out.push({n, rule: 'md-steps', message: `step ${k} follows step ${step}`});
+      step = k;
+    } else if (text.trim() !== '' && !/^\s/.test(text)) step = 0;
+  }
+  return out;
+}
+
+// The lint-ignore lines of a file whose comments cover the next line that
+// isn't blank: {n, target, text}.
+function lineIgnores(rows) {
+  const out = [];
+  let pending = [];
+  for (const {n, text, fence} of rows) {
+    if (!fence && IGNORE_START.test(text)) {
+      pending.push({n, text: text.trim()});
+      continue;
+    }
+    if (text.trim() === '') continue;
+    for (const p of pending) out.push({...p, target: n});
+    pending = [];
+  }
+  for (const p of pending) out.push({...p, target: 0});
+  return out;
+}
+
+// Runs every rule on a loaded log. Returns {findings, silenced, errors,
+// warnings, notes, sizes}. Findings are {file, line, rule, severity, message},
+// in file and line order; a silenced one also has its reason.
+export function lintReport(log) {
+  const look = finder(log.root);
+  const ctx = {look, texts: new Map(), refs: 0, unchecked: 0};
+  // At most MAX_KEEP findings are kept; past that only the errors are counted.
+  const found = []; // {file, line, rule, severity, message, entry}
+  let dropped = 0;
+  let droppedErrors = 0;
+  const push = (file, line, f, entry = null) => {
+    const severity = f.severity || RULES[f.rule];
+    if (found.length >= MAX_KEEP) {
+      dropped++;
+      if (severity === 'error') droppedErrors++;
+      return;
+    }
+    found.push({file, line, rule: f.rule, severity, message: unkeyed(f.message), entry});
+  };
+
+  // --check's problems.
+  for (const it of log.items) push(it.file, it.line, {rule: it.rule, message: it.text.replace(/^PLAYBOOK\.md line \d+[:,] /, '')});
+  const notes = [];
+  if (log.badCount > MAX_BAD) notes.push(`${log.badCount - MAX_BAD} more format problems, not listed: run node dev/lessons.mjs --check`);
+
+  // LESSONS.md: the fields of each lesson that isn't closed.
+  const ignores = []; // {file, n, text, target, entry}
+  // A promoted lesson's step is its rule's home, and the lesson keeps its old
+  // rule text as the record: only its Evidence is read.
+  for (const e of log.entries) {
+    for (const ig of e.ignores) {
+      ignores.push({file: 'LESSONS.md', n: ig.n, text: ig.text, target: null, entry: e});
+      for (const f of contentFindings(ig.text, {kind: 'playbook', comment: true}, ctx)) push('LESSONS.md', ig.n, f);
+    }
+    if (e.status === 'closed') continue;
+    const attempted = new Map();
+    for (const l of e.lines) {
+      if (e.status !== 'open' && l.field !== 'Evidence') continue;
+      // Whether the field says what was tried, found once for each field.
+      if (!attempted.has(l.field)) attempted.set(l.field, ATTEMPT.test(e.fields[l.field] || ''));
+      for (const f of contentFindings(l.text, {kind: 'lesson', field: l.field, attempted: attempted.get(l.field)}, ctx)) push('LESSONS.md', l.n, f, e);
+    }
+  }
+  // Evidence, as --stale reads it: file names, bare ones too, and search text.
+  // Limited to MAX_REFS names, as --stale is.
+  let refs = 0;
+  for (const e of log.entries) {
+    if (e.status === 'closed') continue;
+    const at = e.lines.find((l) => l.field === 'Evidence')?.n ?? e.line;
+    for (const m of (e.fields.Evidence || '').matchAll(EVIDENCE_REF)) {
+      if (!isFileName(m[1])) continue;
+      if (refs++ >= MAX_REFS) {
+        ctx.unchecked++;
+        continue;
+      }
+      const hit = look(m[1]);
+      if (hit.problem === 'no such file') push('LESSONS.md', at, {rule: 'stale-path', severity: 'warning', message: `Evidence names \`${label(m[1])}\`, which is not in the repo: a lead, not a verdict`}, e);
+      else if (!hit.problem && m[2] !== undefined) {
+        const wrong = holds(hit, m[2]);
+        if (wrong.startsWith('no longer')) push('LESSONS.md', at, {rule: 'stale-path', severity: 'warning', message: `Evidence: \`${label(m[1])}\` ${wrong}`}, e);
+      }
+    }
+  }
+
+  // The header's settings are fixed by changing them, not silenced.
+  for (const h of log.header) if (IGNORE_START.test(h.text)) push('LESSONS.md', h.n, {rule: 'bad-ignore', message: 'a lint-ignore in LESSONS.md\'s header covers nothing: change the setting instead'});
+
+  // PLAYBOOK.md.
+  for (const r of log.rows) {
+    const comment = !r.fence && IGNORE_START.test(r.text);
+    for (const f of contentFindings(r.text, {kind: 'playbook', comment}, ctx)) push('PLAYBOOK.md', r.n, f);
+  }
+  for (const f of structureFindings(log.rows)) push('PLAYBOOK.md', f.n, f);
+  ignores.push(...lineIgnores(log.rows).map((ig) => ({...ig, file: 'PLAYBOOK.md'})));
+
+  // Rule files.
+  const rules = ruleFiles(log, look);
+  for (const p of rules.problems) push('LESSONS.md', p.line, {rule: 'bad-setting', message: p.text});
+  for (const file of rules.files) {
+    const rows = [];
+    let fence = false;
+    file.lines.forEach((text, i) => {
+      const marker = text.startsWith('```');
+      if (marker) fence = !fence;
+      rows.push({n: i + 1, text, fence: fence || marker});
+    });
+    for (const r of rows) {
+      const comment = !r.fence && IGNORE_START.test(r.text);
+      if (hasHidden(r.text)) push(file.name, r.n, {rule: 'suspicious-instruction', message: 'holds a control or invisible character'});
+      for (const f of contentFindings(r.text, {kind: 'rule-file', comment}, ctx)) push(file.name, r.n, f);
+    }
+    if (/\.md$/i.test(file.name)) for (const f of structureFindings(rows)) push(file.name, f.n, f);
+    ignores.push(...lineIgnores(rows).map((ig) => ({...ig, file: file.name})));
+  }
+
+  // Sizes.
+  const {budget} = log.settings;
+  const allTokens = tokens(allReport(log).join('\n'));
+  const sizes = {lessons: {tokens: log.lessonsTokens, budget: budget.lessons}, all: {tokens: allTokens, budget: budget.all}, sections: []};
+  const advice = 'close lessons whose rules no longer hold, promote second sightings, and shorten Evidence';
+  if (log.lessonsTokens > budget.lessons) push('LESSONS.md', 0, {rule: 'size-budget', message: `LESSONS.md is about ${log.lessonsTokens} tokens, over its budget of ${budget.lessons}: ${advice}`});
+  if (allTokens > budget.all) push('LESSONS.md', 0, {rule: 'size-budget', message: `--all prints about ${allTokens} tokens, over its budget of ${budget.all}: ${advice}`});
+  const bySection = new Map();
+  for (const r of log.rows) if (r.section) bySection.set(r.section, (bySection.get(r.section) || 0) + Buffer.byteLength(r.text, 'utf8') + 1);
+  for (const [section, bytes] of bySection) {
+    const t = Math.ceil(bytes / 4);
+    if (t > budget.section) {
+      sizes.sections.push({name: section.name, line: section.line, tokens: t, budget: budget.section});
+      push('PLAYBOOK.md', section.line, {rule: 'size-budget', message: `section "${section.label}" is about ${t} tokens, over its budget of ${budget.section}: split it, or move detail to a doc it points to`});
+    }
+  }
+
+  // Silencing. A comment names a rule and a reason; it covers its entry (in
+  // LESSONS.md) or the next line that isn't blank (elsewhere).
+  const silenced = [];
+  const kept = [];
+  const valid = [];
+  // A silencing comment's key: its file, its rule, and its entry's line (in
+  // LESSONS.md) or the line it covers. The first comment for a key is used.
+  const byTarget = new Map();
+  const keyOf = (file, rule, at) => `${file}\n${rule}\n${at}`;
+  for (const ig of ignores) {
+    const m = ig.text.match(IGNORE);
+    const at = ig.n;
+    if (!m || !m[2]) push(ig.file, at, {rule: 'bad-ignore', message: 'a lint-ignore line needs a rule ID and a reason: <!-- lint-ignore <rule>: <reason> -->'});
+    else if (!Object.hasOwn(RULES, m[1])) push(ig.file, at, {rule: 'bad-ignore', message: `lint-ignore names no rule "${label(m[1])}"`});
+    else if (FIXED.has(m[1])) push(ig.file, at, {rule: 'bad-ignore', message: `${m[1]} can't be silenced`});
+    else {
+      const v = {...ig, rule: m[1], reason: m[2], used: false};
+      valid.push(v);
+      const key = keyOf(ig.file, v.rule, ig.entry ? `entry ${ig.entry.line}` : ig.target);
+      if (!byTarget.has(key)) byTarget.set(key, v);
+    }
+  }
+  for (const f of found) {
+    const ig = FIXED.has(f.rule) ? null : byTarget.get(keyOf(f.file, f.rule, f.entry ? `entry ${f.entry.line}` : f.line));
+    if (ig) {
+      ig.used = true;
+      silenced.push({...f, reason: unkeyed(ig.reason)});
+    } else kept.push(f);
+  }
+  for (const v of valid) if (!v.used) kept.push({file: v.file, line: v.n, rule: 'unused-ignore', severity: 'warning', message: `this lint-ignore for ${v.rule} matches no finding: remove it`});
+
+  const order = new Map([['LESSONS.md', 0], ['PLAYBOOK.md', 1], ...rules.files.map((f, i) => [f.name, i + 2])]);
+  const sort = (a, b) => (order.get(a.file) ?? 99) - (order.get(b.file) ?? 99) || a.line - b.line;
+  kept.sort(sort);
+  silenced.sort(sort);
+  if (ctx.unchecked) notes.push(`${ctx.unchecked} file names past the limit, not looked up`);
+  if (dropped) notes.push(`${dropped} more findings past the limit of ${MAX_KEEP}, not kept (${droppedErrors} of them errors)`);
+  const strip = ({entry, ...f}) => f;
+  const errors = kept.filter((f) => f.severity === 'error').length + Math.max(0, log.badCount - MAX_BAD) + droppedErrors;
+  return {findings: kept.map(strip), silenced: silenced.map(strip), errors, warnings: kept.filter((f) => f.severity === 'warning').length, notes, sizes, ruleFiles: rules.files.map((f) => f.name)};
+}
+
+// How a finding is printed.
+const findingLine = (f) => `${f.severity === 'error' ? 'ERROR' : 'WARN '} ${f.rule} ${f.file}${f.line ? `:${f.line}` : ''} ${f.message}`;
+
+// --lint and --doctor as lines. `all` also lists the silenced findings;
+// `doctor` adds the summary of the whole log.
+export function lintLines(log, report, {all = false, doctor = false} = {}) {
+  const lines = report.findings.slice(0, MAX_FINDINGS).map(findingLine);
+  if (report.findings.length > MAX_FINDINGS) lines.push(`... and ${report.findings.length - MAX_FINDINGS} more, not printed`);
+  if (all) for (const f of report.silenced.slice(0, MAX_FINDINGS)) lines.push(`SILENCED ${f.rule} ${f.file}${f.line ? `:${f.line}` : ''} ${f.message} (reason: ${f.reason})`);
+  for (const n of report.notes) lines.push(`-- ${n}`);
+  const quiet = report.silenced.length ? `, ${report.silenced.length} silenced${all ? '' : ' (--all lists them)'}` : '';
+  lines.push(`-- lint: ${report.errors} error${report.errors === 1 ? '' : 's'}, ${report.warnings} warning${report.warnings === 1 ? '' : 's'}${quiet}`);
+  if (doctor) {
+    const files = report.ruleFiles.length ? `; rule files: ${report.ruleFiles.join(', ')}` : '';
+    const {lessons, all: whole} = report.sizes;
+    lines.push(`-- doctor: ${log.totals}, ${log.badCount} bad; LESSONS.md about ${lessons.tokens} tokens (budget ${lessons.budget}), --all about ${whole.tokens} (budget ${whole.budget})${files}`);
+  }
+  return lines;
+}
+
+// --lint and --doctor as one JSON object. Text from the files is made safe to
+// print as it is for the terminal.
+export function lintJson(log, report) {
+  const safe = (f) => ({...f, file: show(f.file, MAX_NAME), message: show(f.message)});
+  return JSON.stringify({
+    version: VERSION,
+    errors: report.errors,
+    warnings: report.warnings,
+    silenced: report.silenced.length,
+    findings: report.findings.map(safe),
+    silencedFindings: report.silenced.map((f) => ({...safe(f), reason: show(f.reason)})),
+    notes: report.notes,
+    lessons: {totals: log.totals, bad: log.badCount},
+    sizes: {...report.sizes, sections: report.sizes.sections.map((s) => ({...s, name: show(s.name, MAX_NAME)}))},
+    ruleFiles: report.ruleFiles.map((n) => show(n, MAX_NAME)),
+  });
 }
 
 // ---- The command line -------------------------------------------------------
@@ -539,7 +1072,7 @@ function startedDirectly() {
   try {
     return realpathSync.native(process.argv[1]) === realpathSync.native(fileURLToPath(import.meta.url));
   } catch {
-    return false;
+    return resolve(process.argv[1]) === fileURLToPath(import.meta.url);
   }
 }
 
@@ -555,12 +1088,24 @@ function parseArgs(args) {
   // that is a link to another project's folder would move the root there.
   let dir = resolve(dirname(process.argv[1] || fileURLToPath(import.meta.url)), '..');
   let mode = 'counts';
+  let all = false; // --all after --lint or --doctor
+  let json = false;
   const words = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--dir') {
       if (!args[i + 1] || args[i + 1].startsWith('-')) return null;
       dir = resolve(args[++i]);
+    } else if (a === '--all' && (mode === 'lint' || mode === 'doctor')) {
+      if (all) return null;
+      all = true;
+    } else if (a === '--json') {
+      if (json) return null;
+      json = true;
+    } else if (a === '--lint' || a === '--doctor') {
+      if ((mode !== 'counts' && mode !== 'all') || words.length) return null;
+      if (mode === 'all') all = true;
+      mode = a.slice(2);
     } else if (a === '--check' || a === '--all' || a === '--stale') {
       if (mode !== 'counts' || words.length) return null;
       mode = a.slice(2);
@@ -572,7 +1117,8 @@ function parseArgs(args) {
       words.push(a.toLowerCase());
     }
   }
-  return {dir, mode, words};
+  if (json && mode !== 'lint' && mode !== 'doctor') return null;
+  return {dir, mode, words, all, json};
 }
 
 function main() {
@@ -582,11 +1128,19 @@ function main() {
     process.exitCode = 2;
     return;
   }
-  const {dir, mode, words} = parsed;
+  const {dir, mode, words, all, json} = parsed;
   const log = loadLog(dir);
   if (log.error) {
-    say(log.error);
+    if (json) console.log(JSON.stringify({version: VERSION, error: show(log.error)}));
+    else say(log.error);
     process.exitCode = 2;
+    return;
+  }
+  if (mode === 'lint' || mode === 'doctor') {
+    const report = lintReport(log);
+    if (json) console.log(lintJson(log, report));
+    else lintLines(log, report, {all, doctor: mode === 'doctor'}).forEach((l) => say(l));
+    process.exitCode = report.errors ? 1 : 0;
     return;
   }
   if (mode === 'check') {

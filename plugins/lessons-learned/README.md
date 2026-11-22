@@ -6,7 +6,7 @@ Claude Code forgets a project's mistakes between sessions, so the same ones come
 
 - **`LESSONS.md`**: a dated log of what went wrong, why, and the rule going forward, with evidence.
 - **`PLAYBOOK.md`**: checklists for the project's recurring work. Its first section, "The lessons check", is what Claude runs before each significant step: look up the lessons that apply, write a visible `Lessons checked:` line, follow the rules, and log anything that goes wrong before moving on. A lesson seen twice becomes a playbook step. Its second section, "Checking your work", says what to run and report before calling a change done: run it the way it is used, list what ran and what didn't, make a test for a fix fail before the fix, never weaken a check to pass it, and stop after three failed fixes.
-- **`dev/lessons.mjs`**: finds lessons by topic and checks the format of both files. `--stale` lists lessons whose evidence names a file that is gone, or text that file no longer holds, as leads for closing them, and names a file it didn't check or search. It reads and never writes.
+- **`dev/lessons.mjs`**: finds lessons by topic and checks the format of both files. `--stale` lists lessons whose evidence names a file that is gone, or text that file no longer holds, as leads for closing them, and names a file it didn't check or search. It reads and never writes. `--lint` finds rules a session may not be able to follow: files, commands and flags that aren't there, evidence another reader can't open, unsettled labels, text that reads like an injected instruction, the playbook's headings and steps, and a size budget.
 - **One line in `CLAUDE.md`** that points every session at the lessons check, and in `AGENTS.md` too when the repo is also worked on from Codex or another agent that reads it (Cursor, Windsurf, OpenCode, GitHub Copilot), or in `GEMINI.md` for Gemini CLI.
 
 All of it lives in the repo, so it keeps working for anyone who clones the repo, with or without this plugin.
@@ -61,6 +61,17 @@ Lessons checked: "A test read the save once, right after a toast, and saw old va
 ```
 
 `node dev/lessons.mjs --check` checks the format of both files: every field present and in order, real dates newest first, valid statuses, and that each promoted lesson's playbook section exists and names it. It exits 1 on any problem, so it can run in CI.
+
+`node dev/lessons.mjs --lint` does what `--check` does and more. It reads the rules, the playbook's steps and the rule files (`CLAUDE.md` and `AGENTS.md`, or those a `Rule files:` line in `LESSONS.md`'s header names) and reports, each with a rule ID:
+
+- a file, command or flag a rule names that isn't in the repo (`stale-path`, `stale-flag`);
+- evidence only this machine has, such as a transcript or a temp path (`unopenable-evidence`), and a rule that points at a file in your home folder (`outside-rule`);
+- an `INFERRED` or `HYPOTHESIZED` label in an open lesson's What went wrong, Why or rule, with no word of an attempt to settle it (`unsettled-label`);
+- text that reads like an injected instruction: a fetch piped to a shell, "ignore previous instructions", a claim of authority, text shaped like a key (`suspicious-instruction`);
+- headings in `PLAYBOOK.md` that skip a level, and numbered steps there out of order (`md-heading`, `md-steps`);
+- a lookup, `--all`, the whole log or a playbook section over its size budget, in tokens (`size-budget`). A `Budget:` line in the header changes the limits.
+
+It also reports what `--check` finds (`format`, `from-mismatch`), a bad setting (`bad-setting`), and a `lint-ignore` line that is wrong or matches nothing (`bad-ignore`, `unused-ignore`). An error exits 1; a warning doesn't. Some rules are milder for some text: a missing file named in Evidence or a rule file is a warning, and so is an unknown flag of a script other than `dev/lessons.mjs`. A finding that is wrong is silenced where it is, on a line of its own: `<!-- lint-ignore <rule>: <reason> -->`. In `LESSONS.md` the line goes after one of the entry's fields, indented, and covers the entry. Elsewhere it covers the next line that isn't blank. A finding about a header setting is fixed in the setting. `--all` lists the silenced ones too, `--json` prints one JSON object, and `--doctor` adds a summary of the whole log. It reads scripts as text and never runs them.
 
 ## Requirements
 

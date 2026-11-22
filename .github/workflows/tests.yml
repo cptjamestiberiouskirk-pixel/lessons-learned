@@ -47,3 +47,5 @@ jobs:
         run: node --test
       - name: This repo's own lessons log
         run: node dev/lessons.mjs --check
+      - name: This repo's rules, linted
+        run: node dev/lessons.mjs --doctor
