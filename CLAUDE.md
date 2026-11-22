@@ -13,6 +13,7 @@ Before a commit, run the `verify` skill (`.claude/skills/verify/SKILL.md`). Why 
 - `node --test` on Linux. On Windows the release check runs it under WSL, from a copy on WSL's own file system. Inode reuse, case and heap use differ there, and in 0.2.1 two tests that passed on Windows failed on Linux.
 - `claude plugin validate .` and `claude plugin validate plugins/lessons-learned --profile directory`. Codex has no validate command: `tests/codex.test.mjs` checks the Codex manifests and marketplace, and installing with `codex plugin add` is the real check.
 - `node dev/lessons.mjs --check`, and `node dev/lessons.mjs --doctor` for the lint rules.
+- ESLint on this repo's JavaScript: `npm ci --ignore-scripts` once, then `node node_modules/eslint/bin/eslint.js .`. It is a dev tool only: nothing that ships imports a package.
 - A change to a setup skill or the templates also gets an end-to-end run: `PLAYBOOK.md`, "Changing the setup skill or templates".
 
 ## Conventions

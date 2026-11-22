@@ -1,0 +1,12 @@
+{
+  "name": "lessons-learned-dev",
+  "private": true,
+  "description": "Development tools for this repo only. Nothing here ships with the plugins.",
+  "scripts": {
+    "lint:js": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5"
+  }
+}

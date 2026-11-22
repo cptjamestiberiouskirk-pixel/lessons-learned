@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Runs every check a release needs and prints what each one found.
-// Read-only: it runs the tests, the validators and this repo's own --check and --doctor,
+// Read-only: it runs the tests, the validators, ESLint and this repo's own --check and --doctor,
 // and compares files; it changes nothing in the repo. On Windows the Linux
 // test run copies the repo's files into a temporary folder in WSL, and
 // removes it afterwards.
@@ -12,7 +12,7 @@
 // fails the run unless --allow-skip is given.
 
 import {spawnSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -53,6 +53,10 @@ record('shared files identical', differ.length ? 'FAIL' : 'PASS', differ.length 
 run('node --test', process.execPath, ['--test']);
 run('own LESSONS.md and PLAYBOOK.md', process.execPath, ['dev/lessons.mjs', '--check']);
 run('own rules, linted', process.execPath, ['dev/lessons.mjs', '--doctor']);
+// ESLint comes from the lockfile: `npm ci --ignore-scripts` installs it.
+const eslint = join(REPO, 'node_modules', 'eslint', 'bin', 'eslint.js');
+if (existsSync(eslint)) run('ESLint', process.execPath, [eslint, '.']);
+else record('ESLint', 'SKIPPED', 'not installed: run npm ci --ignore-scripts');
 const win = process.platform === 'win32';
 
 // node --test on Linux. Inode reuse, case and heap use differ there, and in
