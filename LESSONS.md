@@ -15,6 +15,20 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-22: A lint fixture taken from another repo kept two of its real values
+- What went wrong: the user's terms for fixtures from other repos were "trimmed, neutral names", and for two of them "keep only the shape of each problem: no paths, session names or rule wording". A shape fixture for a `.jsonl` log still held the time and the CPU figure from that repo's lesson. Three comments named the source repos, and a real fixture kept a real folder name in its path. It was caught in the last read before the commit, after the fixtures had been shown as ready.
+- Why: the fixture was written from the source lesson and then judged by eye. Nobody searched the source repo for the fixture's own details.
+- Rule going forward: before text drawn from another repo is shown as ready or committed, search that repo for each number, time, name and path the text holds, and replace any it finds with a neutral one. Repo names go too, in comments as well.
+- Evidence: `tests/lint-fixtures.mjs`, search "its last record."
+- Status: open
+
+## 2026-11-22: A scripted edit through a heredoc lost its backslashes and stopped after two of five files
+- What went wrong: a node script given in a Git Bash heredoc made five replacements for the lint review fixes. Its search text held `\\n` for the two characters backslash and n, which reached node as a newline, so the third search text matched nothing. By then the first two files were written: the script checked and wrote each file in turn. The next try, a script file whose strings were `String.raw` templates, failed to parse on the backticks in them.
+- Why: the "Editing files" step was not looked up before the edit, and the script wrote each file as soon as its own replacement matched.
+- Rule going forward: text that holds a backslash goes into a file through the Edit or Write tool, and a scripted edit across several files checks every replacement in every file before it writes any of them.
+- Evidence: `tests/lint-fixtures.mjs`, search "a lint-ignore with an empty reason"
+- Status: promoted to PLAYBOOK "Editing files"
+
 ## 2026-11-22: Three Codex gate tests expected verdicts the gate's shared parser doesn't give
 - What went wrong: in the first run of `tests/gate-codex.test.mjs`, 3 of 18 tests failed on inputs, not on the gate. `GIT_X=1 git commit` was expected to be no commit in PowerShell, but the shared walker skips an `X=1` word in every dialect. `cd sub && git commit` moved to a folder that doesn't exist, so no repo was found. A message of another turn was written as both records, and the response record has no `turn_id`.
 - Why: each expected verdict was written from what the parser was thought to do, without running the gate on that input first.
@@ -223,7 +237,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: the script checked and wrote each file in turn, and assumed this repo's own files and the two skills hold the same text as the template where they differ.
 - Rule going forward: a scripted edit across several files checks every replacement in every file before it writes any of them, and this repo's `LESSONS.md`, `PLAYBOOK.md` and the two skills are each checked for the text, not assumed to match the template.
 - Evidence: the 0.3.0 session: the "MISSING in LESSONS.md" stop, after three files were written; `LESSONS.md` has no "Entries go below this line".
-- Status: open
+- Status: promoted to PLAYBOOK "Editing files"
 
 ## 2026-11-17: Two tests that passed on Windows failed on Linux, found only by a reviewer's WSL probe
 - What went wrong: for eleven review rounds of 0.2.1 every test ran on Windows only. A reviewer used WSL for a probe; running the suite there then showed two failures that CI (ubuntu, windows and macOS) would have shown only after a push. The copy command's end check passed a swapped-in file, because the random-name file's handle was closed and Linux gave the next new file the same inode number. The heap test's 96 MB limit was too little for the new script on Node 18, which needs 128 MB (Node 26 needs 40).

@@ -90,9 +90,10 @@ From: 2026-11-16 "A commit message passed with -F - in PowerShell was read as a 
 
 ## Editing files
 
-From: 2026-11-17 "Backslashes in a Git Bash heredoc were lost before the text reached the file", 2026-11-22 "A regex written through node -e in Git Bash lost its backslash", 2026-11-22 "A mutant pattern written through a Git Bash heredoc lost its backslashes"
+From: 2026-11-17 "Backslashes in a Git Bash heredoc were lost before the text reached the file", 2026-11-22 "A regex written through node -e in Git Bash lost its backslash", 2026-11-22 "A mutant pattern written through a Git Bash heredoc lost its backslashes", 2026-11-17 "A scripted edit across four files wrote three before it found the fourth didn't match", 2026-11-22 "A scripted edit through a heredoc lost its backslashes and stopped after two of five files"
 
 1. Text that holds a backslash (a regex, an escape, a Windows path) goes into a file through the Edit or Write tool, not through a heredoc or a script given inline (for example `node -e`) in the Bash tool (Git Bash). This holds for a scratch script too, not only for files in the repo.
+2. A scripted edit across several files first checks that every search text is found in every file, and writes nothing until all checks pass. Check this repo's own `LESSONS.md` and `PLAYBOOK.md` and both setup `SKILL.md` files directly: don't assume they hold the same text as the templates in `plugins/*/templates/`.
 
 ## Parsing untrusted text
 
