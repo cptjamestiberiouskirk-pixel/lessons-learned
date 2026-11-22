@@ -8,7 +8,7 @@ The `verify` skill (`.claude/skills/verify/SKILL.md`) runs the steps below. `REV
 
 A change is verified when it has been run the way a user runs it. Here that means a real setup session in Claude Code and in Codex on a fresh test repo (`dev/e2e/`), and then a look at the repo it left: `git status`, `node dev/lessons.mjs --check`, the fingerprint. The session's own report is a claim, not evidence. Unit tests can all pass while setup is broken: a live run once showed a tool writing the script's BOM escape as the character itself, which no unit test saw.
 
-## Three kinds of tests worth having
+## Four kinds of tests worth having
 
 - **End to end** (`dev/e2e/`). A setup run either works or it doesn't, and a failure says which step broke. These are slow and billed, so they run before a commit of a skill or template change, not on every edit.
 - **Property tests** (`tests/property.test.mjs`). A property is a statement that must hold for any input. The test tries it on random text built from the characters the rules care about. Examples here are hard to pick well, since the cases that break code are the ones nobody thought of. The first run of these tests found a bug the example tests had missed for three review rounds. Properties used here:
@@ -17,6 +17,7 @@ A change is verified when it has been run the way a user runs it. Here that mean
   - Agreement: `--check` reports a rule when the lookup spelled out something in it that has no ordinary use, and never one printed exactly as written.
   
   The generator is seeded, so a failure names the seed and the text to rerun it. Other patterns worth using: a round trip (write, then read back), an invariant (output never over its cap), and equivalence (a fast version matches a slow, plain one).
+- **Real failures as fixtures** (`tests/lint-fixtures.mjs`, run by `tests/lint.test.mjs`). Each `--lint` rule is tried on text from a real case where a rule could not be followed, before and after it was fixed: the rule must fire on the first and stay quiet on the second. A case from another project keeps only its shape, with neutral names and no paths, session names or wording from that project. Each fixture says where it came from (`real`, `shape` or `hand`).
 - **Fail before, pass after** (`LESSONS_SCRIPT=<old copy> node --test`). The version before the change is the oracle: a test for a fix must fail on it. A test that passes on both doesn't prove the fix. For a change that should keep behavior the same, run both versions on the same input and compare the output. Any difference is either a bug or a change that is listed in `CHANGELOG.md`.
 
 ## Keep checks fast and honest

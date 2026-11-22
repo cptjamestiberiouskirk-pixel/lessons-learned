@@ -33,7 +33,7 @@ To tell whether a repo's `dev/lessons.mjs` is this plugin's version, run this fr
 node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha256').update(f.readFileSync('dev/lessons.mjs','utf8').replace(/\r\n/g,'\n')).digest('hex'))"
 ```
 
-This plugin's version prints `eb50856a12f8492e9b4225890bf92add66ee2df5846081ee35754f57a6a423a0`. For a script kept in another folder, change the path in the command.
+This plugin's version prints `ce44a1923603ac5fd3eab3f2a096dd4e41f4c2fbcb39760e249f2c56f8ab51fb`. For a script kept in another folder, change the path in the command.
 
 ## Before any `node` command
 

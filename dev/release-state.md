@@ -4,6 +4,39 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
+## Unreleased: --lint and --doctor (phase 1a)
+
+Base: 3076665. One review round run (below), with two reviewers: one on the script and tests, one on the docs.
+
+### Deferred
+
+- **RS-H-gatefingerprints** (needs the user's answer). The gate pins one fingerprint, now this script's. A repo with an older release's script (0.2.0 e6b41bf9, 0.2.1 ec55848c, 0.3.0 ae8257c0, 0.3.1 86d3cd28) gets the mismatch behavior: no lookup is required there. Proposed: accept a list of known release fingerprints. Until the user answers, the mismatch behavior is unchanged.
+- **RS-A-lintrealpath** (INFERRED). If `realpathSync.native` throws on the script's path, the start check now compares the resolved paths, so the script runs instead of exiting 0 with nothing done. Not tried: no drive here where the real path fails (RAM disk, some FUSE and virtual drives).
+- **RS-D-claudemdpaths** (CONFIRMED, the user's call). This repo's `--doctor` gives 0 errors and 9 warnings. Six are `stale-path` on `CLAUDE.md` lines 5, 12, 20 and 22, which name `hooks/lessons-gate.mjs`, `hooks/hooks.json`, `templates/lessons.mjs` and the two `plugin.json` files relative to the plugin folders. The other three are Evidence leads to scratch scripts. Fix by full paths, or a `lint-ignore` line, or leave as leads.
+- **RS-D-skilllint** (held for 1b). Neither setup skill mentions `--lint`, and the optional CI step they offer runs `--check` only. A skill change needs the end-to-end runs, which are part of 1b.
+- **RS-T-fixturelines** (INFERRED). Fixtures check a finding's line only where `fires` gives one (the round 1 fixtures do). The older fixtures check rule, severity and file.
+
+### Review round 1
+
+Script and tests (Opus), from the diff alone. Each fix has a test that fails on the script before the fix (a copy kept outside the repo) and passes after:
+
+- A reason ran past the first `-->`, and lint-ignore lines skipped every content rule, so text after the comment was never read. Fixed: a reason holds no `--`, and lint-ignore lines get the content rules (all but the file and flag lookups) and, in rule files, the hidden-character check.
+- `TRANSCRIPT`'s `rollout-` part reread the rest of a line from each `rollout-`: 4.18 s on 8 MB of 4,000-character lines, against 77 ms for plain text. Fixed: that part is tested one word at a time. Test: "a long Evidence line costs linear time".
+- Key-shaped text was printed in `stale-path` and Evidence search messages. Fixed: every message and reason has key-shaped text replaced, and Evidence is checked for keys too.
+- A lint-ignore in `LESSONS.md`'s header was dropped without a word. Now it is `bad-ignore`.
+- "Not checked" and "never tested" counted as attempts for `unsettled-label`. Fixed with a negative lookbehind.
+- A lint-ignore line in a code block was read as a comment. Now it is an example.
+- An ignore before the entry's first field is a `format` error, as in 0.3.1. The docs now say it goes after a field.
+- A lookup over the default budget ends with one more line. Kept, and `CHANGELOG.md` now says so.
+
+Docs (Sonnet): the README's rule list lacked five rules and the milder severities; `unsettled-label` and the Markdown checks were described wider than they run; long sentences. All fixed.
+
+Mutants, one per guard, each run against `tests/lint.test.mjs`: 53 on the final script, all killed. That count includes one for each round 1 fix. `key-printed` (the key message prints the line) was dropped: since round 1 every message goes through the key filter, so it is equivalent. Six survived the first run and each got a stronger test: `closed-skip` (the closed fixture's Evidence had only a stale path, which the second loop skips too), `md-fence` (the fence line itself reset the count), `bad-ignore-reason` (no fixture had an empty reason after the colon), `shared-state` (the second repo named no file), `index-timing` (lint-ignore lines reset the step count, so no `md-steps` finding was ever made: a real bug, fixed), `flag-cache-timing` (a `.ps1` that matched on its first line). The two timing mutants then failed in 5 of 5 runs each, and the script passed 5 of 5.
+
+Fail before: on 0.3.1, 55 of the first 58 lint tests failed. The 2 that passed there are guards by design (a start through a folder link, and flags that don't go together), and 1 skips on Windows without Developer Mode.
+
+Output: the 0.3.1 script and this one, run on 97 folder and argument pairs (this repo, the templates, four other repos, a missing folder, the fixtures), differ only in the 24 usage lines.
+
 ## Unreleased: the lessons gate
 
 Base: a5c9e5b (0.3.1 and the promotions after it). Five review rounds run (below); the fifth is on the Codex copy.

@@ -20,7 +20,7 @@ import {createHash} from 'node:crypto';
 
 // The fingerprint of this release's templates/lessons.mjs, as the setup skill
 // computes it (sha256 of the text with CRLF made LF). A test keeps it equal.
-const FINGERPRINT = 'eb50856a12f8492e9b4225890bf92add66ee2df5846081ee35754f57a6a423a0';
+const FINGERPRINT = 'ce44a1923603ac5fd3eab3f2a096dd4e41f4c2fbcb39760e249f2c56f8ab51fb';
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const CHUNK = 1024 * 1024; // bytes of transcript read at a time
