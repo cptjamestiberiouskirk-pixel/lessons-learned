@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-22: Three Codex gate tests expected verdicts the gate's shared parser doesn't give
+- What went wrong: in the first run of `tests/gate-codex.test.mjs`, 3 of 18 tests failed on inputs, not on the gate. `GIT_X=1 git commit` was expected to be no commit in PowerShell, but the shared walker skips an `X=1` word in every dialect. `cd sub && git commit` moved to a folder that doesn't exist, so no repo was found. A message of another turn was written as both records, and the response record has no `turn_id`.
+- Why: each expected verdict was written from what the parser was thought to do, without running the gate on that input first.
+- Rule going forward: before a gate test asserts a verdict for a new kind of input, run the gate once on that input and read why it gives that verdict. An input meant to tell two dialects apart is one whose verdict the shared walker's code shows differs between them.
+- Evidence: `tests/gate-codex.test.mjs`, search "sh runs a backtick substitution; PowerShell reads a backtick as an escape."
+- Status: open
+
 ## 2026-11-22: A property test's generator made PowerShell that pwsh refuses
 - What went wrong: in review round 4's fixes, the new property test for `$( )` inside PowerShell double quotes was built from pieces each checked alone. Run through pwsh 7, some of its inputs did not parse: a string holding `` `" ``, `""`, `)`, `#`, or nothing, inside a `$( )` inside double quotes. It took three changes to the generator before 40 of 40 inputs ran, in several batches.
 - Why: the pieces were checked one at a time, not in the nestings the generator makes, so the test would have checked the gate against input no shell runs.

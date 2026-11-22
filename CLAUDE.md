@@ -2,7 +2,7 @@
 
 Before each step listed under "The lessons check" in `PLAYBOOK.md`, follow that section: it runs `node dev/lessons.mjs` and says when to add to `LESSONS.md`.
 
-This repo is a plugin marketplace for Claude Code (`.claude-plugin/`) and Codex (`.agents/plugins/`), with one plugin in two copies. What ships is `plugins/lessons-learned/` (Claude Code) and `plugins/lessons-learned-codex/` (Codex): a setup skill each, and the three templates it writes into a user's repo, the same files in both. Everything else (`dev/`, `tests/`, `.claude/`, this file, `LESSONS.md`, `PLAYBOOK.md`, `REVIEW.md`) is for working on the plugin.
+This repo is a plugin marketplace for Claude Code (`.claude-plugin/`) and Codex (`.agents/plugins/`), with one plugin in two copies. What ships is `plugins/lessons-learned/` (Claude Code) and `plugins/lessons-learned-codex/` (Codex): a setup skill each, the lessons gate hook (`hooks/lessons-gate.mjs`, the same file in both, with a `hooks/hooks.json` for each tool), and the three templates it writes into a user's repo, the same files in both. Everything else (`dev/`, `tests/`, `.claude/`, this file, `LESSONS.md`, `PLAYBOOK.md`, `REVIEW.md`) is for working on the plugin.
 
 ## Checking a change
 
@@ -17,7 +17,7 @@ Before a commit, run the `verify` skill (`.claude/skills/verify/SKILL.md`). Why 
 
 ## Conventions
 
-- `templates/lessons.mjs` in both copies and `dev/lessons.mjs` stay the same text. After a change to the template, copy it to the other two places and update the value under "The script's fingerprint" in both `SKILL.md` files and `FINGERPRINT` in `plugins/lessons-learned/hooks/lessons-gate.mjs`; the tests fail until all are done.
+- `templates/lessons.mjs` in both copies and `dev/lessons.mjs` stay the same text. After a change to the template, copy it to the other two places and update the value under "The script's fingerprint" in both `SKILL.md` files and `FINGERPRINT` in `plugins/lessons-learned/hooks/lessons-gate.mjs`, then copy the hook to `plugins/lessons-learned-codex/hooks/`; the tests fail until all are done. A change to the hook is copied the same way.
 - A change to one setup skill gets the same change in the other, unless it is about how the two tools differ.
 - A change a user would notice gets a line in `CHANGELOG.md` and, at release, a version bump in both plugins' manifests (`.claude-plugin/plugin.json`, and the Codex pair `plugin.json` and `.codex-plugin/plugin.json`) and in the script's header.
 - Deferred findings and review rounds are recorded in `dev/release-state.md`.

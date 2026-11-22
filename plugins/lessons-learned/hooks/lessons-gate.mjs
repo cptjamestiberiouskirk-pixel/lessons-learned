@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 // lessons-gate.mjs from the lessons-learned plugin: a PreToolUse hook for
-// Claude Code. In a repo whose PLAYBOOK.md has "## The lessons check", it
-// denies an edit, a git commit or a git push until the session has written a
-// visible "Lessons checked:" line in this turn, after its last commit or push
-// to that repo, and, where the session's own repo has this plugin's
-// dev/lessons.mjs, has run a lookup with it.
+// Claude Code and for Codex (the same file in both copies). In a repo whose
+// PLAYBOOK.md has "## The lessons check", it denies an edit, a git commit or a
+// git push until the session has written a visible "Lessons checked:" line in
+// this turn, after its last commit or push to that repo, and, where the
+// session's own repo has this plugin's dev/lessons.mjs, has run a lookup with
+// it.
 //
 // A nudge, not a security boundary: shell writes and other tools get past it.
 // It reads the target repo's PLAYBOOK.md, its dev/lessons.mjs (for the hash)
-// and the session transcript. It writes nothing, starts no program and opens
-// no network connection. Every error lets the call through, and so does
-// anything it doesn't recognise. LESSONS_GATE=off in its environment turns it
-// off.
+// and the session transcript (Claude Code's, or Codex's rollout file). It
+// writes nothing, starts no program and opens no network connection. Every
+// error lets the call through, and so does anything it doesn't recognise.
+// LESSONS_GATE=off in its environment turns it off.
 
 import {closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync} from 'node:fs';
 import {basename, dirname, isAbsolute, join, resolve, sep} from 'node:path';
@@ -967,9 +968,6 @@ function wakeUp(r) {
 function readTurn(fd, size, modern) {
   const found = [];
   let start = null;
-  let pos = size;
-  let carry = Buffer.alloc(0);
-  let read = 0;
   const take = (line) => {
     const text = line.includes('"text"') && line.includes(LINE_WORDS);
     const call = line.includes('"tool_use"') && (line.includes('lessons.mjs') || line.includes('git'));
@@ -991,6 +989,17 @@ function readTurn(fd, size, modern) {
     }
     return false;
   };
+  readBack(fd, size, take);
+  return {records: found.reverse(), start};
+}
+
+// Each line of the file before `size`, last first, given to `take` as a
+// Buffer, until `take` returns true or MAX_WINDOW bytes have been read. At the
+// window's start a cut first line is left out.
+function readBack(fd, size, take) {
+  let pos = size;
+  let carry = Buffer.alloc(0);
+  let read = 0;
   outer: while (pos > 0 && read < MAX_WINDOW) {
     const n = Math.min(CHUNK, pos, MAX_WINDOW - read);
     pos -= n;
@@ -1017,7 +1026,6 @@ function readTurn(fd, size, modern) {
       end = nl < first ? first : nl;
     }
   }
-  return {records: found.reverse(), start};
 }
 
 // The ids of tool calls in these records that never ran: refused by a hook,
@@ -1046,6 +1054,28 @@ function notRun(records) {
 // such commit or push counts.
 function judge(records, id, ctx) {
   const skip = notRun(records);
+  const v = verdict(ctx);
+  for (const r of records) {
+    if (r.type !== 'assistant') continue;
+    const rcwd = typeof r.cwd === 'string' && isAbsolute(r.cwd) && !unc(r.cwd) ? r.cwd : ctx.cwd;
+    for (const b of blocks(r)) {
+      if (b.type === 'text' && typeof b.text === 'string') v.text(b.text);
+      else if (b.type === 'tool_use' && typeof b.id === 'string') {
+        // Nothing at or after the current call counts.
+        if (b.id === id) return v.finish();
+        if (skip.has(b.id) || !SHELL_TOOLS.has(b.name) || !b.input || typeof b.input.command !== 'string') continue;
+        v.ran(walk(b.input.command, dialectOf(b.name), rcwd));
+      }
+    }
+  }
+  return v.finish();
+}
+
+// The verdict, built up in the turn's order: text that may hold the line, and
+// the commits, pushes and lookups of each call that ran. A commit or push to a
+// gated repo uses up the line and the lookup. Last, the current call: a
+// lookup before its first such commit or push counts.
+function verdict(ctx) {
   let line = false;
   let lookup = false;
   const apply = (events, stopAtGated) => {
@@ -1059,25 +1089,152 @@ function judge(records, id, ctx) {
       }
     }
   };
-  const finish = () => {
-    if (ctx.current) apply(ctx.current, true);
-    return {line, lookup};
+  return {
+    text: (text) => {
+      if (hasLine(text)) line = true;
+    },
+    ran: (events) => apply(events, false),
+    finish: () => {
+      if (ctx.current) apply(ctx.current, true);
+      return {line, lookup};
+    },
   };
+}
+
+// ---- Codex ------------------------------------------------------------------
+//
+// Codex sends `turn_id` in the payload, and its transcript is the session's
+// rollout file, whose first record is `session_meta`. As read from Codex
+// 0.171's source and local rollouts: a shell command comes as tool `Bash` with
+// `tool_input.command` the script the model gave, run in the user's default
+// shell (PowerShell on Windows), and the payload's `cwd` is the folder it
+// runs in; an edit comes as `apply_patch` with the patch text in
+// `tool_input.command`, its paths relative to the payload's `cwd`. Codex
+// writes and flushes each item to the rollout before the tool runs, and waits
+// for the file before it starts a hook, so there is nothing to wait for. A
+// command that ran is an `item_completed` event with a `CommandExecution`
+// item: its argv, its folder as a file URL, and its status.
+
+const CODEX_EDIT = 'apply_patch';
+const MAX_TARGETS = 512; // files named in a patch looked at; past that, the patch passes
+const MAX_PATCH_PARTS = 16384; // names in all of a patch's paths looked at; past that, the patch passes
+// Codex's patch parser trims a line before it looks for a header.
+const PATCH_FILE = /^\s*\*\*\* (?:Add File|Update File|Delete File|Move to): ([^]*)$/;
+
+// Whether the file at `path` is a Codex rollout: a regular file whose first
+// record is session_meta (its type comes after a timestamp and an ordinal).
+function rolloutAt(path) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    if (!fstatSync(fd).isFile()) return false;
+    const head = readAt(fd, Buffer.alloc(512), 0).toString('utf8');
+    const nl = head.indexOf('\n');
+    return (nl < 0 ? head : head.slice(0, nl)).includes('"session_meta"');
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// The files a patch adds, updates, deletes or moves to, as written in it;
+// null when there are too many to look at. Each name in a path costs a look
+// on disk, so the names in all the paths share one budget.
+function patchTargets(patch) {
+  const out = [];
+  let parts = 0;
+  for (const raw of patch.split('\n')) {
+    const m = PATCH_FILE.exec(raw);
+    if (!m) continue;
+    // trim also takes off a CR before the line break.
+    const name = m[1].trim();
+    if (!name) continue;
+    if (out.length >= MAX_TARGETS) return null;
+    parts += name.split(/[\\/]/).length;
+    if (parts > MAX_PATCH_PARTS) return null;
+    out.push(name);
+  }
+  return out;
+}
+
+// A record's folder, given as a file URL (file:///E:/Code/x) or a plain
+// absolute path. Anything else, a host in the URL included, is null.
+function fileUrl(u) {
+  if (typeof u !== 'string') return null;
+  let p = u;
+  if (u.startsWith('file://')) {
+    if (!u.startsWith('file:///')) return null;
+    try {
+      p = decodeURIComponent(u.slice(7));
+    } catch {
+      return null;
+    }
+    if (process.platform === 'win32') {
+      if (!/^\/[A-Za-z]:\//.test(p)) return null;
+      p = p.slice(1).replace(/\//g, '\\');
+    }
+  }
+  return isAbsolute(p) && !unc(p) && !tooLong(p) ? p : null;
+}
+
+// A command that ran, from its argv, as an sh command with each word quoted,
+// so its words are read as they were run. The command reader then reads the
+// script after pwsh -Command, bash -c or cmd /c in that shell's rules.
+function argvCommand(argv) {
+  if (!Array.isArray(argv) || argv.length === 0 || !argv.every((a) => typeof a === 'string')) return null;
+  return argv.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ');
+}
+
+// The records of this turn, oldest first, read backwards from the end to the
+// turn's task_started event. Only lines that can matter are parsed: the
+// turn's start, visible assistant text that may hold the line, and commands
+// that ran and may be a lookup or a commit or push. `other` is set when the
+// latest turn start is another turn's, a shape not expected.
+function readCodexTurn(fd, size, turnId) {
+  const found = [];
+  let start = false;
+  let other = false;
+  readBack(fd, size, (line) => {
+    const begins = line.includes('"task_started"');
+    const text = line.includes(LINE_WORDS) && (line.includes('"AgentMessage"') || line.includes('"assistant"'));
+    const ran = line.includes('"CommandExecution"') && (line.includes('lessons.mjs') || line.includes('git'));
+    if (!begins && !text && !ran) return false;
+    const r = parse(line);
+    const q = r && r.payload && typeof r.payload === 'object' && !Array.isArray(r.payload) ? r.payload : null;
+    if (!q) return false;
+    if (r.type === 'event_msg' && q.type === 'task_started') {
+      if (q.turn_id === turnId) start = true;
+      else other = true;
+      return true;
+    }
+    found.push(r);
+    return false;
+  });
+  return {records: found.reverse(), start, other};
+}
+
+// The text of a message's content: Codex's output_text blocks, or the Text
+// blocks of an AgentMessage item.
+const texts = (content) => (Array.isArray(content) ? content.filter((c) => c && (c.type === 'output_text' || c.type === 'Text') && typeof c.text === 'string').map((c) => c.text) : []);
+
+function judgeCodex(records, turnId, ctx) {
+  const v = verdict(ctx);
   for (const r of records) {
-    if (r.type !== 'assistant') continue;
-    const rcwd = typeof r.cwd === 'string' && isAbsolute(r.cwd) && !unc(r.cwd) ? r.cwd : ctx.cwd;
-    for (const b of blocks(r)) {
-      if (b.type === 'text' && typeof b.text === 'string') {
-        if (hasLine(b.text)) line = true;
-      } else if (b.type === 'tool_use' && typeof b.id === 'string') {
-        // Nothing at or after the current call counts.
-        if (b.id === id) return finish();
-        if (skip.has(b.id) || !SHELL_TOOLS.has(b.name) || !b.input || typeof b.input.command !== 'string') continue;
-        apply(walk(b.input.command, dialectOf(b.name), rcwd), false);
+    const q = r.payload;
+    // An event of another turn, should one be here, is not this turn's.
+    if (q.turn_id !== undefined && q.turn_id !== turnId) continue;
+    if (r.type === 'response_item' && q.type === 'message' && q.role === 'assistant') texts(q.content).forEach(v.text);
+    else if (r.type === 'event_msg' && q.type === 'item_completed' && q.item && typeof q.item === 'object') {
+      const item = q.item;
+      if (item.type === 'AgentMessage') texts(item.content).forEach(v.text);
+      else if (item.type === 'CommandExecution' && (item.status === 'completed' || item.status === 'failed')) {
+        const c = argvCommand(item.command);
+        if (c) v.ran(walk(c, 'sh', fileUrl(item.cwd) ?? ctx.cwd));
       }
     }
   }
-  return finish();
+  return v.finish();
 }
 
 function readPayload() {
@@ -1105,23 +1262,45 @@ async function main() {
     }
     return rootOf.get(dir);
   };
-  const roots = new Set();
-  let current = null;
-  if (EDIT_TOOLS.has(p.tool_name)) {
-    const raw = typeof input.file_path === 'string' ? input.file_path : input.notebook_path;
-    if (typeof raw !== 'string' || !raw || unc(raw) || tooLong(raw)) return;
+  // The gated repo an edit of `raw` is in, unless the file is exempt.
+  const editRoot = (raw) => {
+    if (typeof raw !== 'string' || !raw || unc(raw) || tooLong(raw)) return null;
     const given = native(raw);
     const abs = isAbsolute(given) ? given : cwd && resolve(cwd, given);
-    if (!abs) return;
+    if (!abs) return null;
     const target = nearestReal(abs);
-    if (!target) return;
+    if (!target) return null;
     const root = findRoot(dirname(target.real));
-    if (!root || !hasCheck(root) || exempt(abs, target, root)) return;
+    return root && hasCheck(root) && !exempt(abs, target, root) ? root : null;
+  };
+  // Codex: the payload names its turn (Claude Code's doesn't) and its
+  // transcript is a rollout. Its commands run in the user's shell, PowerShell
+  // on Windows.
+  const id = p.tool_use_id;
+  const tp = p.transcript_path;
+  if (typeof tp !== 'string' || !isAbsolute(tp) || unc(tp)) return;
+  const turnId = typeof p.turn_id === 'string' && p.turn_id !== '' ? p.turn_id : null;
+  const codex = turnId !== null && rolloutAt(tp);
+  const roots = new Set();
+  let current = null;
+  if (!codex && EDIT_TOOLS.has(p.tool_name)) {
+    const root = editRoot(typeof input.file_path === 'string' ? input.file_path : input.notebook_path);
+    if (!root) return;
     roots.add(root);
-  } else if (SHELL_TOOLS.has(p.tool_name)) {
+  } else if (codex && p.tool_name === CODEX_EDIT) {
+    if (typeof input.command !== 'string') return;
+    const targets = patchTargets(input.command);
+    if (!targets) return;
+    for (const raw of targets) {
+      const root = editRoot(raw);
+      if (root) roots.add(root);
+    }
+    if (!roots.size) return;
+  } else if (SHELL_TOOLS.has(p.tool_name) && (!codex || p.tool_name === 'Bash')) {
     const command = input.command;
     if (typeof command !== 'string' || !command.includes('git')) return;
-    current = walk(command, dialectOf(p.tool_name), cwd);
+    const dialect = !codex ? dialectOf(p.tool_name) : process.platform === 'win32' ? 'ps' : 'sh';
+    current = walk(command, dialect, cwd);
     for (const e of current) {
       const root = e.kind === 'git' ? gatedRoot(e.dir) : null;
       if (root) roots.add(root);
@@ -1129,9 +1308,7 @@ async function main() {
     if (!roots.size) return;
   } else return;
 
-  const id = p.tool_use_id;
-  const tp = p.transcript_path;
-  if (typeof id !== 'string' || !id || typeof tp !== 'string' || !isAbsolute(tp) || unc(tp)) return;
+  if (!codex && (typeof id !== 'string' || !id)) return;
   // The lookup is asked for only in the session's own repo, where the deny
   // reason's `node dev/lessons.mjs` runs the script whose hash was checked.
   const home = cwd && gatedRoot(cwd);
@@ -1153,6 +1330,13 @@ async function main() {
   const fd = openSync(tp, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   try {
     if (!fstatSync(fd).isFile()) return;
+    if (codex) {
+      const {records, other} = readCodexTurn(fd, Number(fstatSync(fd).size), turnId);
+      if (other) return;
+      const v = judgeCodex(records, turnId, ctx);
+      if (v.line && (!needLookup || v.lookup)) return;
+      return deny(needLookup);
+    }
     const size = await waitForCall(fd, id);
     if (size === null) return;
     const {records, start} = readTurn(fd, size, modern);
@@ -1163,6 +1347,11 @@ async function main() {
   } finally {
     closeSync(fd);
   }
+  deny(needLookup);
+}
+
+// Claude Code and Codex both read this shape as a deny.
+function deny(needLookup) {
   process.stdout.write(
     `${JSON.stringify({hookSpecificOutput: {hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: needLookup ? REASON_LOOKUP : REASON_LINE}})}\n`,
   );

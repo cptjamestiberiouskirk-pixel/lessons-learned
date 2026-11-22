@@ -12,11 +12,17 @@ You need Node.js 22 or later and the Codex CLI.
 codex plugin marketplace add cptjamestiberiouskirk-pixel/lessons-learned
 ```
 
-Then install **lessons-learned-codex** from that marketplace: in the ChatGPT desktop app, open the Plugins directory and choose it, or with the CLI run `codex plugin add lessons-learned-codex@lessons-learned-codex`. The plugin has no hooks, so either way works, and in Codex the lessons check is followed by hand. (The Claude Code plugin has a hook that checks for the `Lessons checked:` line before edits, commits and pushes; a Codex copy of it waits until Codex's hook input for its tools is confirmed.) To confirm it is installed, run `codex plugin list` and look for `lessons-learned-codex ... installed, enabled`; a new chat then has the `lessons-setup` skill.
+Then install **lessons-learned-codex** from that marketplace: in the ChatGPT desktop app, open the Plugins directory and choose it, or with the CLI run `codex plugin add lessons-learned-codex@lessons-learned-codex`. To confirm it is installed, run `codex plugin list` and look for `lessons-learned-codex ... installed, enabled`; a new chat then has the `lessons-setup` skill.
 
 ## Use
 
 In a chat in the repo, ask to set up lessons learned (or name the skill, `lessons-setup`). It checks what the repo already has, shows a plan and waits for your go-ahead before it writes anything.
+
+## The lessons gate
+
+The plugin has one hook, the lessons gate (`hooks/lessons-gate.mjs`, the same file as in the Claude Code plugin). Codex runs a plugin's hook only after you trust it: run `/hooks` in a chat and trust it there. In a repo whose `PLAYBOOK.md` has "## The lessons check", the gate then denies an `apply_patch` edit, and a shell command that runs `git commit` or `git push`, until Codex has written a visible `Lessons checked:` line in this turn, after its last commit or push to that repo. In the session's own repo, where `dev/lessons.mjs` is this release's, it also needs a lookup with that script. It only reads, and lets the call through when it can't tell.
+
+To turn it off, turn the hook off in `/hooks`, or start Codex with `LESSONS_GATE=off` in its environment. [SECURITY.md](https://github.com/cptjamestiberiouskirk-pixel/lessons-learned/blob/main/SECURITY.md) says how it reads Codex's records and what gets past it.
 
 ## How it differs from the Claude Code plugin
 
@@ -24,6 +30,7 @@ In a chat in the repo, ask to set up lessons learned (or name the skill, `lesson
 - It finds the templates in its own plugin folder, and refuses a plugin folder whose path holds a double quote, `$`, a backtick, `%`, `!` or other characters a shell could read differently.
 - It copies the templates with a Node command that won't write over a file or link already at the target.
 - It names `AGENTS.md` as the entry point when the repo has neither `AGENTS.md` nor `CLAUDE.md`.
+- Its gate looks at `apply_patch` and shell commands, and a `Lessons checked:` line counts only in its own turn. In Claude Code a line also carries on past a background task's notification.
 
 ## With Trailmark
 
