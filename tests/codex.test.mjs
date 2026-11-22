@@ -84,8 +84,8 @@ test('the Codex marketplace lists the one plugin at its folder', () => {
   assert.ok(existsSync(join(REPO, mk.plugins[0].source.path, '.codex-plugin', 'plugin.json')));
 });
 
-test('the templates and LICENSE are byte for byte the same in both copies', () => {
-  for (const f of ['LICENSE', 'templates/LESSONS.md', 'templates/PLAYBOOK.md', 'templates/lessons.mjs']) {
+test('the templates, LICENSE and the lessons gate are byte for byte the same in both copies', () => {
+  for (const f of ['LICENSE', 'templates/LESSONS.md', 'templates/PLAYBOOK.md', 'templates/lessons.mjs', 'hooks/lessons-gate.mjs']) {
     assert.ok(readFileSync(join(CLAUDE, f)).equals(readFileSync(join(CODEX, f))), `${f} differs between the copies`);
   }
   assert.deepEqual(readdirSync(join(CODEX, 'templates')).sort(), readdirSync(join(CLAUDE, 'templates')).sort());

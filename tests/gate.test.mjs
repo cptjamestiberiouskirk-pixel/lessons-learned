@@ -1128,7 +1128,8 @@ test('the hook\'s fingerprint is the shipped script\'s, and hooks.json starts it
     const h = e.hooks[0];
     assert.deepEqual({type: h.type, command: h.command, args: h.args, if: h.if, onFailure: h.onFailure}, {type: 'command', command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/hooks/lessons-gate.mjs'], if: undefined, onFailure: undefined});
   }
-  assert.ok(!existsSync(join(ROOT, 'plugins/lessons-learned-codex/hooks')), 'the Codex copy ships no hook in this release (dev/release-state.md)');
+  // The Codex copy ships the same file; tests/gate-codex.test.mjs checks its hooks.json.
+  assert.ok(readFileSync(join(ROOT, 'plugins/lessons-learned-codex/hooks/lessons-gate.mjs')).equals(readFileSync(join(PLUGIN, 'hooks/lessons-gate.mjs'))), 'the two copies of the hook differ');
 });
 
 test('the hook holds no non-ASCII character and no unicode escape', () => {

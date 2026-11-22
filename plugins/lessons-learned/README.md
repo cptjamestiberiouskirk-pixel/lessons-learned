@@ -78,4 +78,4 @@ A repo already set up is gated as soon as the plugin with the hook is installed 
 
 ## Limits
 
-The gate is a nudge, not an enforcement boundary: a write through the shell or another tool gets past it, and so does a commit it can't see in the command (a git alias, or a script that commits). It lets a call through whenever it can't tell, and it checks that the line is there, not that it names the right lessons. Test runs are still checked by hand. The script checks only the format of the two files, not whether the check was run. In Codex there is no hook, and the lessons check is followed by hand.
+The gate is a nudge, not an enforcement boundary: a write through the shell or another tool gets past it, and so does a commit it can't see in the command (a git alias, or a script that commits). It lets a call through whenever it can't tell, and it checks that the line is there, not that it names the right lessons. Test runs are still checked by hand. The script checks only the format of the two files, not whether the check was run. The Codex plugin ships the same gate, which Codex runs once you trust it in `/hooks`; its README says how it differs.
