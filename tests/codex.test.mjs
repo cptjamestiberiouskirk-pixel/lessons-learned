@@ -531,8 +531,8 @@ function volumeJunction(at, target) {
 }
 
 for (const [what, args] of [
-  ['target\'s folder', (repo) => [join(CODEX, 'templates', 'lessons.mjs'), 'dev/lessons.mjs', 'dev']],
-  ['staging folder', (repo) => ['.lessons-setup-Ab3xYz/LESSONS.md', 'LESSONS.md', '.lessons-setup-Ab3xYz']],
+  ['target\'s folder', () => [join(CODEX, 'templates', 'lessons.mjs'), 'dev/lessons.mjs', 'dev']],
+  ['staging folder', () => ['.lessons-setup-Ab3xYz/LESSONS.md', 'LESSONS.md', '.lessons-setup-Ab3xYz']],
 ]) {
   test(`the copy command refuses a ${what} that is a junction to a volume path, which lstat takes for a folder`, (t) => {
     const {code} = nodeCommand(codexSkill, "linkSync(t,d)");

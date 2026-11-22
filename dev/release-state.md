@@ -4,7 +4,7 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
-## Unreleased: --lint and --doctor (phase 1a)
+## Unreleased: --lint and --doctor (phase 1a), ESLint (phase 2)
 
 Base: 3076665. One review round run (below), with two reviewers: one on the script and tests, one on the docs.
 
@@ -15,6 +15,7 @@ Base: 3076665. One review round run (below), with two reviewers: one on the scri
 - **RS-D-claudemdpaths** (CONFIRMED, the user's call). This repo's `--doctor` gives 0 errors and 9 warnings. Six are `stale-path` on `CLAUDE.md` lines 5, 12, 20 and 22, which name `hooks/lessons-gate.mjs`, `hooks/hooks.json`, `templates/lessons.mjs` and the two `plugin.json` files relative to the plugin folders. The other three are Evidence leads to scratch scripts. Fix by full paths, or a `lint-ignore` line, or leave as leads.
 - **RS-D-skilllint** (held for 1b). Neither setup skill mentions `--lint`, and the optional CI step they offer runs `--check` only. A skill change needs the end-to-end runs, which are part of 1b.
 - **RS-T-fixturelines** (INFERRED). Fixtures check a finding's line only where `fires` gives one (the round 1 fixtures do). The older fixtures check rule, severity and file.
+- **RS-H-eslintversion**. ESLint 9.39.5, the approved version, is marked deprecated on npm ("no longer supported"). It installs and runs. Moving to a supported major is the user's call.
 
 ### Review round 1
 

@@ -49,3 +49,18 @@ jobs:
         run: node dev/lessons.mjs --check
       - name: This repo's rules, linted
         run: node dev/lessons.mjs --doctor
+
+  eslint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+      # The lockfile pins every package; no install script runs.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node node_modules/eslint/bin/eslint.js .

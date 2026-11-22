@@ -6,7 +6,7 @@ import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from './child.mjs';
 import {createHash, randomBytes} from 'node:crypto';
-import {appendFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {appendFileSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
