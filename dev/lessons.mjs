@@ -27,13 +27,17 @@
 // --dir <folder> reads LESSONS.md and PLAYBOOK.md from that folder instead of the
 // repo root (for trying the script on a sample log). --stale looks for the files
 // the evidence names in that folder too.
+//
+// Another script can import this file: the functions it exports take the repo
+// root, keep their state per call, and return what they found. They never print
+// or exit. The command line part runs only when this file is started directly.
 
 import {closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const USAGE = 'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | <word>...]';
-const FIELDS = ['What went wrong', 'Why', 'Rule going forward', 'Evidence', 'Status'];
+export const USAGE = 'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | <word>...]';
+export const FIELDS = ['What went wrong', 'Why', 'Rule going forward', 'Evidence', 'Status'];
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_LINE = 2000; // characters of one printed line
 const MAX_BAD = 50; // BAD lines printed by --check
@@ -117,7 +121,7 @@ function hasHidden(text) {
 // by whole code points (a surrogate pair is never split). A joiner left at the
 // end of the cut is spelled out, since nothing follows it there.
 // The count of what was cut is of the text's own characters.
-function show(text, max = MAX_LINE) {
+export function show(text, max = MAX_LINE) {
   const s = String(text);
   let out = '';
   let n = 0; // characters printed
@@ -145,39 +149,6 @@ function show(text, max = MAX_LINE) {
 // From: name is in at most one message, so it is cut when that one is made,
 // and only if that message is one of those printed.
 const label = (text) => show(text, MAX_NAME);
-
-function say(text) {
-  for (const line of String(text).split('\n')) console.log(show(line));
-}
-
-const args = process.argv.slice(2);
-// The repo root is the parent of the folder the script was started from, as
-// given on the command line. Node resolves links in import.meta.url, so a `dev`
-// that is a link to another project's folder would move the root there.
-let dir = resolve(dirname(process.argv[1] || fileURLToPath(import.meta.url)), '..');
-let mode = 'counts';
-const words = [];
-for (let i = 0; i < args.length; i++) {
-  const a = args[i];
-  if (a === '--dir') {
-    if (!args[i + 1] || args[i + 1].startsWith('-')) fail(USAGE);
-    dir = resolve(args[++i]);
-  } else if (a === '--check' || a === '--all' || a === '--stale') {
-    if (mode !== 'counts' || words.length) fail(USAGE);
-    mode = a.slice(2);
-  } else if (a.startsWith('-')) {
-    fail(USAGE);
-  } else {
-    if (mode !== 'counts' && mode !== 'words') fail(USAGE);
-    mode = 'words';
-    words.push(a.toLowerCase());
-  }
-}
-
-function fail(message) {
-  say(message);
-  process.exit(2);
-}
 
 // Reads the file a look found at `path`, through one handle, so a file put in
 // its place after the look is not read: the handle must be the file the look
@@ -211,162 +182,178 @@ function readSame(path, seen, max) {
   }
 }
 
-// One of the two files, as lines. Refuses a symbolic link, anything that isn't a
-// regular file, a file with a second hard link and a file over MAX_BYTES, so a
-// repo can't make the script read a file from somewhere else or a huge one.
-function read(name) {
-  const path = join(dir, name);
+// One of the two files, as {lines}, or {error} with the message to give.
+// Refuses a symbolic link, anything that isn't a regular file, a file with a
+// second hard link and a file over MAX_BYTES, so a repo can't make the script
+// read a file from somewhere else or a huge one.
+function readLog(root, name) {
+  const path = join(root, name);
   let stat;
   try {
     stat = lstatSync(path, {bigint: true});
   } catch {
-    fail(`lessons: cannot read ${path}`);
+    return {error: `lessons: cannot read ${path}`};
   }
-  if (stat.isSymbolicLink()) fail(`lessons: ${path} is a symbolic link; the script reads only a regular file there`);
-  if (!stat.isFile()) fail(`lessons: ${path} is not a regular file`);
-  if (stat.nlink > 1n) fail(`lessons: ${path} has ${stat.nlink} hard links; the script reads only a file with one`);
-  if (stat.size > BigInt(MAX_BYTES)) fail(`lessons: ${path} is over ${MAX_BYTES} bytes`);
+  if (stat.isSymbolicLink()) return {error: `lessons: ${path} is a symbolic link; the script reads only a regular file there`};
+  if (!stat.isFile()) return {error: `lessons: ${path} is not a regular file`};
+  if (stat.nlink > 1n) return {error: `lessons: ${path} has ${stat.nlink} hard links; the script reads only a file with one`};
+  if (stat.size > BigInt(MAX_BYTES)) return {error: `lessons: ${path} is over ${MAX_BYTES} bytes`};
   const got = readSame(path, stat, MAX_BYTES);
-  if (got.problem === 'changed') fail(`lessons: ${path} changed while it was read`);
-  if (got.problem === 'too big') fail(`lessons: ${path} is over ${MAX_BYTES} bytes`);
-  if (got.problem) fail(`lessons: cannot read ${path}`);
+  if (got.problem === 'changed') return {error: `lessons: ${path} changed while it was read`};
+  if (got.problem === 'too big') return {error: `lessons: ${path} is over ${MAX_BYTES} bytes`};
+  if (got.problem) return {error: `lessons: cannot read ${path}`};
   let text = got.text;
   // A BOM at the very start is dropped. It is matched by its code, not written
   // as an escape: a tool that writes this file out can turn an escape into the
   // invisible character itself.
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  return text.replace(/\r/g, '').split('\n');
+  return {lines: text.replace(/\r/g, '').split('\n')};
 }
 
-// --check prints the first MAX_BAD problems and counts the rest, so only those
-// messages are kept. A message given as a function is built only when it is
-// kept; a From: message is, since a PLAYBOOK.md can hold hundreds of thousands
-// of bad From: names. Other messages are built as their problem is found.
-let badCount = 0;
-const bad = [];
-const problem = (line, text) => {
-  if (badCount++ < MAX_BAD) bad.push(`BAD   ${line ? `line ${line}: ` : ''}${typeof text === 'function' ? text() : text}`);
-};
-
-// PLAYBOOK.md: its "## " sections and the lessons each one's "From:" line names.
-const sections = new Map();
-{
-  let current = null;
-  let fence = false;
-  read('PLAYBOOK.md').forEach((line, i) => {
-    if (hasHidden(line)) problem(0, `PLAYBOOK.md line ${i + 1}: holds a control or invisible character: ${line}`);
-    if (line.startsWith('```')) fence = !fence;
-    if (fence) return;
-    // The s flag lets . match U+2028 and U+2029 too, which JavaScript otherwise
-    // treats as line ends: such a line is reported as hidden, not misread.
-    const heading = line.match(/^## (.+)$/s);
-    if (heading) {
-      const name = heading[1].trim();
-      current = {name, label: label(name), from: new Set(), line: i + 1};
-      if (sections.has(current.name)) problem(0, `PLAYBOOK.md line ${i + 1}: a second section named "${current.label}"`);
-      else sections.set(current.name, current);
-    } else if (current && line.startsWith('From: ')) {
-      for (const m of line.matchAll(/(\d{4}-\d{2}-\d{2}) "([^"]+)"/g)) current.from.add(`${m[1]} "${m[2]}"`);
-    }
-  });
-}
-
-// LESSONS.md: one entry per "## YYYY-MM-DD: title" heading.
-const entries = [];
-const byKey = new Map(); // an entry's date and title -> the first entry with them
-{
-  let entry = null;
-  let field = null;
-  let fence = false;
-  let fenceLine = 0;
-  const finish = () => {
-    if (!entry) return;
-    // A field's lines are joined once, here, so a long field costs linear time.
-    for (const [f, parts] of Object.entries(entry.parts)) entry.fields[f] = parts.join(' ').trim();
-    const missing = FIELDS.filter((f) => !entry.fields[f]);
-    if (missing.length) problem(entry.line, `${entry.label}: missing or empty: ${missing.join(', ')}`);
-    const status = entry.fields.Status || '';
-    let m;
-    if (status === 'open') entry.status = 'open';
-    else if ((m = status.match(/^promoted to PLAYBOOK "([^"]+)"$/))) {
-      entry.status = 'promoted';
-      entry.section = m[1];
-      const section = sections.get(m[1]);
-      if (!section) problem(entry.line, `${entry.label}: PLAYBOOK.md has no section "## ${label(m[1])}"`);
-      else if (!section.from.has(entry.key)) problem(entry.line, `${entry.label}: the "From:" line of "${label(m[1])}" does not name it`);
-    } else if ((m = status.match(/^closed: (.+)$/s))) {
-      entry.status = 'closed';
-    } else if (status) {
-      problem(entry.line, `${entry.label}: Status must be open, promoted to PLAYBOOK "<section>" or closed: <reason>`);
-    }
-    entries.push(entry);
-    if (!byKey.has(entry.key)) byKey.set(entry.key, entry);
+// Reads and parses both files of the repo at `root`. Returns {error} when a
+// file can't be read, or the log: its playbook sections, its entries, the
+// format problems --check reports (the first MAX_BAD messages, and their
+// count) and the counts line.
+export function loadLog(root) {
+  // --check prints the first MAX_BAD problems and counts the rest, so only
+  // those messages are kept. A message given as a function is built only when
+  // it is kept; a From: message is, since a PLAYBOOK.md can hold hundreds of
+  // thousands of bad From: names. Other messages are built as their problem is
+  // found.
+  let badCount = 0;
+  const bad = [];
+  const problem = (line, text) => {
+    if (badCount++ < MAX_BAD) bad.push(`BAD   ${line ? `line ${line}: ` : ''}${typeof text === 'function' ? text() : text}`);
   };
-  read('LESSONS.md').forEach((line, i) => {
-    const n = i + 1;
-    if (hasHidden(line)) problem(n, `holds a control or invisible character: ${line}`);
-    if (line.startsWith('```')) {
-      fence = !fence;
-      fenceLine = n;
-      return;
-    }
-    if (fence) {
-      // An entry written inside a code block (the format example's, say) is
-      // never read, so the log would look clean while it holds lessons.
-      if (/^## \d{4}-\d{2}-\d{2}: /.test(line)) problem(n, `an entry inside a code block (opened on line ${fenceLine}) is not read: move it below the block`);
-      return;
-    }
-    const heading = line.match(/^## (\d{4})-(\d{2})-(\d{2}): (.+)$/s); // s: as in PLAYBOOK.md above
-    if (heading) {
-      finish();
-      const [, y, mo, d, title] = heading;
-      const shown = label(title.trim());
-      const date = `${y}-${mo}-${d}`;
-      const real = new Date(`${date}T00:00:00Z`);
-      if (Number.isNaN(real.getTime()) || real.toISOString().slice(0, 10) !== date) problem(n, `not a real date: ${date}`);
-      const previous = entries.length ? entries[entries.length - 1].date : null;
-      if (previous && date > previous) problem(n, `${shown}: newer than the entry above it (the log is newest first)`);
-      const key = `${date} "${title.trim()}"`;
-      if (title.includes('"')) problem(n, `${shown}: a title may not hold a double quote (PLAYBOOK "From:" lines quote titles)`);
-      if (byKey.has(key) || (entry && entry.key === key)) problem(n, `${shown}: a second entry with this date and title`);
-      entry = {date, title: title.trim(), label: shown, key, line: n, fields: {}, parts: {}};
-      field = null;
-      return;
-    }
-    if (line.startsWith('#')) {
-      if (entry || line.startsWith('## ')) {
-        finish();
-        entry = null;
-        field = null;
-        problem(n, `heading is not in the form "## YYYY-MM-DD: title": ${line}`);
-      }
-      return;
-    }
-    if (!entry) return; // the header above the first entry
-    const f = line.match(/^- ([^:]+):(.*)$/s);
-    if (f && FIELDS.includes(f[1])) {
-      field = f[1];
-      if (field in entry.parts) problem(n, `${entry.label}: "${field}" appears twice`);
-      else if (Object.keys(entry.parts).some((k) => FIELDS.indexOf(k) > FIELDS.indexOf(field)))
-        problem(n, `${entry.label}: "${field}" is out of order (${FIELDS.join(', ')})`);
-      entry.parts[field] = [f[2].trim()];
-    } else if (/^\s+\S/.test(line) && field) {
-      entry.parts[field].push(line.trim());
-    } else if (line.trim() !== '') {
-      problem(n, `${entry.label}: not a field (- ${FIELDS.join(': / - ')}:) or an indented continuation: ${line}`);
-    }
-  });
-  finish();
-  if (fence) problem(fenceLine, 'code fence is never closed');
-}
 
-// Every "From:" name in PLAYBOOK.md must be a lesson promoted to that section.
-for (const section of sections.values()) {
-  for (const key of section.from) {
-    const e = byKey.get(key);
-    if (!e || e.status !== 'promoted' || e.section !== section.name)
-      problem(0, () => `PLAYBOOK.md line ${section.line}, "${section.label}": From: names ${label(key)}, which is not a lesson promoted to this section`);
+  // PLAYBOOK.md: its "## " sections and the lessons each one's "From:" line names.
+  const sections = new Map();
+  const playbook = readLog(root, 'PLAYBOOK.md');
+  if (playbook.error) return {error: playbook.error};
+  {
+    let current = null;
+    let fence = false;
+    playbook.lines.forEach((line, i) => {
+      if (hasHidden(line)) problem(0, `PLAYBOOK.md line ${i + 1}: holds a control or invisible character: ${line}`);
+      if (line.startsWith('```')) fence = !fence;
+      if (fence) return;
+      // The s flag lets . match U+2028 and U+2029 too, which JavaScript otherwise
+      // treats as line ends: such a line is reported as hidden, not misread.
+      const heading = line.match(/^## (.+)$/s);
+      if (heading) {
+        const name = heading[1].trim();
+        current = {name, label: label(name), from: new Set(), line: i + 1};
+        if (sections.has(current.name)) problem(0, `PLAYBOOK.md line ${i + 1}: a second section named "${current.label}"`);
+        else sections.set(current.name, current);
+      } else if (current && line.startsWith('From: ')) {
+        for (const m of line.matchAll(/(\d{4}-\d{2}-\d{2}) "([^"]+)"/g)) current.from.add(`${m[1]} "${m[2]}"`);
+      }
+    });
   }
+
+  // LESSONS.md: one entry per "## YYYY-MM-DD: title" heading.
+  const entries = [];
+  const byKey = new Map(); // an entry's date and title -> the first entry with them
+  const lessons = readLog(root, 'LESSONS.md');
+  if (lessons.error) return {error: lessons.error};
+  {
+    let entry = null;
+    let field = null;
+    let fence = false;
+    let fenceLine = 0;
+    const finish = () => {
+      if (!entry) return;
+      // A field's lines are joined once, here, so a long field costs linear time.
+      for (const [f, parts] of Object.entries(entry.parts)) entry.fields[f] = parts.join(' ').trim();
+      const missing = FIELDS.filter((f) => !entry.fields[f]);
+      if (missing.length) problem(entry.line, `${entry.label}: missing or empty: ${missing.join(', ')}`);
+      const status = entry.fields.Status || '';
+      let m;
+      if (status === 'open') entry.status = 'open';
+      else if ((m = status.match(/^promoted to PLAYBOOK "([^"]+)"$/))) {
+        entry.status = 'promoted';
+        entry.section = m[1];
+        const section = sections.get(m[1]);
+        if (!section) problem(entry.line, `${entry.label}: PLAYBOOK.md has no section "## ${label(m[1])}"`);
+        else if (!section.from.has(entry.key)) problem(entry.line, `${entry.label}: the "From:" line of "${label(m[1])}" does not name it`);
+      } else if ((m = status.match(/^closed: (.+)$/s))) {
+        entry.status = 'closed';
+      } else if (status) {
+        problem(entry.line, `${entry.label}: Status must be open, promoted to PLAYBOOK "<section>" or closed: <reason>`);
+      }
+      entries.push(entry);
+      if (!byKey.has(entry.key)) byKey.set(entry.key, entry);
+    };
+    lessons.lines.forEach((line, i) => {
+      const n = i + 1;
+      if (hasHidden(line)) problem(n, `holds a control or invisible character: ${line}`);
+      if (line.startsWith('```')) {
+        fence = !fence;
+        fenceLine = n;
+        return;
+      }
+      if (fence) {
+        // An entry written inside a code block (the format example's, say) is
+        // never read, so the log would look clean while it holds lessons.
+        if (/^## \d{4}-\d{2}-\d{2}: /.test(line)) problem(n, `an entry inside a code block (opened on line ${fenceLine}) is not read: move it below the block`);
+        return;
+      }
+      const heading = line.match(/^## (\d{4})-(\d{2})-(\d{2}): (.+)$/s); // s: as in PLAYBOOK.md above
+      if (heading) {
+        finish();
+        const [, y, mo, d, title] = heading;
+        const shown = label(title.trim());
+        const date = `${y}-${mo}-${d}`;
+        const real = new Date(`${date}T00:00:00Z`);
+        if (Number.isNaN(real.getTime()) || real.toISOString().slice(0, 10) !== date) problem(n, `not a real date: ${date}`);
+        const previous = entries.length ? entries[entries.length - 1].date : null;
+        if (previous && date > previous) problem(n, `${shown}: newer than the entry above it (the log is newest first)`);
+        const key = `${date} "${title.trim()}"`;
+        if (title.includes('"')) problem(n, `${shown}: a title may not hold a double quote (PLAYBOOK "From:" lines quote titles)`);
+        if (byKey.has(key) || (entry && entry.key === key)) problem(n, `${shown}: a second entry with this date and title`);
+        entry = {date, title: title.trim(), label: shown, key, line: n, fields: {}, parts: {}};
+        field = null;
+        return;
+      }
+      if (line.startsWith('#')) {
+        if (entry || line.startsWith('## ')) {
+          finish();
+          entry = null;
+          field = null;
+          problem(n, `heading is not in the form "## YYYY-MM-DD: title": ${line}`);
+        }
+        return;
+      }
+      if (!entry) return; // the header above the first entry
+      const f = line.match(/^- ([^:]+):(.*)$/s);
+      if (f && FIELDS.includes(f[1])) {
+        field = f[1];
+        if (field in entry.parts) problem(n, `${entry.label}: "${field}" appears twice`);
+        else if (Object.keys(entry.parts).some((k) => FIELDS.indexOf(k) > FIELDS.indexOf(field)))
+          problem(n, `${entry.label}: "${field}" is out of order (${FIELDS.join(', ')})`);
+        entry.parts[field] = [f[2].trim()];
+      } else if (/^\s+\S/.test(line) && field) {
+        entry.parts[field].push(line.trim());
+      } else if (line.trim() !== '') {
+        problem(n, `${entry.label}: not a field (- ${FIELDS.join(': / - ')}:) or an indented continuation: ${line}`);
+      }
+    });
+    finish();
+    if (fence) problem(fenceLine, 'code fence is never closed');
+  }
+
+  // Every "From:" name in PLAYBOOK.md must be a lesson promoted to that section.
+  for (const section of sections.values()) {
+    for (const key of section.from) {
+      const e = byKey.get(key);
+      if (!e || e.status !== 'promoted' || e.section !== section.name)
+        problem(0, () => `PLAYBOOK.md line ${section.line}, "${section.label}": From: names ${label(key)}, which is not a lesson promoted to this section`);
+    }
+  }
+
+  const count = (s) => entries.filter((e) => e.status === s).length;
+  const totals = `${entries.length} lessons: ${count('open')} open, ${count('promoted')} promoted, ${count('closed')} closed`;
+  return {root, sections, entries, byKey, bad, badCount, totals};
 }
 
 // --stale. A file name in an Evidence field is text in backticks with no space,
@@ -389,43 +376,47 @@ function isFileName(name) {
   if (!name.includes('/') && !/\.[A-Za-z][A-Za-z0-9]*$/.test(name)) return false;
   return name.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
 }
-const looked = new Map(); // a file name -> {problem} or {stat, path}
-let rootReal; // the root's real path with a separator at the end, found once
 const foldAscii = (p) => (/^(win32|darwin)$/.test(process.platform) ? p.replace(/[A-Z]/g, (c) => c.toLowerCase()) : p);
-function look(name) {
-  if (looked.has(name)) return looked.get(name);
-  const parts = name.split('/');
-  let found = null;
-  let at = dir;
-  for (let k = 0; k < parts.length && !found; k++) {
-    at = join(at, parts[k]);
-    let stat;
-    try {
-      stat = lstatSync(at, {bigint: true});
-    } catch {
-      found = {problem: 'no such file'};
-      break;
+// A finder of file names under `root`, with its own cache: a file name ->
+// {problem} or {stat, path}.
+function finder(root) {
+  const looked = new Map();
+  let rootReal; // the root's real path with a separator at the end, found once
+  return (name) => {
+    if (looked.has(name)) return looked.get(name);
+    const parts = name.split('/');
+    let found = null;
+    let at = root;
+    for (let k = 0; k < parts.length && !found; k++) {
+      at = join(at, parts[k]);
+      let stat;
+      try {
+        stat = lstatSync(at, {bigint: true});
+      } catch {
+        found = {problem: 'no such file'};
+        break;
+      }
+      if (stat.isSymbolicLink()) found = {problem: 'not checked: a symbolic link on the way'};
+      else if (k < parts.length - 1 && !stat.isDirectory()) found = {problem: 'no such file'};
+      else if (k === parts.length - 1) found = {stat, path: at};
     }
-    if (stat.isSymbolicLink()) found = {problem: 'not checked: a symbolic link on the way'};
-    else if (k < parts.length - 1 && !stat.isDirectory()) found = {problem: 'no such file'};
-    else if (k === parts.length - 1) found = {stat, path: at};
-  }
-  if (found.path) {
-    try {
-      // With the separator at the end, so a sibling such as `repo2` doesn't
-      // start with it; join adds none to a drive root's `C:\`, which has one.
-      rootReal ??= join(realpathSync.native(dir), 'x').slice(0, -1);
-      const real = realpathSync.native(found.path);
-      if (!real.startsWith(rootReal) || foldAscii(real.slice(rootReal.length)) !== foldAscii(join(...parts)))
-        found = {problem: 'not checked: a link on the way leads elsewhere'};
-    } catch (e) {
-      // Only a file that is gone is missing; a real path the system won't give
-      // (a folder that can't be listed) leaves the file unchecked.
-      found = {problem: e.code === 'ENOENT' ? 'no such file' : 'not checked: its real path cannot be read'};
+    if (found.path) {
+      try {
+        // With the separator at the end, so a sibling such as `repo2` doesn't
+        // start with it; join adds none to a drive root's `C:\`, which has one.
+        rootReal ??= join(realpathSync.native(root), 'x').slice(0, -1);
+        const real = realpathSync.native(found.path);
+        if (!real.startsWith(rootReal) || foldAscii(real.slice(rootReal.length)) !== foldAscii(join(...parts)))
+          found = {problem: 'not checked: a link on the way leads elsewhere'};
+      } catch (e) {
+        // Only a file that is gone is missing; a real path the system won't give
+        // (a folder that can't be listed) leaves the file unchecked.
+        found = {problem: e.code === 'ENOENT' ? 'no such file' : 'not checked: its real path cannot be read'};
+      }
     }
-  }
-  looked.set(name, found);
-  return found;
+    looked.set(name, found);
+    return found;
+  };
 }
 // What is wrong with the file found for text the evidence says it holds, or ''.
 function holds(found, text) {
@@ -444,30 +435,40 @@ function holds(found, text) {
   return got.text.replace(/\r/g, '').includes(text) ? '' : `no longer holds "${label(text)}"`;
 }
 
-const count = (s) => entries.filter((e) => e.status === s).length;
-const totals = `${entries.length} lessons: ${count('open')} open, ${count('promoted')} promoted, ${count('closed')} closed`;
+// The reports. Each takes a loaded log and returns the lines to print, not yet
+// made safe to print: the command line passes each through show().
 
-if (mode === 'check') {
-  bad.forEach((b) => say(b));
-  if (badCount > MAX_BAD) say(`BAD   ... and ${badCount - MAX_BAD} more, not printed`);
-  say(`${totals}; ${badCount} bad`);
-  process.exit(badCount ? 1 : 0);
+// --check: the problems and the counts, and whether any problem was found.
+export function checkReport(log) {
+  const lines = [...log.bad];
+  if (log.badCount > MAX_BAD) lines.push(`BAD   ... and ${log.badCount - MAX_BAD} more, not printed`);
+  lines.push(`${log.totals}; ${log.badCount} bad`);
+  return {lines, ok: log.badCount === 0};
 }
 
-if (mode === 'counts') {
-  say(totals);
-  say(USAGE);
-} else if (mode === 'all') {
-  entries.slice(0, MAX_SHOWN).forEach((e) => say(`[${e.fields.Status || '?'}] ${e.key}\n    ${e.fields['Rule going forward'] || ''}`));
-  if (entries.length > MAX_SHOWN) say(`... and ${entries.length - MAX_SHOWN} more lessons, not printed`);
-  say(`-- ${totals}`);
-} else if (mode === 'stale') {
+// No mode: the counts and the usage.
+export function countsReport(log) {
+  return [log.totals, USAGE];
+}
+
+// --all: every lesson with its status and rule.
+export function allReport(log) {
+  const lines = [];
+  log.entries.slice(0, MAX_SHOWN).forEach((e) => lines.push(`[${e.fields.Status || '?'}] ${e.key}\n    ${e.fields['Rule going forward'] || ''}`));
+  if (log.entries.length > MAX_SHOWN) lines.push(`... and ${log.entries.length - MAX_SHOWN} more lessons, not printed`);
+  lines.push(`-- ${log.totals}`);
+  return lines;
+}
+
+// --stale: leads, from the evidence of open and promoted lessons.
+export function staleReport(log) {
+  const look = finder(log.root);
   let reviewed = 0; // open and promoted lessons
   let refs = 0; // file names checked
   let over = 0; // file names past MAX_REFS, not checked
   let unnamed = 0; // lessons whose evidence names no file
   const leads = [];
-  for (const e of entries) {
+  for (const e of log.entries) {
     if (e.status === 'closed') continue;
     reviewed++;
     let named = false;
@@ -488,18 +489,23 @@ if (mode === 'counts') {
     const where = e.status === 'promoted' ? `, promoted to PLAYBOOK "${label(e.section)}"` : '';
     if (notes.length) leads.push(`${e.date} "${e.label}"${where}\n${notes.join('\n')}`);
   }
-  leads.slice(0, MAX_SHOWN).forEach((l) => say(l));
-  if (leads.length > MAX_SHOWN) say(`... and ${leads.length - MAX_SHOWN} more lessons, not printed`);
+  const lines = leads.slice(0, MAX_SHOWN);
+  if (leads.length > MAX_SHOWN) lines.push(`... and ${leads.length - MAX_SHOWN} more lessons, not printed`);
   const past = over ? `, and ${over} more not checked (the limit is ${MAX_REFS})` : '';
-  say(`-- ${leads.length} of ${reviewed} open or promoted lessons have evidence to review; ${refs} file names checked${past}; ${unnamed} name no file`);
-  say('-- a lead, not a verdict: read the lesson, and close it only if its rule no longer holds');
-} else {
+  lines.push(`-- ${leads.length} of ${reviewed} open or promoted lessons have evidence to review; ${refs} file names checked${past}; ${unnamed} name no file`);
+  lines.push('-- a lead, not a verdict: read the lesson, and close it only if its rule no longer holds');
+  return lines;
+}
+
+// A lookup: the lessons with a word that starts with one of `words`, which are
+// lower case.
+export function lookupReport(log, words) {
   let shown = 0;
   const open = []; // matching open lessons with their rules
   const promoted = new Map(); // section -> how many matching lessons it holds
   const escape = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const starts = words.map((w) => new RegExp(`(^|[^a-z0-9])${escape(w)}`));
-  for (const e of entries) {
+  for (const e of log.entries) {
     // Search the title and the field values, not the field labels or Status.
     const text = [e.title, ...FIELDS.filter((f) => f !== 'Status').map((f) => e.fields[f] || '')].join(' ').toLowerCase();
     if (e.status === 'closed' || !starts.some((re) => re.test(text))) continue;
@@ -511,8 +517,88 @@ if (mode === 'counts') {
   // below: each one stands for the lessons promoted into it.
   const pointers = [...promoted].map(([section, n]) => `PLAYBOOK "${section}": follow its steps (${n} matching lesson${n > 1 ? 's' : ''})`);
   const items = [...pointers, ...open];
-  items.slice(0, MAX_SHOWN).forEach((item) => say(item));
-  if (items.length > MAX_SHOWN) say(`... and ${items.length - MAX_SHOWN} more, not printed: use more specific words`);
-  say(`-- ${shown} shown; ${totals}`);
+  const lines = items.slice(0, MAX_SHOWN);
+  if (items.length > MAX_SHOWN) lines.push(`... and ${items.length - MAX_SHOWN} more, not printed: use more specific words`);
+  lines.push(`-- ${shown} shown; ${log.totals}`);
+  return lines;
 }
-if (badCount) say(`lessons: the log has ${badCount} format problem(s): run node dev/lessons.mjs --check`);
+
+// The line every mode but --check ends with when the log has format problems.
+export function problemsLine(log) {
+  return log.badCount ? `lessons: the log has ${log.badCount} format problem(s): run node dev/lessons.mjs --check` : null;
+}
+
+// ---- The command line -------------------------------------------------------
+
+// Whether this file was started directly, not imported. Node resolves links
+// in import.meta.url but not in process.argv[1], so both are compared by their
+// real paths: a script started through a link (a `dev` that links to another
+// folder) still runs.
+function startedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync.native(process.argv[1]) === realpathSync.native(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+function say(text) {
+  for (const line of String(text).split('\n')) console.log(show(line));
+}
+
+// The mode, the words and the root from the arguments, or null for a usage
+// error.
+function parseArgs(args) {
+  // The repo root is the parent of the folder the script was started from, as
+  // given on the command line. Node resolves links in import.meta.url, so a `dev`
+  // that is a link to another project's folder would move the root there.
+  let dir = resolve(dirname(process.argv[1] || fileURLToPath(import.meta.url)), '..');
+  let mode = 'counts';
+  const words = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--dir') {
+      if (!args[i + 1] || args[i + 1].startsWith('-')) return null;
+      dir = resolve(args[++i]);
+    } else if (a === '--check' || a === '--all' || a === '--stale') {
+      if (mode !== 'counts' || words.length) return null;
+      mode = a.slice(2);
+    } else if (a.startsWith('-')) {
+      return null;
+    } else {
+      if (mode !== 'counts' && mode !== 'words') return null;
+      mode = 'words';
+      words.push(a.toLowerCase());
+    }
+  }
+  return {dir, mode, words};
+}
+
+function main() {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (!parsed) {
+    say(USAGE);
+    process.exitCode = 2;
+    return;
+  }
+  const {dir, mode, words} = parsed;
+  const log = loadLog(dir);
+  if (log.error) {
+    say(log.error);
+    process.exitCode = 2;
+    return;
+  }
+  if (mode === 'check') {
+    const {lines, ok} = checkReport(log);
+    lines.forEach((l) => say(l));
+    process.exitCode = ok ? 0 : 1;
+    return;
+  }
+  const lines = mode === 'counts' ? countsReport(log) : mode === 'all' ? allReport(log) : mode === 'stale' ? staleReport(log) : lookupReport(log, words);
+  lines.forEach((l) => say(l));
+  const end = problemsLine(log);
+  if (end) say(end);
+}
+
+if (startedDirectly()) main();
