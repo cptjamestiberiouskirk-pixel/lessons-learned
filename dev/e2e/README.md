@@ -24,7 +24,7 @@ Don't trust the session's report alone: check the repo afterwards (`git status`,
 
 Each `run-setup.ps1` run turns off hooks and MCP servers from your own setup, so other plugins don't act on the test repo. `-ReadOnly` runs the session in plan mode, so it can't change files. Use it to try setup on a real repo, such as one that already has the lessons check.
 
-Refused tool calls in the output usually come from the short allow list in `run-setup.ps1`, not from the skill. It allows `node`, `git`, `npm` and `Get-ChildItem` through PowerShell, but not a command that chains several with `;` or adds others such as `Write-Output`, `Copy-Item` or `Remove-Item`. An interactive session would ask the user instead.
+Refused tool calls in the output usually come from the short allow list in `run-setup.ps1`, not from the skill. Through Bash it allows `diff`, `head` and `wc` too, so a session can compare a changed script with the template. A command that reads a file outside the session's folders is refused even when it is allowed, so each turn loads a copy of the plugin from `lessons-e2e/<session id>/` in the temp folder and adds that copy with `--add-dir`. The copy, not this checkout, is what `Write` and `Edit` could reach. Delete `lessons-e2e` when done. It allows `node`, `git`, `npm` and `Get-ChildItem` through PowerShell, but not a command that chains several with `;` or adds others such as `Write-Output`, `Copy-Item` or `Remove-Item`. An interactive session would ask the user instead.
 
 ## Live runs with other plugins: `run-live.ps1`
 
