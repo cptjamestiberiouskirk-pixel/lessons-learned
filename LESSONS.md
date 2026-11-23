@@ -15,6 +15,20 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-23: The Codex gate's command was never run in the shell Codex starts hooks with
+- What went wrong: the live Codex runs found that the gate never denied. Codex runs a hook through the session's shell, pwsh here, and pwsh prints a job table before the gate's JSON, so Codex let every call through. The command had been tested only under cmd. Two paid runs went by before I read the source, and a third tested a flag the source settled.
+- Why: RS-H-codexhook read the source path for a session with no shell (`%COMSPEC% /C`) and took it as the only one. The tests start the command through cmd alone.
+- Rule going forward: before shipping a hook command, find in the tool's source which shell runs it on the user's machine, the branch their setup takes and not the fallback, and run the command there with a real payload, checking that stdout holds only the hook's JSON. When a live run doesn't behave, replay its real input locally before spending another run.
+- Evidence: `dev/release-state.md`, search "RS-A-codexhookshell"
+- Status: open
+
+## 2026-11-23: A control run asked Codex to edit a file the test repo doesn't have
+- What went wrong: the first control run for RS-H-codexlive asked Codex to edit `README.md` in `full-app`, which has none. The edit failed for that reason, and the run tested nothing.
+- Why: I wrote the prompt from memory of what a repo usually holds, not from the test repo's listing.
+- Rule going forward: before a billed run whose prompt names a file in a test repo, list the repo and name a file that is there.
+- Evidence: `dev/e2e/make-test-repos.ps1`
+- Status: open
+
 ## 2026-11-23: Allowing diff in the e2e runs did not let the session diff the template
 - What went wrong: to fix RS-T-e2ediff I added `Bash(diff:*)`, `Bash(head:*)` and `Bash(wc:*)` to `run-setup.ps1`'s allow list and reran `old-script-app`. The diffs were refused again, and the paid run was spent.
 - Why: release-state said adding `diff` to the list would settle it, and I took that as known. A Bash command that reads a path outside the session's folders is refused even when its command is allowed; a probe with Haiku in a scratch folder showed it, and `--add-dir` lets it through.
