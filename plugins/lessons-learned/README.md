@@ -79,7 +79,7 @@ Node.js 22 or later for `dev/lessons.mjs`. It uses only Node's built-in modules.
 
 ## The lessons gate
 
-The plugin has one hook. In a repo whose `PLAYBOOK.md` has the section "The lessons check", it runs before each edit (Edit, Write, MultiEdit, NotebookEdit), and before each Bash or PowerShell command that holds a `git commit` or `git push`. It denies the call until Claude has written a visible `Lessons checked:` line in this turn, after its last commit or push to that repo. A turn that starts with a background task's notification carries on the turn before it. In the repo the session works in, where its `dev/lessons.mjs` is this plugin's version, Claude must also have run a lookup with it (`node dev/lessons.mjs <words>`). The denial tells Claude what to do, and Claude retries:
+The plugin has one hook. In a repo whose `PLAYBOOK.md` has the section "The lessons check", it runs before each edit (Edit, Write, MultiEdit, NotebookEdit), and before each Bash or PowerShell command that holds a `git commit` or `git push`. It denies the call until Claude has written a visible `Lessons checked:` line in this turn, after its last commit or push to that repo. A turn that starts with a background task's notification carries on the turn before it. In the repo the session works in, where its `dev/lessons.mjs` is this plugin's version or an earlier release's (0.2.0 to 0.3.1), Claude must also have run a lookup with it (`node dev/lessons.mjs <words>`). The denial tells Claude what to do, and Claude retries:
 
 ```
 Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry. To turn this check off: LESSONS_GATE=off (see the lessons-learned README).

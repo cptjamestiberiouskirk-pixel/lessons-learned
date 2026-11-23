@@ -5,6 +5,7 @@
 import {test, after} from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn, spawnSync} from './child.mjs';
+import {execFileSync} from 'node:child_process';
 import {createHash, randomBytes} from 'node:crypto';
 import {appendFileSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -45,7 +46,7 @@ function makeRepo({check = true, script = 'match', worktree = false, at, playboo
   writeFileSync(join(root, 'PLAYBOOK.md'), playbook ?? (check ? PLAYBOOK : PLAYBOOK.replace('## The lessons check', '## Some other section')));
   if (script) {
     mkdirSync(join(root, 'dev'));
-    const text = script === 'match' ? TEMPLATE : script === 'crlf' ? TEMPLATE.replace(/\n/g, '\r\n') : `${TEMPLATE}// changed\n`;
+    const text = typeof script === 'object' ? script.text : script === 'match' ? TEMPLATE : script === 'crlf' ? TEMPLATE.replace(/\n/g, '\r\n') : `${TEMPLATE}// changed\n`;
     writeFileSync(join(root, 'dev/lessons.mjs'), text);
   }
   return root;
@@ -896,6 +897,37 @@ test('a fingerprint mismatch drops the lookup and changes the reason; line endin
   assert.equal(edit(none, () => {}).reason, REASON_LINE);
   const crlf = makeRepo({script: 'crlf'});
   assert.equal(edit(crlf, (t) => t.newMessage().text(LINE)).reason, REASON_LOOKUP);
+});
+
+// Each release's script, from its tag. A clone without the tags (CI checks out
+// one commit) has none, and the tests that need them skip.
+const RELEASES = ['v0.2.0', 'v0.2.1', 'v0.3.0', 'v0.3.1'];
+function releaseScript(tag) {
+  try {
+    return execFileSync('git', ['show', `${tag}:plugins/lessons-learned/templates/lessons.mjs`], {cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']});
+  } catch {
+    return null;
+  }
+}
+
+test('a repo with an earlier release\'s script still needs a lookup', (t) => {
+  const found = RELEASES.map((tag) => [tag, releaseScript(tag)]).filter(([, text]) => text !== null);
+  if (!found.length) return t.skip('no release tags in this clone');
+  for (const [tag, text] of found) {
+    const root = makeRepo({script: {text}});
+    assert.equal(edit(root, (s) => s.newMessage().text(LINE)).reason, REASON_LOOKUP, `${tag}: a line alone`);
+    assert.equal(edit(root, ready).deny, false, `${tag}: a lookup and a line`);
+  }
+});
+
+test('the released fingerprints are those of the release tags\' scripts', (t) => {
+  const src = readFileSync(GATE, 'utf8');
+  const listed = [...src.matchAll(/^ {2}'([0-9a-f]{64})', \/\/ (v\S+)$/gm)].map((m) => [m[2], m[1]]);
+  assert.deepEqual(listed.map(([tag]) => tag), RELEASES, 'the gate lists each release once, in order');
+  const found = RELEASES.map((tag) => [tag, releaseScript(tag)]).filter(([, text]) => text !== null);
+  if (!found.length) return t.skip('no release tags in this clone');
+  for (const [tag, text] of found)
+    assert.equal(listed.find(([v]) => v === tag)[1], createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex'), tag);
 });
 
 test('a subagent passes, and so does LESSONS_GATE=off', () => {
