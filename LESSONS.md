@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-22: The old-script-app test repo had held the plugin's own script since 0.3.0
+- What went wrong: `make-test-repos.ps1` makes `old-script-app` by changing the script's usage line with a `Replace`. Its search text, `[--check | --all | <word>...]`, has not been in the script since 0.3.0 added `--stale`, so the `Replace` changed nothing and the repo got the plugin's own script. The scenario that should test "other version" tested a matching fingerprint for two releases. It was found while adding `release-app` in phase 1b.
+- Why: a PowerShell `Replace` that finds nothing returns the text unchanged with no error, and no step checked that the fixture differed from the template.
+- Rule going forward: a script that builds a test fixture by changing a template checks that each change happened (the text differs after the replace, or the search text was found) and stops if not, as `make-test-repos.ps1` now does.
+- Evidence: `dev/e2e/make-test-repos.ps1`, search "the usage line to change is not in the template"
+- Status: open
+
 ## 2026-11-22: A lint fixture taken from another repo kept two of its real values
 - What went wrong: the user's terms for fixtures from other repos were "trimmed, neutral names", and for two of them "keep only the shape of each problem: no paths, session names or rule wording". A shape fixture for a `.jsonl` log still held the time and the CPU figure from that repo's lesson. Three comments named the source repos, and a real fixture kept a real folder name in its path. It was caught in the last read before the commit, after the fixtures had been shown as ready.
 - Why: the fixture was written from the source lesson and then judged by eye. Nobody searched the source repo for the fixture's own details.
