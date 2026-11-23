@@ -11,9 +11,8 @@ Base: 3076665. One review round run on 1a (below), with two reviewers: one on th
 ### Deferred
 
 - **RS-A-releasefingerprint** (at each release). The gate's `RELEASED` set and both skills' "Earlier releases of this plugin print these" list the fingerprints of the released scripts. When a release is tagged, add its `FINGERPRINT` to `RELEASED` with the tag in its comment, add it to both skills' list, and rename the "to this release" line in both skills' "What changed since earlier releases" to that version, with a new line above it for the next one. The test "the released fingerprints are those of the release tags' scripts" checks the gate's list against the tags where the clone has them, and "both skills name the earlier releases the gate accepts" checks the skills' lists against the gate's.
-- **RS-H-codexsetup1b** (needs the user's OK). The Codex end-to-end run for 1b's skill change. Codex's installed `lessons-learned-codex` is 0.3.1, so the run needs a reinstall from this checkout (`codex plugin remove`, then `codex plugin add`, `dev/e2e/README.md`), which changes the user's installed plugin. The run uses the ChatGPT sign-in's plan usage (`codex login status`: "Logged in using ChatGPT"; no API key set).
+- **RS-A-codexoffers** (CONFIRMED in 1b's Codex `node-app` run; minor). Codex's turn-1 plan named the two offers in one closing sentence ("A CI check or pre-commit hook is optional and requires a separate request"), not each with the file it would change, as step 3 asks. It still took only the offer named in turn 2. Claude Code's plan listed both with their files. A firmer step 3 wording, such as a fixed "Offers" heading in the plan, would settle whether the skill or the model is the cause.
 - **RS-T-e2ediff** (CONFIRMED in 1b's `old-script-app` run). `run-setup.ps1`'s allow list has no `diff`, so the session could not compare the changed script with the template: its two `diff` calls were refused, and it then said the usage lines were the same, which they are not. It did report "other version (not run)" and asked before replacing. Adding `Bash(diff:*)` to the list, then rerunning `old-script-app`, would settle whether the skill's "tell the user what differs" works.
-- **RS-H-codexgithook** (HYPOTHESIZED; untested). Whether a git `pre-commit` hook runs when Codex commits inside its `workspace-write` sandbox. Fallback: the CI offer runs the same `--doctor`. A live Codex commit in a repo with `.githooks/pre-commit` and `core.hooksPath` set would settle it.
 - **RS-A-lintrealpath** (INFERRED). If `realpathSync.native` throws on the script's path, the start check now compares the resolved paths, so the script runs instead of exiting 0 with nothing done. Not tried: no drive here where the real path fails (RAM disk, some FUSE and virtual drives).
 - **RS-T-fixturelines** (INFERRED). Fixtures check a finding's line only where `fires` gives one (the round 1 fixtures do). The older fixtures check rule, severity and file.
 
@@ -24,7 +23,17 @@ Base: 3076665. One review round run on 1a (below), with two reviewers: one on th
 - `old-script-app`: reported "present, other version (not run)", matching no release, and asked before replacing. Changed nothing. See RS-T-e2ediff.
 - Refused calls in all runs: commands chained with `;`, and `diff`, both outside the allow list (`dev/e2e/README.md`).
 
+### Phase 1b end-to-end runs (Codex, `run-live.ps1`)
+
+The installed `lessons-learned-codex` was backed up, reinstalled from this checkout with the marketplace pointed here by `-c` (`dev/e2e/README.md`), and after the runs reinstalled from its git marketplace. The cache then matched the backup file for file (0.3.1).
+
+- `node-app`, turn 1, "Set up lessons-learned in this repo.": showed the plan and stopped, with the repo unchanged. See RS-A-codexoffers. Turn 2, resumed with "Proceed, and add the pre-commit hook. The topic words are fine.": built all parts, with the line in both `AGENTS.md` and `CLAUDE.md`, and wrote `.githooks/pre-commit` as the skill gives it. It did not touch `package.json` and did not set `core.hooksPath`: it ran the hook with `git -c core.hooksPath=.githooks hook run pre-commit`, and tried it on a broken log in a throwaway repo under its temp folder, which it removed. It gave the user the `git config` command. Checked afterwards: fingerprint 8360552c, `--check` 0 bad, `--doctor` exit 0, `git config core.hooksPath` empty.
+- Turn 3, a new session: with `core.hooksPath` set by hand and an entry missing `Why` added, Codex was asked to commit. It looked up lessons first (the `AGENTS.md` line at work), and its `git commit` was refused by the hook with the `--doctor` error. It stopped without editing or skipping hooks. See RS-H-codexgithook.
+
 ### Answered
+
+- **RS-H-codexsetup1b** (closed: run with the user's OK). The Codex end-to-end run for 1b, above.
+- **RS-H-codexgithook** (closed; CONFIRMED). A git `pre-commit` hook does run when Codex commits inside its `workspace-write` sandbox, on Windows with Git for Windows: the hook refused the commit in the Codex run's turn 3.
 
 - **RS-D-skilllint** (closed in 1b). Both skills now offer a CI step and a pre-commit hook that run `--doctor`, in place of the `--check` CI offer, and step 5 runs `--doctor` too.
 - **RS-T-oldscriptapp** (closed in 1b; CONFIRMED). The e2e repo `old-script-app` was meant to hold a changed script, but its `Replace` searched for a usage line the script hasn't had since 0.3.0 added `--stale`, so it got the template unchanged and setup saw a matching fingerprint. `make-test-repos.ps1` now changes the current usage line and stops if the text isn't found. It also makes `release-app` from the `v0.3.1` tag's files, checked against the tag's blobs.
