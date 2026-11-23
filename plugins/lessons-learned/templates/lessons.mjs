@@ -323,7 +323,7 @@ export function loadLog(root) {
         const section = sections.get(m[1]);
         if (!section) problem(entry.line, `${entry.label}: PLAYBOOK.md has no section "## ${label(m[1])}"`, {rule: 'from-mismatch'});
         else if (!section.from.has(entry.key)) problem(entry.line, `${entry.label}: the "From:" line of "${label(m[1])}" does not name it`, {rule: 'from-mismatch'});
-      } else if ((m = status.match(/^closed: (.+)$/s))) {
+      } else if (/^closed: .+$/s.test(status)) {
         entry.status = 'closed';
       } else if (status) {
         problem(entry.line, `${entry.label}: Status must be open, promoted to PLAYBOOK "<section>" or closed: <reason>`);
