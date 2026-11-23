@@ -21,6 +21,16 @@ import {createHash} from 'node:crypto';
 // The fingerprint of this release's templates/lessons.mjs, as the setup skill
 // computes it (sha256 of the text with CRLF made LF). A test keeps it equal.
 const FINGERPRINT = '8360552c9e0ef5e71f92ee80889ecae1c89e85103a10379466b8a3c067eceec9';
+// The fingerprints of the released scripts, from each release tag's
+// templates/lessons.mjs. Each takes `node dev/lessons.mjs <word>...` as a
+// lookup, so a repo set up by an older release still needs one. Any other
+// script is a mismatch: it may not be a lookup at all.
+const RELEASED = new Set([
+  'e6b41bf9d1ddda284178590e08a7abcdf6c5b0d7877f05b2b7290f3dc9ffa130', // v0.2.0
+  'ec55848c3c07540568dd52be8e0a2cba47408f153490ae7976b9cd591333e455', // v0.2.1
+  'ae8257c08a861066ec1bc5c4eca66b88e4a3e44ba68bde7c17111964041a1622', // v0.3.0
+  '86d3cd28d4d1cbb16eeb04e21fc9bbe542cc86ac1326c03d84deb09f8e5d04ea', // v0.3.1
+]);
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const CHUNK = 1024 * 1024; // bytes of transcript read at a time
@@ -169,7 +179,9 @@ function hasCheck(root) {
 
 function scriptMatches(root) {
   const text = readInRepo(root, ['dev', 'lessons.mjs'], MAX_FILE);
-  return text !== null && createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex') === FINGERPRINT;
+  if (text === null) return false;
+  const hash = createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex');
+  return hash === FINGERPRINT || RELEASED.has(hash);
 }
 
 // Edits that are never gated: the root's own LESSONS.md, by its given name

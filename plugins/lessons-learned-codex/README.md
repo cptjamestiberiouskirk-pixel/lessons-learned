@@ -20,7 +20,7 @@ In a chat in the repo, ask to set up lessons learned (or name the skill, `lesson
 
 ## The lessons gate
 
-The plugin has one hook, the lessons gate (`hooks/lessons-gate.mjs`, the same file as in the Claude Code plugin). Codex runs a plugin's hook only after you trust it: run `/hooks` in a chat and trust it there. In a repo whose `PLAYBOOK.md` has "## The lessons check", the gate then denies an `apply_patch` edit, and a shell command that runs `git commit` or `git push`, until Codex has written a visible `Lessons checked:` line in this turn, after its last commit or push to that repo. In the session's own repo, where `dev/lessons.mjs` is this release's, it also needs a lookup with that script. It only reads, and lets the call through when it can't tell.
+The plugin has one hook, the lessons gate (`hooks/lessons-gate.mjs`, the same file as in the Claude Code plugin). Codex runs a plugin's hook only after you trust it: run `/hooks` in a chat and trust it there. In a repo whose `PLAYBOOK.md` has "## The lessons check", the gate then denies an `apply_patch` edit, and a shell command that runs `git commit` or `git push`, until Codex has written a visible `Lessons checked:` line in this turn, after its last commit or push to that repo. In the session's own repo, where `dev/lessons.mjs` is this release's or an earlier release's (0.2.0 to 0.3.1), it also needs a lookup with that script. It only reads, and lets the call through when it can't tell.
 
 To turn it off, turn the hook off in `/hooks`, or start Codex with `LESSONS_GATE=off` in its environment. [SECURITY.md](https://github.com/cptjamestiberiouskirk-pixel/lessons-learned/blob/main/SECURITY.md) says how it reads Codex's records and what gets past it.
 

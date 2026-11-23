@@ -10,12 +10,16 @@ Base: 3076665. One review round run (below), with two reviewers: one on the scri
 
 ### Deferred
 
-- **RS-H-gatefingerprints** (needs the user's answer). The gate pins one fingerprint, now this script's. A repo with an older release's script (0.2.0 e6b41bf9, 0.2.1 ec55848c, 0.3.0 ae8257c0, 0.3.1 86d3cd28) gets the mismatch behavior: no lookup is required there. Proposed: accept a list of known release fingerprints. Until the user answers, the mismatch behavior is unchanged.
+- **RS-A-releasefingerprint** (at each release). The gate's `RELEASED` set lists the fingerprints of the released scripts. When a release is tagged, add its `FINGERPRINT` to `RELEASED` with the tag in its comment. The test "the released fingerprints are those of the release tags' scripts" checks the list against the tags where the clone has them.
 - **RS-A-lintrealpath** (INFERRED). If `realpathSync.native` throws on the script's path, the start check now compares the resolved paths, so the script runs instead of exiting 0 with nothing done. Not tried: no drive here where the real path fails (RAM disk, some FUSE and virtual drives).
-- **RS-D-claudemdpaths** (CONFIRMED, the user's call). This repo's `--doctor` gives 0 errors and 9 warnings. Six are `stale-path` on `CLAUDE.md` lines 5, 12, 20 and 22, which name `hooks/lessons-gate.mjs`, `hooks/hooks.json`, `templates/lessons.mjs` and the two `plugin.json` files relative to the plugin folders. The other three are Evidence leads to scratch scripts. Fix by full paths, or a `lint-ignore` line, or leave as leads.
 - **RS-D-skilllint** (held for 1b). Neither setup skill mentions `--lint`, and the optional CI step they offer runs `--check` only. A skill change needs the end-to-end runs, which are part of 1b.
 - **RS-T-fixturelines** (INFERRED). Fixtures check a finding's line only where `fires` gives one (the round 1 fixtures do). The older fixtures check rule, severity and file.
-- **RS-H-eslintversion**. ESLint 9.39.5, the approved version, is marked deprecated on npm ("no longer supported"). It installs and runs. Moving to a supported major is the user's call.
+
+### Answered
+
+- **RS-H-gatefingerprints** (closed: the user's answer, relayed by the supervisor session with the user's approval). The gate accepts the released fingerprints (v0.2.0 e6b41bf9, v0.2.1 ec55848c, v0.3.0 ae8257c0, v0.3.1 86d3cd28, each computed from its tag) as well as this script's, so a repo set up by an older release still needs a lookup. Any other script stays a mismatch. Tests: "a repo with an earlier release's script still needs a lookup" and "the released fingerprints are those of the release tags' scripts" both fail on the gate before the change and pass after. They skip in a clone without the tags, as CI's is.
+- **RS-D-claudemdpaths** (closed: silenced). Four `lint-ignore` lines in `CLAUDE.md` silence the six `stale-path` warnings. The `plugin.json` pair has its own reason: each file is in one copy only (`.claude-plugin/` in `plugins/lessons-learned/`, `.codex-plugin/` in the Codex copy), so "in both copies" would not be true there. `--doctor` now gives 0 errors, 3 warnings and 6 silenced.
+- **RS-H-eslintversion** (closed: moved to ESLint 10.15.0 and @eslint/js 10.0.1). ESLint 10 no longer installs @eslint/js, so it is pinned on its own. Its recommended set adds `no-useless-assignment`, which found two dead assignments: in `dev/lessons.mjs`, a match of a closed status that was never read, and in the gate, a `text` default that every branch overwrote. Both are gone, with no change in behavior.
 
 ### Review round 1
 
