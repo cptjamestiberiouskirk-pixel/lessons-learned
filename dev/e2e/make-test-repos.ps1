@@ -7,10 +7,16 @@
 #   full-app        all five parts already in place: setup should change nothing
 #   old-script-app  like full-app, but dev/lessons.mjs differs from the plugin's:
 #                   setup should report "other version" and ask before replacing
+#   release-app     the three files as release 0.3.1 wrote them (from the v0.3.1
+#                   tag): setup should report "release 0.3.1", give what changed
+#                   since, and ask before replacing
 param([Parameter(Mandatory)][string]$Root)
 $ErrorActionPreference = 'Stop'
 if (Test-Path -LiteralPath $Root) { throw "$Root already exists" }
 $templates = Join-Path $PSScriptRoot '..\..\plugins\lessons-learned\templates' | Resolve-Path
+$checkout = Join-Path $PSScriptRoot '..\..' | Resolve-Path
+git -C $checkout rev-parse -q --verify 'refs/tags/v0.3.1' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'release-app needs the v0.3.1 tag: run git fetch --tags' }
 
 function Put($path, $text) {
   New-Item -ItemType Directory -Force -Path (Split-Path $path) | Out-Null
@@ -55,13 +61,28 @@ foreach ($name in 'full-app', 'old-script-app') {
   Put "$d/PLAYBOOK.md" ([IO.File]::ReadAllText("$templates/PLAYBOOK.md"))
   $script = [IO.File]::ReadAllText("$templates/lessons.mjs")
   if ($name -eq 'old-script-app') {
-    # An older version: no --all mode in the usage line.
-    $script = $script.Replace("[--check | --all | <word>...]", "[--check | <word>...]")
+    # A changed copy: no --all mode in the usage line.
+    $was = $script
+    $script = $script.Replace("[--check | --all | --stale |", "[--check | --stale |")
+    if ($script -ceq $was) { throw 'old-script-app: the usage line to change is not in the template' }
   }
   Put "$d/dev/lessons.mjs" $script
 }
 
-foreach ($name in 'node-app', 'gotchas-app', 'full-app', 'old-script-app') {
+# release-app: each file byte for byte from the tag, through cmd's redirect, and
+# checked against the tag's blob before use.
+$e = Join-Path $Root 'release-app'
+NodePackage $e 'release-app'
+Put "$e/CLAUDE.md" "# release-app`n`n$entry`n`nA tiny library. Run ``npm test`` before each commit.`n"
+New-Item -ItemType Directory -Force -Path "$e/dev" | Out-Null
+foreach ($pair in @(@('LESSONS.md', 'LESSONS.md'), @('PLAYBOOK.md', 'PLAYBOOK.md'), @('lessons.mjs', 'dev/lessons.mjs'))) {
+  $blob = "v0.3.1:plugins/lessons-learned/templates/$($pair[0])"
+  $out = Join-Path $e $pair[1]
+  cmd /c "git -C `"$checkout`" show $blob > `"$out`""
+  if ((git -C $checkout hash-object --no-filters $out) -ne (git -C $checkout rev-parse $blob)) { throw "release-app: $($pair[1]) is not the tag's copy" }
+}
+
+foreach ($name in 'node-app', 'gotchas-app', 'full-app', 'old-script-app', 'release-app') {
   $r = Join-Path $Root $name
   git -C $r init -q -b main
   git -C $r -c core.autocrlf=false add -A

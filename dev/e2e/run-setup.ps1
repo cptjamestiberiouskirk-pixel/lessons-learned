@@ -1,6 +1,8 @@
 # Runs one headless Claude Code turn in a test repo, with this repo's plugin
 # loaded from disk (--plugin-dir, not installed). Prints the reply, the tool
-# calls that were refused and the cost. Each turn is billed. Run with pwsh 7.
+# calls that were refused and the CLI's cost. Each turn counts against the
+# signed-in account: its plan's usage (the cost is then an estimate), or a
+# charge with an API key. Run with pwsh 7.
 #
 #   ./run-setup.ps1 -Repo <dir>                          first turn: /lessons-learned:setup
 #   ./run-setup.ps1 -Repo <dir> -SessionId <id> -Prompt 'Go ahead.' -Resume

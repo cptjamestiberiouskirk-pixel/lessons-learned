@@ -10,7 +10,7 @@ A change is verified when it has been run the way a user runs it. Here that mean
 
 ## Four kinds of tests worth having
 
-- **End to end** (`dev/e2e/`). A setup run either works or it doesn't, and a failure says which step broke. These are slow and billed, so they run before a commit of a skill or template change, not on every edit.
+- **End to end** (`dev/e2e/`). A setup run either works or it doesn't, and a failure says which step broke. These are slow and count against the signed-in account's usage (or are charged, with an API key), so they run before a commit of a skill or template change, not on every edit.
 - **Property tests** (`tests/property.test.mjs`). A property is a statement that must hold for any input. The test tries it on random text built from the characters the rules care about. Examples here are hard to pick well, since the cases that break code are the ones nobody thought of. The first run of these tests found a bug the example tests had missed for three review rounds. Properties used here:
   - Safety: printed text holds no hidden character but the few allowed.
   - Idempotence: printing text that was already printed changes nothing.

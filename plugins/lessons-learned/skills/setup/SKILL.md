@@ -33,6 +33,24 @@ node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha
 
 This plugin's version prints `8360552c9e0ef5e71f92ee80889ecae1c89e85103a10379466b8a3c067eceec9`. For a script kept in another folder, change the path in the command.
 
+Earlier releases of this plugin print these:
+
+- 0.2.0: `e6b41bf9d1ddda284178590e08a7abcdf6c5b0d7877f05b2b7290f3dc9ffa130`
+- 0.2.1: `ec55848c3c07540568dd52be8e0a2cba47408f153490ae7976b9cd591333e455`
+- 0.3.0: `ae8257c08a861066ec1bc5c4eca66b88e4a3e44ba68bde7c17111964041a1622`
+- 0.3.1: `86d3cd28d4d1cbb16eeb04e21fc9bbe542cc86ac1326c03d84deb09f8e5d04ea`
+
+Any other value is a script changed after it was copied, or one from somewhere else.
+
+## What changed since earlier releases
+
+For a repo whose script is an earlier release. Each line is what that step brought.
+
+- **0.3.1 to this release:** the script has `--lint` and `--doctor`, which find rules a session may not be able to follow and a lookup over its size budget. The playbook template's "Limit:" line says what the lessons gate checks.
+- **0.3.0 to 0.3.1:** the script reads each file through one handle and refuses one swapped while it is read. The playbook template's step 6 says that `--stale` also names a file it didn't check. The lessons template says a search text is on one line.
+- **0.2.1 to 0.3.0:** the script has `--stale`, which lists lessons whose evidence names a file that is gone. The playbook template has step 5's reviewer and step 6's `--stale` run. The lessons template says what makes a good entry, and shows the `Evidence` form `--stale` reads.
+- **0.2.0 to 0.2.1:** `--check` needs far less memory for a playbook with many bad `From:` names. The templates didn't change.
+
 ## Before any `node` command
 
 On Windows, cmd looks for a command in the current folder before `PATH`, and runs a file named `node` with any extension it knows (`.exe`, `.cmd`, `.bat`, `.com`, `.js`, `.vbs` and others). A repo holding one would run it in place of Node for every command here. So before the first `node` command, list the repo root with a tool that isn't Node and doesn't skip ignored files (`ls -a`, or `Get-ChildItem -Force -Name` in pwsh). If any entry is named `node` or starts with `node.`, in any case, stop: tell the user its name, and run nothing until they decide.
@@ -45,7 +63,7 @@ A file or folder that setup reads or writes may be a symbolic link (or, on Windo
 node -e "const f=require('fs');for(const p of process.argv.slice(1)){let s;try{s=f.lstatSync(p)}catch{console.log(p+': absent');continue}console.log(p+': '+(s.isSymbolicLink()?'LINK':s.isDirectory()?'folder':s.isFile()?(s.nlink>1?'HARDLINK':'file'):'other'))}" LESSONS.md PLAYBOOK.md dev dev/lessons.mjs AGENTS.md CLAUDE.md GEMINI.md .gitattributes .npmignore package.json
 ```
 
-Add to the command every other path the plan will write, by its name as it is in the repo: a script folder other than `dev`, a CI file. On a stop, tell the user which path it is (and where a link points), and change nothing until they decide.
+Add to the command every other path the plan will write, by its name as it is in the repo: a script folder other than `dev`, a CI file, a hook file and its folder (`.githooks` and `.githooks/pre-commit`, say). On a stop, tell the user which path it is (and where a link points), and change nothing until they decide.
 
 Any `LINK`, `HARDLINK` or `other` is a stop. A hard link is a second name for a file that may sit outside the repo.
 
@@ -59,15 +77,18 @@ A project may also have a handoff or memory plugin installed, such as Trailmark.
 
 Find the repo root (`git rev-parse --show-toplevel`, or the working directory if it isn't a git repo). List the root as "Before any `node` command" says, then run the path check. Look for each of the five parts, under these names and under others: `lessons*`, `learnings`, `gotchas`, `pitfalls`, `playbook*`, `runbook`, `checklist`, a `tasks/lessons.md`, rules kept in `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.claude/rules/` or `.claude/skills/`, and any memory or handoff folder the project uses. Match names without regard to case. Skip `node_modules`, `.git`, build output and vendored folders.
 
-If the script is present, run the fingerprint command first. Only if it prints this plugin's value, run `node dev/lessons.mjs --check`. Otherwise don't run the repo's script: report it as **present, other version (not run)**.
+If the script is present, run the fingerprint command first. Only if it prints this plugin's value, run `node dev/lessons.mjs --check`. Otherwise don't run the repo's script. If it prints an earlier release's value, report it as **present, release <version> (not run)**. On any other value, report it as **present, other version (not run)**.
 
-Report each part as **present**, **partial**, **under another name**, **present, other version (not run)** or **missing**, with the file path and the quoted line that shows it, plus the path check's output and the `--check` output if it ran.
+For the offers in step 4's "Checks before a merge or commit", also note what the repo already has: workflows in `.github/workflows/`, a check script that runs before a merge, and a git hook manager (`.husky/`, `lefthook.yml`, `.pre-commit-config.yaml`, or a folder named by `git config core.hooksPath`, which only reads).
+
+Report each part as **present**, **partial**, **under another name**, **present, release <version> (not run)**, **present, other version (not run)** or **missing**, with the file path and the quoted line that shows it, plus the path check's output and the `--check` output if it ran.
 
 ### 2. Decide
 
 - **All five present, the fingerprint matches and `--check` reports 0 bad:** change nothing. Report and stop.
 - **All five present and the fingerprint matches, but `--check` reports problems:** list each problem with the fix you propose, and fix them only on the user's go-ahead. Keep everything else as it is.
-- **Script present, other version:** it may be older than this plugin's, or changed on purpose. Read both, tell the user what differs in a few lines, and ask whether to replace it with this version. Replace it only on a yes, then run `--check` with the new script, since a newer script can find problems an older one missed.
+- **Script present, an earlier release:** tell the user which release it is, and give the lines of "What changed since earlier releases" from that release on. Ask whether to replace it with this version. Replace it only on a yes, then run `--check` and `--doctor` with the new script, since a newer script can find problems an older one missed. Setup keeps the repo's `PLAYBOOK.md` and `LESSONS.md`, so the template changes don't come with the script. Compare the repo's "The lessons check" section and the `LESSONS.md` text above its first entry with the templates, leaving out the topic words in step 1. Offer each part that differs on its own, and bring in only those the user says yes to.
+- **Script present, other version:** it is no release of this plugin. It may be an older copy changed by hand, or changed on purpose. Read both, tell the user what differs in a few lines, and ask whether to replace it with this version. Replace it only on a yes, then run `--check` with the new script, since a newer script can find problems an older one missed.
 - **Some present:** add only the missing parts. Keep the existing files' entries, names and wording. Fix format only where `--check` fails, and list each fix.
 - **Same job under another name or format** (a `NOTES.md` of gotchas, rules kept in `CLAUDE.md`, a different log format): stop and ask the user whether to leave it, migrate its entries into `LESSONS.md` (each keeping its date and evidence), or wire the existing file into the lessons check as it is.
 - **Missing:** go on to step 3.
@@ -76,7 +97,7 @@ When something is ambiguous, ask rather than guess.
 
 ### 3. Show the plan and wait
 
-List each file to create or change, with one line on what changes: the file that keeps the parts out of what ships (`.gitattributes`, `package.json`, `.npmignore` or the build's list) and, if you'll offer the optional step, the CI file are on the list too. Add the topic words you picked for "The lessons check" step 1 (from the project's own work: `migration`, `deploy`, `api`, and so on). Say that the templates come in through a staging folder in the repo, named `.lessons-setup-` and a random ending, which is removed when the copies are done. Name the entry-point files. Claude Code reads `CLAUDE.md` and Codex reads `AGENTS.md`, so the line must reach `CLAUDE.md` for this tool:
+List each file to create or change, with one line on what changes: the file that keeps the parts out of what ships (`.gitattributes`, `package.json`, `.npmignore` or the build's list) is on the list too. List step 4's two offers apart from the plan, each with the file it would change, and say that each is added only if the user names it: a go-ahead for the plan doesn't take an offer. Add the topic words you picked for "The lessons check" step 1 (from the project's own work: `migration`, `deploy`, `api`, and so on). Say that the templates come in through a staging folder in the repo, named `.lessons-setup-` and a random ending, which is removed when the copies are done. Name the entry-point files. Claude Code reads `CLAUDE.md` and Codex reads `AGENTS.md`, so the line must reach `CLAUDE.md` for this tool:
 
 - **Both exist:** the line goes in `AGENTS.md`, and in `CLAUDE.md` too unless `CLAUDE.md` already loads `AGENTS.md` (for example with `@AGENTS.md`).
 - **Only `CLAUDE.md`:** the line goes there. Ask in the plan whether the repo is also worked on from Codex; if so, offer to create `AGENTS.md` with the line.
@@ -118,13 +139,27 @@ Run it once for each file, as its own `node` command, with nothing changed but t
 
   Create a file only where the plan says to. Don't restructure what's there.
 - **Exclusion**: keep `LESSONS.md`, `PLAYBOOK.md` and the script's folder out of what ships, with the project's own mechanism: `export-ignore` in `.gitattributes` for `git archive` releases, the `files` list in `package.json` or `.npmignore` for npm, the build's include list. If nothing ships from this repo, say so and skip this.
-- **Optional**: if the project has one check script or CI job that runs before a merge, offer to add `node dev/lessons.mjs --check` to it. Add it only on the user's yes.
+- **Checks before a merge or commit** (two offers): add each only if the user named it. Both run `node dev/lessons.mjs --doctor`, which exits 1 on an error and 0 on warnings only, so they fail on an error and never on a warning. If the script was moved, use its path.
+  - **CI:** if the repo has `.github/workflows/`, add a step to the job that runs before a merge, after its checkout and where Node 18 or later is set up. Otherwise add the command to the check script that runs before a merge. Use `--doctor --json` only where the CI reads JSON.
 
-Don't add hooks, skills, slash commands, tests or any other file to the project beyond the plan. The project's own rules (a lesson asking for a test with each new function, say) are about the project's code; the files setup brings in aren't new project code.
+    ```
+    - name: Lessons check
+      run: node dev/lessons.mjs --doctor
+    ```
+
+  - **Pre-commit:** use the hook manager the repo has. For husky, a line `node dev/lessons.mjs --doctor` in `.husky/pre-commit`. For lefthook, a command under `pre-commit` in `lefthook.yml` with `run: node dev/lessons.mjs --doctor`. For the pre-commit framework, a hook under `repo: local` in `.pre-commit-config.yaml` with `entry: node dev/lessons.mjs --doctor`, `language: system` and `pass_filenames: false`. For a folder that `core.hooksPath` names, a line in its `pre-commit` file. With none of these, create `.githooks/pre-commit` holding the three lines below. Git runs that file only once `core.hooksPath` names its folder, and on Linux or macOS only once the file can be run. Both of those change the user's setup, so don't run them: give the user `git config core.hooksPath .githooks` and, on Linux or macOS, `chmod +x .githooks/pre-commit`. Skipping the hook for one commit (`git commit --no-verify`) is the user's call.
+
+    ```
+    #!/bin/sh
+    # The lessons check: fails a commit on an error, never on a warning.
+    exec node dev/lessons.mjs --doctor
+    ```
+
+Don't add agent hooks, skills, slash commands, tests or any other file to the project beyond the plan, and a git hook only as the pre-commit offer says. The project's own rules (a lesson asking for a test with each new function, say) are about the project's code; the files setup brings in aren't new project code.
 
 ### 5. Verify
 
-1. Run `node dev/lessons.mjs`, `node dev/lessons.mjs --check` (it must report 0 bad) and `node dev/lessons.mjs <one topic word>`. If you wrote the script and didn't edit its paths, run the fingerprint command: it must print this plugin's value. On any other value, compare the file with the template, fix the difference and run it again. If the script was moved and its paths edited, skip this and say so.
+1. Run `node dev/lessons.mjs`, `node dev/lessons.mjs --check` (it must report 0 bad), `node dev/lessons.mjs --doctor` (it exits 0 on a new log; on an existing one, list each error with the fix you propose, since an offer from step 4 fails on it) and `node dev/lessons.mjs <one topic word>`. If you wrote the script and didn't edit its paths, run the fingerprint command: it must print this plugin's value. On any other value, compare the file with the template, fix the difference and run it again. If the script was moved and its paths edited, skip this and say so.
 2. Prove that `--check` catches problems. Make a temp folder outside the repo, copy both Markdown files into it, and add three bad entries to the copy of `LESSONS.md`: one missing its `Why` field, one dated later than the entry above it, and one with `Status: promoted to PLAYBOOK "No such section"`. Run `node dev/lessons.mjs --dir <temp folder> --check`, confirm it exits 1 and names each of the three, then delete the temp folder. Don't keep this proof in the repo as a test or a file.
 3. If the project builds or packages anything, confirm the excluded files are left out: `git archive -o <temp file> HEAD` then `tar -tf <temp file>`, `npm pack --dry-run`, or the build's own listing. Exclusions in `.gitattributes` apply only once committed, so say if this can't be checked yet.
 4. Show `git status` and `git diff`. The staging folder this run made must be gone, and so must any `.lessons-copy-` file a copy's message named as left: remove them if not. Leave any other such name alone and mention it. Don't commit or push unless the user says so. When they do, follow the project's commit rules.
@@ -134,5 +169,5 @@ Don't add hooks, skills, slash commands, tests or any other file to the project 
 - A table of the five parts: status before, status after, file.
 - What changed in each file.
 - The output of each check in step 5, with pass or fail.
-- What's left for the user: questions, proposed lesson entries, the optional CI step.
+- What's left for the user: questions, proposed lesson entries, the offers not taken, and for a new `.githooks/pre-commit` the commands that turn it on.
 - One line on trust: the lessons check makes `LESSONS.md` and `PLAYBOOK.md` instructions for every session, like `CLAUDE.md`, so changes to them deserve the same review (for example, a `CODEOWNERS` entry).
