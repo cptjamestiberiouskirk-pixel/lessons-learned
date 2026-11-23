@@ -324,21 +324,38 @@ test('codex: a subagent, LESSONS_GATE=off, another event and another tool pass',
   assert.equal(gate(payload(r, r.write(), 'apply_patch', patchOf(join(root, 'x')), {transcript_path: null})).deny, false, 'no transcript');
 });
 
-// Codex runs a hook's command as `%COMSPEC% /C "<command>"` on Windows and
-// `$SHELL -lc <command>` elsewhere (hooks/src/engine/command_runner.rs at
-// rust-v0.171.0), with PLUGIN_ROOT set to the plugin's folder.
+// Codex runs a hook's command through the session's shell: `<pwsh> -NoProfile
+// -Command <command>`, `<cmd> /c "<command>"` or `<sh> -c <command>`
+// (core/src/shell.rs, derive_exec_args). With no session shell it falls back
+// to `%COMSPEC% /C "<command>"` on Windows and `$SHELL -lc <command>`
+// elsewhere (hooks/src/engine/command_runner.rs), all at rust-v0.171.0, with
+// PLUGIN_ROOT set to the plugin's folder. Each shell here is one Codex may
+// use; pwsh is tried where it is installed.
+const hasPwsh = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0'], {encoding: 'utf8'}).status === 0;
+const LAUNCHERS = [
+  ...(WIN
+    ? [['cmd', (c) => [process.env.COMSPEC || 'cmd.exe', ['/c', `"${c}"`], {windowsVerbatimArguments: true}]]]
+    : [['$SHELL -lc', (c) => [process.env.SHELL || '/bin/sh', ['-lc', c], {}]], ['/bin/sh -c', (c) => ['/bin/sh', ['-c', c], {}]]]),
+  ...(hasPwsh ? [['pwsh', (c) => ['pwsh', ['-NoProfile', '-Command', c], {}]]] : []),
+];
 // The opt-out that stops cmd looking in the current folder is taken off, so
 // a run shows what the command itself does.
-function launch(command, env, input, cwd) {
+function launch(how, command, env, input, cwd) {
   const e = {...process.env, ...env};
   delete e.LESSONS_GATE;
   if (!('PLUGIN_ROOT' in env)) delete e.PLUGIN_ROOT;
   for (const k of Object.keys(e)) if (k.toLowerCase() === 'nodefaultcurrentdirectoryinexepath') delete e[k];
-  const opts = {input, encoding: 'utf8', env: e, ...(cwd ? {cwd} : {})};
-  return WIN ? spawnSync(process.env.COMSPEC || 'cmd.exe', ['/C', `"${command}"`], {...opts, windowsVerbatimArguments: true}) : spawnSync(process.env.SHELL || '/bin/sh', ['-lc', command], opts);
+  const [exe, args, extra] = how(command);
+  return spawnSync(exe, args, {input, encoding: 'utf8', env: e, ...(cwd ? {cwd} : {}), ...extra});
 }
+// Codex reads a hook's whole stdout as one JSON answer, so nothing else may be on it.
+const onlyJson = (run, what) => {
+  assert.equal(run.status, 0, `${what}: ${run.stderr}`);
+  assert.equal(run.stdout.trim().split(/\r?\n/).length, 1, `${what}: one line on stdout, got ${JSON.stringify(run.stdout)}`);
+  return JSON.parse(run.stdout.trim()).hookSpecificOutput.permissionDecisionReason;
+};
 
-test('codex: hooks.json matches Bash and apply_patch, and its command runs the hook from PLUGIN_ROOT in Codex\'s shell', () => {
+test('codex: hooks.json matches Bash and apply_patch, and its command runs the hook from PLUGIN_ROOT in each shell Codex may use', () => {
   const hooks = JSON.parse(readFileSync(join(PLUGIN, 'hooks/hooks.json'), 'utf8'));
   assert.deepEqual(Object.keys(hooks.hooks), ['PreToolUse']);
   const [entry] = hooks.hooks.PreToolUse;
@@ -355,21 +372,25 @@ test('codex: hooks.json matches Bash and apply_patch, and its command runs the h
   const r = new Rollout(root).prompt();
   const p = patchOf(join(root, 'src.txt'));
   const input = JSON.stringify(payload(r, r.write(), 'apply_patch', p));
-  const run = launch(h.command, {PLUGIN_ROOT: PLUGIN}, input);
-  assert.equal(run.status, 0, run.stderr);
-  assert.equal(JSON.parse(run.stdout.trim()).hookSpecificOutput.permissionDecisionReason, REASON_LOOKUP);
   // Codex runs the hook in the session's folder, where cmd looks for `node`
   // first. The command's first step turns that off, so a node.cmd planted in
-  // the repo doesn't run.
-  writeFileSync(join(root, 'node.cmd'), '@echo PLANTED node.cmd ran\r\n');
-  const planted = launch(h.command, {PLUGIN_ROOT: PLUGIN}, input, root);
-  assert.equal(planted.status, 0, planted.stderr);
-  assert.doesNotMatch(planted.stdout, /PLANTED/);
-  assert.equal(JSON.parse(planted.stdout.trim()).hookSpecificOutput.permissionDecisionReason, REASON_LOOKUP);
-  for (const env of [{}, {PLUGIN_ROOT: 'plugins/lessons-learned-codex'}, {PLUGIN_ROOT: '\\\\server\\share\\plugin'}]) {
-    const quiet = launch(h.command, env, input);
-    assert.equal(quiet.status, 0, `${JSON.stringify(env)}: ${quiet.stderr}`);
-    assert.equal(quiet.stdout.trim(), '', JSON.stringify(env));
+  // the repo doesn't run; pwsh and sh don't look there.
+  const planted = join(scratch(), 'planted');
+  mkdirSync(planted);
+  writeFileSync(join(planted, 'node.cmd'), '@echo PLANTED node.cmd ran\r\n');
+  writeFileSync(join(planted, 'node.bat'), '@echo PLANTED node.bat ran\r\n');
+  writeFileSync(join(planted, 'node.ps1'), "Write-Output 'PLANTED node.ps1 ran'\n");
+  writeFileSync(join(planted, 'node'), '#!/bin/sh\necho PLANTED node ran\n', {mode: 0o755});
+  for (const [name, how] of LAUNCHERS) {
+    assert.equal(onlyJson(launch(how, h.command, {PLUGIN_ROOT: PLUGIN}, input), name), REASON_LOOKUP, name);
+    const run = launch(how, h.command, {PLUGIN_ROOT: PLUGIN}, input, planted);
+    assert.doesNotMatch(run.stdout, /PLANTED/, `${name}: a planted node ran`);
+    assert.equal(onlyJson(run, `${name}, planted`), REASON_LOOKUP, `${name}, planted`);
+    for (const env of [{}, {PLUGIN_ROOT: 'plugins/lessons-learned-codex'}, {PLUGIN_ROOT: '\\\\server\\share\\plugin'}]) {
+      const quiet = launch(how, h.command, env, input);
+      assert.equal(quiet.status, 0, `${name} ${JSON.stringify(env)}: ${quiet.stderr}`);
+      assert.equal(quiet.stdout.trim(), '', `${name} ${JSON.stringify(env)}`);
+    }
   }
 });
 
