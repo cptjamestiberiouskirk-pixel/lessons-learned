@@ -16,7 +16,7 @@ Then install **lessons-learned-codex** from that marketplace: in the ChatGPT des
 
 ## Use
 
-In a chat in the repo, ask to set up lessons learned (or name the skill, `lessons-setup`). It checks what the repo already has, shows a plan and waits for your go-ahead before it writes anything.
+In a chat in the repo, ask to set up lessons learned (or name the skill, `lessons-setup`). It checks what the repo already has, shows a plan and waits for your go-ahead before it writes anything. For a script from an earlier release, it names the release and what changed since, and asks before it replaces it. It also offers two checks that run `node dev/lessons.mjs --doctor` and fail only on an error: a CI step, and a pre-commit hook in the hook manager the repo uses (or a new `.githooks/pre-commit`, which you turn on yourself). It adds each only if you name it.
 
 ## The lessons gate
 

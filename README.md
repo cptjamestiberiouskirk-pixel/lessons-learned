@@ -28,7 +28,7 @@ This repo uses its own lessons check: see [CLAUDE.md](CLAUDE.md) and [PLAYBOOK.m
 
 - Every check a release needs: `node dev/release-check.mjs`
 - Tests alone: `node --test`
-- End-to-end runs of the setup skill (billed): [dev/e2e/README.md](dev/e2e/README.md)
+- End-to-end runs of the setup skill (they use the signed-in account's usage): [dev/e2e/README.md](dev/e2e/README.md)
 - The icon is drawn by `node dev/make-icon.mjs`.
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).

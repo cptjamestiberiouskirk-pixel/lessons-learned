@@ -28,10 +28,11 @@ In the repo you want to set up, run:
 
 Or ask Claude to add lessons learned or a playbook to the project. Setup:
 
-1. Checks what the repo already has, including the same idea under other names (a `gotchas.md`, rules kept in `CLAUDE.md`) and an older copy of the script.
+1. Checks what the repo already has, including the same idea under other names (a `gotchas.md`, rules kept in `CLAUDE.md`) and an older copy of the script. For a script from an earlier release, it names the release and what changed since, and asks before it replaces it.
 2. Changes nothing if everything is in place. Otherwise it shows a plan and waits for your go-ahead.
 3. Adds only what's missing, and keeps the files out of what the repo ships (`package.json` `files`, `.npmignore`, `export-ignore` in `.gitattributes`, or the build's include list).
-4. Proves the format check catches broken entries and that the script came through intact. It doesn't commit.
+4. Offers two checks that run `node dev/lessons.mjs --doctor` and fail only on an error: a CI step, and a pre-commit hook in the hook manager the repo uses (or a new `.githooks/pre-commit`, which you turn on yourself). It adds each only if you name it.
+5. Proves the format check catches broken entries and that the script came through intact. It doesn't commit.
 
 ## What it looks like
 

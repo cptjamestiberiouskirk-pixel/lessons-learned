@@ -105,6 +105,42 @@ test('both skills give the template\'s fingerprint, the same path check and the 
   assert.equal(entry(codexSkill), entry(claudeSkill));
 });
 
+// The text between a start line and the next line that starts with `end`.
+function block(text, start, end) {
+  const at = text.indexOf(start);
+  if (at < 0) return null;
+  const stop = text.indexOf(end, at + start.length);
+  return text.slice(at, stop < 0 ? undefined : stop);
+}
+
+test('both skills name the earlier releases the gate accepts, each with a line on what changed since', () => {
+  const gate = read(CLAUDE, 'hooks', 'lessons-gate.mjs');
+  const released = [...gate.matchAll(/^ {2}'([0-9a-f]{64})', \/\/ v(\S+)$/gm)].map((m) => [m[2], m[1]]);
+  assert.ok(released.length, 'the gate lists no released fingerprint');
+  for (const skill of [claudeSkill, codexSkill]) {
+    const listed = [...skill.matchAll(/^- (\d+\.\d+\.\d+): `([0-9a-f]{64})`$/gm)].map((m) => [m[1], m[2]]);
+    assert.deepEqual(listed, released, 'a skill\'s list of earlier releases differs from the gate\'s RELEASED');
+    const changes = block(skill, '## What changed since earlier releases\n', '\n## ');
+    assert.ok(changes, 'a skill has no "What changed since earlier releases"');
+    for (const [version] of released) assert.match(changes, new RegExp(`^- \\*\\*${version.replace(/\./g, '\\.')} to `, 'm'), `no line from ${version}`);
+  }
+  assert.equal(block(codexSkill, '## What changed since earlier releases\n', '\n## '), block(claudeSkill, '## What changed since earlier releases\n', '\n## '));
+});
+
+test('both skills make the same offers of a CI step and a pre-commit hook, each only if the user names it', () => {
+  const offers = (s) => block(s, '- **Checks before a merge or commit**', '\nDon\'t add agent hooks');
+  assert.ok(offers(claudeSkill), 'the Claude Code skill has no offers');
+  assert.equal(offers(codexSkill), offers(claudeSkill));
+  const text = offers(claudeSkill);
+  assert.match(text, /add each only if the user named it/);
+  assert.match(text, /^ {4}#!\/bin\/sh\n {4}#.*\n {4}exec node dev\/lessons\.mjs --doctor\n/m, 'the .githooks/pre-commit file');
+  assert.match(text, /don't run them: give the user `git config core\.hooksPath \.githooks`/);
+  for (const skill of [claudeSkill, codexSkill]) {
+    assert.match(skill, /a go-ahead for the plan doesn't take an offer/, 'step 3 keeps the offers out of the plan\'s go-ahead');
+    assert.doesNotMatch(skill, /offer to add `node dev\/lessons\.mjs --check`/, 'the old CI offer is still there');
+  }
+});
+
 test('the Codex copy command copies a template exactly and refuses to write over an existing file', () => {
   const {code} = nodeCommand(codexSkill, "linkSync(t,d)");
   const repo = folder();

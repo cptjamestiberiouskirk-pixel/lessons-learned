@@ -1,7 +1,8 @@
 # Runs one headless turn in a test repo with this repo's plugin AND the user's
 # installed plugins active, hooks included: for testing lessons-learned next to
-# another plugin such as Trailmark, in Claude Code or in Codex. Each turn is
-# billed. Run with pwsh 7. Unlike run-setup.ps1, the user's own settings,
+# another plugin such as Trailmark, in Claude Code or in Codex. Each turn
+# counts against the signed-in account: its plan's usage, or a charge with an
+# API key. Run with pwsh 7. Unlike run-setup.ps1, the user's own settings,
 # hooks and plugins are loaded too.
 #
 #   ./run-live.ps1 -Tool claude -Repo <dir> -Prompt '<text>' -Log <file.json> [-Settings '<json>']

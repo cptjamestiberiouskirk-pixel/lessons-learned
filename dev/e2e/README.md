@@ -1,6 +1,6 @@
 # End-to-end runs of the setup skill
 
-`make-test-repos.ps1` and `run-setup.ps1` run `/lessons-learned:setup` in real, headless Claude Code sessions, with the plugin loaded from this checkout. Each turn is billed: a full scenario costs roughly $0.30 to $0.90.
+`make-test-repos.ps1` and `run-setup.ps1` run `/lessons-learned:setup` in real, headless Claude Code sessions, with the plugin loaded from this checkout. Each turn counts against the account Claude Code is signed in with: the plan's usage with a claude.ai sign-in, or a charge with an API key. The CLI prints a cost of roughly $0.30 to $0.90 for a full scenario; on a plan that is an estimate, not a charge.
 
 ```
 pwsh -File dev/e2e/make-test-repos.ps1 -Root <new temp folder>
@@ -16,6 +16,9 @@ What each test repo should do:
 | `gotchas-app` | Reports `GOTCHAS.md` as "under another name", stops and asks. Changes nothing. |
 | `full-app` | Reports all five present, `--check` 0 bad, fingerprint matching. Changes nothing. |
 | `old-script-app` | Reports the script as "present, other version", says what differs (the usage line) and asks before replacing it. |
+| `release-app` | Reports the script as "present, release 0.3.1", gives the "0.3.1 to this release" lines and asks before replacing it. Needs the `v0.3.1` tag in this clone. |
+
+The second `node-app` turn can also name an offer, as in `-Prompt 'Go ahead, and add the pre-commit hook.'`. Setup should then write `.githooks/pre-commit`, give the `git config core.hooksPath .githooks` command, and not run it (`git config core.hooksPath` in the repo prints nothing). A plain "Go ahead." takes neither offer.
 
 Don't trust the session's report alone: check the repo afterwards (`git status`, `node dev/lessons.mjs --check`, the fingerprint command in the skill).
 

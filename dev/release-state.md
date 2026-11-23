@@ -4,18 +4,30 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
-## Unreleased: --lint and --doctor (phase 1a), ESLint (phase 2)
+## Unreleased: --lint and --doctor (phase 1a), ESLint (phase 2), the setup offers (phase 1b)
 
-Base: 3076665. One review round run (below), with two reviewers: one on the script and tests, one on the docs.
+Base: 3076665. One review round run on 1a (below), with two reviewers: one on the script and tests, one on the docs.
 
 ### Deferred
 
-- **RS-A-releasefingerprint** (at each release). The gate's `RELEASED` set lists the fingerprints of the released scripts. When a release is tagged, add its `FINGERPRINT` to `RELEASED` with the tag in its comment. The test "the released fingerprints are those of the release tags' scripts" checks the list against the tags where the clone has them.
+- **RS-A-releasefingerprint** (at each release). The gate's `RELEASED` set and both skills' "Earlier releases of this plugin print these" list the fingerprints of the released scripts. When a release is tagged, add its `FINGERPRINT` to `RELEASED` with the tag in its comment, add it to both skills' list, and rename the "to this release" line in both skills' "What changed since earlier releases" to that version, with a new line above it for the next one. The test "the released fingerprints are those of the release tags' scripts" checks the gate's list against the tags where the clone has them, and "both skills name the earlier releases the gate accepts" checks the skills' lists against the gate's.
+- **RS-H-codexsetup1b** (needs the user's OK). The Codex end-to-end run for 1b's skill change. Codex's installed `lessons-learned-codex` is 0.3.1, so the run needs a reinstall from this checkout (`codex plugin remove`, then `codex plugin add`, `dev/e2e/README.md`), which changes the user's installed plugin. The run uses the ChatGPT sign-in's plan usage (`codex login status`: "Logged in using ChatGPT"; no API key set).
+- **RS-T-e2ediff** (CONFIRMED in 1b's `old-script-app` run). `run-setup.ps1`'s allow list has no `diff`, so the session could not compare the changed script with the template: its two `diff` calls were refused, and it then said the usage lines were the same, which they are not. It did report "other version (not run)" and asked before replacing. Adding `Bash(diff:*)` to the list, then rerunning `old-script-app`, would settle whether the skill's "tell the user what differs" works.
+- **RS-H-codexgithook** (HYPOTHESIZED; untested). Whether a git `pre-commit` hook runs when Codex commits inside its `workspace-write` sandbox. Fallback: the CI offer runs the same `--doctor`. A live Codex commit in a repo with `.githooks/pre-commit` and `core.hooksPath` set would settle it.
 - **RS-A-lintrealpath** (INFERRED). If `realpathSync.native` throws on the script's path, the start check now compares the resolved paths, so the script runs instead of exiting 0 with nothing done. Not tried: no drive here where the real path fails (RAM disk, some FUSE and virtual drives).
-- **RS-D-skilllint** (held for 1b). Neither setup skill mentions `--lint`, and the optional CI step they offer runs `--check` only. A skill change needs the end-to-end runs, which are part of 1b.
 - **RS-T-fixturelines** (INFERRED). Fixtures check a finding's line only where `fires` gives one (the round 1 fixtures do). The older fixtures check rule, severity and file.
 
+### Phase 1b end-to-end runs (Claude Code, Sonnet, `run-setup.ps1`)
+
+- `node-app`, turn 1: the plan lists both offers apart from the plan, and says the user runs `core.hooksPath`. Turn 2, "Go ahead, and add the pre-commit hook. Only CLAUDE.md, and the topic words are fine.": built all parts, wrote `.githooks/pre-commit` as the skill gives it, did not touch `package.json` (the CI offer, not named) and did not set `core.hooksPath`. Checked in the repo afterwards: fingerprint 8360552c, `--check` 0 bad, `--doctor` exit 0, `git config core.hooksPath` empty. With `core.hooksPath` then set by hand in that throwaway repo, a clean commit passed and one with an entry missing `Why` was refused (exit 1), on Git for Windows.
+- `release-app`: reported "present, release 0.3.1 (not run)", gave the 0.3.1-to-this-release line, found that only the playbook's `Limit:` line differs from the template and offered it on its own. Changed nothing (`git status` clean).
+- `old-script-app`: reported "present, other version (not run)", matching no release, and asked before replacing. Changed nothing. See RS-T-e2ediff.
+- Refused calls in all runs: commands chained with `;`, and `diff`, both outside the allow list (`dev/e2e/README.md`).
+
 ### Answered
+
+- **RS-D-skilllint** (closed in 1b). Both skills now offer a CI step and a pre-commit hook that run `--doctor`, in place of the `--check` CI offer, and step 5 runs `--doctor` too.
+- **RS-T-oldscriptapp** (closed in 1b; CONFIRMED). The e2e repo `old-script-app` was meant to hold a changed script, but its `Replace` searched for a usage line the script hasn't had since 0.3.0 added `--stale`, so it got the template unchanged and setup saw a matching fingerprint. `make-test-repos.ps1` now changes the current usage line and stops if the text isn't found. It also makes `release-app` from the `v0.3.1` tag's files, checked against the tag's blobs.
 
 - **RS-H-gatefingerprints** (closed: the user's answer, relayed by the supervisor session with the user's approval). The gate accepts the released fingerprints (v0.2.0 e6b41bf9, v0.2.1 ec55848c, v0.3.0 ae8257c0, v0.3.1 86d3cd28, each computed from its tag) as well as this script's, so a repo set up by an older release still needs a lookup. Any other script stays a mismatch. Tests: "a repo with an earlier release's script still needs a lookup" and "the released fingerprints are those of the release tags' scripts" both fail on the gate before the change and pass after. They skip in a clone without the tags, as CI's is.
 - **RS-D-claudemdpaths** (closed: silenced). Four `lint-ignore` lines in `CLAUDE.md` silence the six `stale-path` warnings. The `plugin.json` pair has its own reason: each file is in one copy only (`.claude-plugin/` in `plugins/lessons-learned/`, `.codex-plugin/` in the Codex copy), so "in both copies" would not be true there. `--doctor` now gives 0 errors, 3 warnings and 6 silenced.

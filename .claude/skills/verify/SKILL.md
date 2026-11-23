@@ -21,7 +21,7 @@ The script is `plugins/lessons-learned/templates/lessons.mjs`, with its copies i
 
 ## 3. A change to a setup skill or the templates
 
-Run it end to end, as `PLAYBOOK.md` "Changing the setup skill or templates" says. Each turn is billed, roughly $0.30 to $1.
+Run it end to end, as `PLAYBOOK.md` "Changing the setup skill or templates" says. Each turn counts against the signed-in account: its plan's usage, or a charge with an API key. The CLI's cost for a turn is roughly $0.30 to $1, an estimate on a plan.
 
 - Claude Code: `pwsh -File dev/e2e/make-test-repos.ps1 -Root <new temp folder>`, then `dev/e2e/run-setup.ps1` on `node-app` (two turns: the plan, then "Go ahead."), and on any test repo whose case the change touches.
 - Codex: reinstall the plugin so its cache has the change (`codex plugin remove lessons-learned-codex@lessons-learned-codex`, then `codex plugin add lessons-learned-codex@lessons-learned-codex`), then `pwsh -File dev/e2e/run-live.ps1 -Tool codex -Repo <temp folder>/node-app -Log <temp folder>/codex.jsonl -Prompt '<the setup request>'` on a fresh `node-app`.
