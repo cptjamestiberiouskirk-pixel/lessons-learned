@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The playbook template's "The lessons check" step 5: lessons that share a rule become one short step that states it without copying them. The section's `From:` line names each lesson, and their rules give the details. Where a lesson's rule conflicts with the step, the step wins; a detail the step doesn't mention still applies. Step 3 reads the rules of the lessons on a section's `From:` line and follows their details with its steps. Step 5's reviewer asks whether the step states the rule its lessons give, in short form, and nothing they don't say. Step 6 also removes the parts of a step that came only from a closed lesson.
+
 ## 0.4.0 (2026-11-23)
 
 The lessons gate, a hook in Claude Code and Codex that holds an edit or a commit until the lessons check is done, and `--lint` and `--doctor`, which find rules a session may not be able to follow.

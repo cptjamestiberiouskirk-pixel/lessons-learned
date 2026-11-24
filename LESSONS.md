@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-23: A node -e edit to the lint fixture left a bare quote in a JS string
+- What went wrong: for Q32 I changed the `STEP3` fixture in `tests/lint-fixtures.mjs` with a `node -e` script in the Bash tool. The new text held an escaped quote inside a single-quoted JS string, and its backslash was lost on the way from the command to the file, so the file no longer parsed. The script reported "ok", and I only saw it when the next edit's search text didn't match.
+- Why: I broke "Editing files" step 1, which already says text with a backslash goes in through the Edit or Write tool. A text replace never parses what it writes, so nothing else would have caught it before `node --test`.
+- Rule going forward: as "Editing files" step 1 says, text with a backslash goes through the Edit or Write tool, also for a quick edit. After any scripted edit to a `.mjs` file, import it once (`node -e "import('./<file>')"`) before going on.
+- Evidence: `tests/lint-fixtures.mjs`, search "const STEP3 ="
+- Status: open
+
 ## 2026-11-23: run-live.ps1's new options were committed without running them through the script
 - What went wrong: I added `-Marketplace` and `-Resume` to `run-live.ps1` after typing the same Codex commands by hand, and the commit said they were the commands that ran. Review found two bugs a single run would have shown: `-Marketplace .` was resolved after the script moved into the test repo, so it named the repo, and the cache line used `USERPROFILE`, which Linux and macOS don't set, so the script stopped before the reply.
 - Why: the hand-typed run used absolute paths from the checkout, so I took the script's version as the same and checked only that it parsed.
