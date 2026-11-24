@@ -30,6 +30,7 @@ const RELEASED = new Set([
   'ec55848c3c07540568dd52be8e0a2cba47408f153490ae7976b9cd591333e455', // v0.2.1
   'ae8257c08a861066ec1bc5c4eca66b88e4a3e44ba68bde7c17111964041a1622', // v0.3.0
   '86d3cd28d4d1cbb16eeb04e21fc9bbe542cc86ac1326c03d84deb09f8e5d04ea', // v0.3.1
+  '909da94a2c53a0b0e46aa7d34e4d3e483bb080d4a822a37a94248400cf39881a', // v0.4.0
 ]);
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);

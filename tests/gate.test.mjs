@@ -901,7 +901,16 @@ test('a fingerprint mismatch drops the lookup and changes the reason; line endin
 
 // Each release's script, from its tag. A clone without the tags (CI checks out
 // one commit) has none, and the tests that need them skip.
-const RELEASES = ['v0.2.0', 'v0.2.1', 'v0.3.0', 'v0.3.1'];
+const RELEASES = ['v0.2.0', 'v0.2.1', 'v0.3.0', 'v0.3.1', 'v0.4.0'];
+// The release tags in this clone (vX.Y.Z), or none where git can't list them.
+function releaseTags() {
+  try {
+    return execFileSync('git', ['tag', '--list', 'v*'], {cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']})
+      .split('\n').map((s) => s.trim()).filter((s) => /^v\d+\.\d+\.\d+$/.test(s));
+  } catch {
+    return [];
+  }
+}
 function releaseScript(tag) {
   try {
     return execFileSync('git', ['show', `${tag}:plugins/lessons-learned/templates/lessons.mjs`], {cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']});
@@ -924,6 +933,7 @@ test('the released fingerprints are those of the release tags\' scripts', (t) =>
   const src = readFileSync(GATE, 'utf8');
   const listed = [...src.matchAll(/^ {2}'([0-9a-f]{64})', \/\/ (v\S+)$/gm)].map((m) => [m[2], m[1]]);
   assert.deepEqual(listed.map(([tag]) => tag), RELEASES, 'the gate lists each release once, in order');
+  assert.deepEqual(releaseTags().filter((tag) => !RELEASES.includes(tag)), [], 'a release tag in this clone that the gate does not list');
   const found = RELEASES.map((tag) => [tag, releaseScript(tag)]).filter(([, text]) => text !== null);
   if (!found.length) return t.skip('no release tags in this clone');
   for (const [tag, text] of found)
