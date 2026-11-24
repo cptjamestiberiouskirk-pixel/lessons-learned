@@ -4,7 +4,7 @@ Checklists for recurring work on this project. The first two sections come with 
 
 ## The lessons check
 
-Run it before each of these steps: a change to code, tests or the build, a test run whose result you will report, a commit, and a push. Before you report a change as done, and before a commit, also follow "Checking your work" below.
+Run it first in a session, before any other command, read-only ones included, with words for the task; then before each of these steps: a change to code, tests or the build, a test run whose result you will report, a commit, and a push. Before you report a change as done, and before a commit, also follow "Checking your work" below.
 
 1. Run `node dev/lessons.mjs <words>` with two to four words for the step's topics (`test`, `build`, `commit`, `git`). A word finds lessons with a word that starts with it ("save" finds "saved"). It prints the open ones with their rules, and names the section here for promoted ones. With no words it prints only the counts and its usage.
 2. Before the step, write one line where the user can see it: `Lessons checked: <the titles that apply>`, or `Lessons checked: none apply`.
