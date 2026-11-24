@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-24: LESSONS.md went past its budget, and Evidence was cut to fit
+- What went wrong: in Q40, LESSONS.md reached its 16,000 token budget, so the Evidence of several promoted lessons was shortened, and a new lesson put it over again. The user said to raise the budget instead.
+- Why: the user, from Q39's research (not recorded in this repo, not checked here): sessions read lessons through a lookup and `--section`, which keep their own budgets (2,000 and 1,500), so the whole-file budget capped a read no session makes.
+- Rule going forward: never cut Evidence or close a lesson to meet the whole-file budget. In this repo, close a lesson only when a test enforces its whole rule (the user, 2026-11-24).
+- Evidence: `plugins/lessons-learned/templates/lessons.mjs`, search "lessons: 24000"
+- Status: open
+
 ## 2026-11-24: Template step 3 had the session put a section's name in a shell command
 - What went wrong: Q41's step 3 said to run `--section "<name>"` with a PLAYBOOK heading. Codex's security review of PR 16 found that a heading like `$(touch marker)` runs in the shell first. Three review rounds missed it.
 - Why: CONFIRMED by a probe: `--check` accepts such a heading, and double quotes still expand `$()`. The rounds checked the script's parsing, not what a step tells the session to type.
@@ -327,7 +334,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: a `node -e` mutant generator inside Git Bash failed on its quoting and wrote no files. The loop that followed ran the stale tests with `LESSONS_SCRIPT` set to each missing path, and every run showed 8 of 8 failing, the same as a mutant caught by every test.
 - Why: the loop didn't check that each mutant file existed, and a missing script fails every test the same way a broken one does.
 - Rule going forward: write a mutant or copy generator as a script file, not nested quotes in `node -e`, and check each mutant exists and differs from the original before reading its test results. A mutant should fail the one test written for its guard, not all of them.
-- Evidence: the 0.3.0 session's six "fail 8" lines under a syntax error; rerun from a script file, each mutant failed only its own test. Seen again on 2026-11-24 (an import above the shebang).
+- Evidence: the 0.3.0 session: the "Expected ',', got 'string literal'" error above six "fail 8" lines; rerun from a script file, each mutant failed only its own test. Seen again 2026-11-24: a variant of the script built through `node -e` put an import above the shebang, and every run failed with a SyntaxError; rebuilt from a script file.
 - Status: promoted to PLAYBOOK "Running a test against old code"
 
 ## 2026-11-17: A scripted edit across four files wrote three before it found the fourth didn't match
@@ -348,7 +355,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: rounds 6 to 9 of the 0.2.1 review each had a fresh reviewer look at the whole diff from 643dcdd, not at the previous round's fixes. Each round found something new in that large surface, so the stop rule was never near. A reviewer quoted REVIEW.md's "Rounds" section back, which I had not read for this release.
 - Why: I wrote each round's brief from the one before it, not from REVIEW.md, and only read REVIEW.md's file path into the brief for the reviewer to follow.
 - Rule going forward: before writing a review round's brief, read REVIEW.md's "Rounds" section and scope the round to the diff since the last reviewed state; save that state (a copy of the changed folders and docs) before applying each round's fixes, so the next round can diff against it, and run fail-before checks in another copy, never in that one.
-- Evidence: `REVIEW.md`, search "Each round reviews the diff since the last reviewed state".
+- Evidence: the 0.2.1 session's briefs for rounds 6 to 9 ("the uncommitted diff from commit 643dcdd to the working tree" in each) and round 10's, scoped to round 9's fixes; REVIEW.md on main, "Each round reviews the diff since the last reviewed state".
 - Status: promoted to PLAYBOOK "Running a review round"
 
 ## 2026-11-17: Backslashes in a Git Bash heredoc were lost before the text reached the file
@@ -376,7 +383,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: I said the 4 MB title test guarded the change that cuts a title once for all its problem messages. Review round 6 showed it passed on the script before that change, and on a mutant that cut the title again in each message.
 - Why: `--check` prints at most 50 problems, so cutting the title in each one costs at most 50 walks of it. That grows with the title, linearly, so full against a quarter grows about 4 times either way, and a growth test cannot tell them apart.
 - Rule going forward: when an output cap bounds how often a cost repeats, test it by holding the input the same and changing only the repeat count (50 messages against 1), and run that test on the old version before saying it guards the change.
-- Evidence: `tests/hardening.test.mjs`, search "a 9 MB title named in 50 problem messages costs about what one message costs".
+- Evidence: `tests/hardening.test.mjs`, "a 9 MB title named in 50 problem messages costs about what one message costs": 750 ms against 100 ms on the round-5 script, 1245 ms against 205 ms on the mutant; review round 6 in `dev/release-state.md`.
 - Status: promoted to PLAYBOOK "Writing a timing test"
 
 ## 2026-11-16: A timing test with a limit in seconds failed on a busy machine
@@ -390,7 +397,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: the first run of the new property tests found rules that `--check` called "missing or empty" and "not a field", though each had its `- Rule going forward:` line. The lookup printed them as empty rules. Unit tests had never put a line separator inside a field.
 - Why: in a JavaScript regex, `.` doesn't match U+2028 or U+2029, which it treats as line ends. The field and heading patterns end in `(.*)$`, so a line holding one never matched.
 - Rule going forward: a regex that must match a whole line of untrusted text uses the `s` flag (or `[^]`), and a new parsing rule gets a property test with random text, not only examples.
-- Evidence: `tests/hardening.test.mjs`, search "a line separator (U+2028) in a rule is reported as hidden". Seen again in 0.3.0, in the `--stale` parser.
+- Evidence: `tests/hardening.test.mjs`, search "a line separator (U+2028) in a rule is reported as hidden". Seen again in 0.3.0, in the `--stale` parser: `tests/stale.test.mjs`, search "property: --stale reports the file names a plain parser finds".
 - Status: promoted to PLAYBOOK "Parsing untrusted text"
 
 ## 2026-11-16: A timing test passed on the slow script it was written to catch
@@ -460,5 +467,5 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: the first commit, run in the PowerShell tool as `git commit -F - @'...'@`, failed with "pathspec 'Add the lessons-learned plugin ...' did not match any file(s)" and committed nothing.
 - Why: `-F -` reads the message from stdin, and PowerShell passed the here-string as one more argument, not as stdin.
 - Rule going forward: in the PowerShell tool, give a commit message with `-m @'...'@`.
-- Evidence: commit 2f94516, made with `-m` after the failed call. Seen again at the 0.2.0 commit (855302b).
+- Evidence: the session that made 2f94516: the failed call, then the same message with `-m`, which made the commit. Seen again at the 0.2.0 commit (855302b), made after the same failure, when the lessons check was skipped before the commit.
 - Status: promoted to PLAYBOOK "Committing"
