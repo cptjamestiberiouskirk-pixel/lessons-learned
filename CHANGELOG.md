@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The whole-file budget of `LESSONS.md` is 24,000 tokens, up from 16,000. Sessions read lessons through a lookup and `--section`, which keep their budgets of 2,000 and 1,500 tokens, so the file budget mostly warns about a whole-file read. A `Budget:` line still changes it. Its warning, and the one for `--all`, now say to raise the budget by its key (`Budget: lessons <tokens>`), not to shorten Evidence or close lessons, which keeps entries and makes the file larger.
 - A section's lessons are the ones whose Status names it, so a section needs no `From:` line and `--check` no longer asks for one. A `From:` line a repo has may stay, and `--check` still checks that each name on it is a lesson promoted to that section, or it may be removed. Without Node, a search of `LESSONS.md` for `promoted to PLAYBOOK "<section>"` finds a section's lessons. The playbook template's steps 3, 5 and 6 no longer mention a `From:` line, except to remove a closed lesson from one that is left. This repo's `PLAYBOOK.md` drops its 13 `From:` lines, 575 words.
 - `dev/lessons.mjs --section <number>` prints a PLAYBOOK section's steps, then the rules of the lessons promoted into it, so step 3 of the lessons check reads one section and its rules in one call, not the whole playbook. A lookup prints each section's number, and step 3 gives the number, never the section's name, which is repo text a shell could run. A person may give a name, in any case. A lookup that names a section points to `--section` on one line. Past the section budget (1,500 tokens) it says so.
 

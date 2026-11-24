@@ -265,11 +265,23 @@ test('a silenced finding is counted, and --lint --all lists it with its reason',
   }
 });
 
+// The user, 2026-11-24: a log past its budget gets a higher budget, not
+// shorter Evidence, so the warning never advises cutting Evidence.
+// Review round 7: promoting or closing a lesson makes the file larger, so the
+// two whole-file warnings advise only a higher budget, by its key.
+test('a log past its budget is told to raise it by its key, never to shorten Evidence or close lessons', () => {
+  const dir = folder({'LESSONS.md': '# LESSONS\n\nBudget: lessons 10, all 10\n\n## 2026-01-02: Saving broke\n- What went wrong: w\n- Why: c\n- Rule going forward: save twice\n- Evidence: e\n- Status: open\n', 'PLAYBOOK.md': '# PLAYBOOK\n'});
+  const r = run(['--lint'], dir);
+  assert.match(r.out, /LESSONS\.md is about \d+ tokens, over its budget of 10: raise it with a "Budget: lessons <tokens>" line in LESSONS\.md's header/);
+  assert.match(r.out, /--all prints about \d+ tokens, over its budget of 10: raise it with a "Budget: all <tokens>" line in LESSONS\.md's header/);
+  assert.doesNotMatch(r.out, /shorten Evidence|close lessons|promote second/);
+});
+
 test('--doctor adds the summary of the whole log', () => {
   const dir = folder({'LESSONS.md': '# LESSONS\n', 'PLAYBOOK.md': '# PLAYBOOK\n'});
   const r = run(['--doctor'], dir);
   assert.equal(r.code, 0);
-  assert.match(r.out, /^-- doctor: 0 lessons: 0 open, 0 promoted, 0 closed, 0 bad; LESSONS\.md about \d+ tokens \(budget 16000\), --all about \d+ \(budget 6000\)$/m);
+  assert.match(r.out, /^-- doctor: 0 lessons: 0 open, 0 promoted, 0 closed, 0 bad; LESSONS\.md about \d+ tokens \(budget 24000\), --all about \d+ \(budget 6000\)$/m);
 });
 
 test('flags that do not go together are a usage error', () => {

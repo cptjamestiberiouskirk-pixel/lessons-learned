@@ -58,7 +58,7 @@
 // LESSONS.md's header (the text above the first entry) can hold two settings:
 //   Rule files: CLAUDE.md, AGENTS.md, docs/RULES.md   more files --lint reads
 //                (CLAUDE.md and AGENTS.md at the root are read when present)
-//   Budget: lookup 2000, all 6000, lessons 16000, section 1500   in tokens
+//   Budget: lookup 2000, all 6000, lessons 24000, section 1500   in tokens
 //
 // --dir <folder> reads LESSONS.md and PLAYBOOK.md from that folder instead of the
 // repo root (for trying the script on a sample log). --stale and --lint look for
@@ -93,7 +93,7 @@ const MAX_LINT_LINE = 4000; // characters of a line the content rules read
 const MAX_RULE_FILES = 20; // rule files --lint reads
 const MAX_RULE_BYTES = 1024 * 1024; // bytes of one rule file
 // Token budgets, estimated at 4 bytes a token.
-const BUDGET = {lookup: 2000, all: 6000, lessons: 16000, section: 1500};
+const BUDGET = {lookup: 2000, all: 6000, lessons: 24000, section: 1500};
 const tokens = (text) => Math.ceil(Buffer.byteLength(text, 'utf8') / 4);
 
 // Characters that can hide or disguise text: controls (Cc), format characters
@@ -1602,9 +1602,12 @@ export function lintReport(log, {leads = false} = {}) {
   const {budget} = log.settings;
   const allTokens = tokens(allReport(log).join('\n'));
   const sizes = {lessons: {tokens: log.lessonsTokens, budget: budget.lessons}, all: {tokens: allTokens, budget: budget.all}, sections: []};
-  const advice = 'close lessons whose rules no longer hold, promote second sightings, and shorten Evidence';
-  if (log.lessonsTokens > budget.lessons) push('LESSONS.md', 0, {rule: 'size-budget', message: `LESSONS.md is about ${log.lessonsTokens} tokens, over its budget of ${budget.lessons}: ${advice}`});
-  if (allTokens > budget.all) push('LESSONS.md', 0, {rule: 'size-budget', message: `--all prints about ${allTokens} tokens, over its budget of ${budget.all}: ${advice}`});
+  // Promoting or closing a lesson keeps its entry and adds to its Status, so
+  // only a higher budget clears these two. Sessions read the log through a
+  // lookup and --section, which keep budgets of their own.
+  const advice = (key) => `raise it with a "Budget: ${key} <tokens>" line in LESSONS.md's header`;
+  if (log.lessonsTokens > budget.lessons) push('LESSONS.md', 0, {rule: 'size-budget', message: `LESSONS.md is about ${log.lessonsTokens} tokens, over its budget of ${budget.lessons}: ${advice('lessons')}`});
+  if (allTokens > budget.all) push('LESSONS.md', 0, {rule: 'size-budget', message: `--all prints about ${allTokens} tokens, over its budget of ${budget.all}: ${advice('all')}`});
   const bySection = new Map();
   for (const r of log.rows) if (r.section) bySection.set(r.section, (bySection.get(r.section) || 0) + Buffer.byteLength(r.text, 'utf8') + 1);
   for (const [section, bytes] of bySection) {
