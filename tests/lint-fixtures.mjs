@@ -73,6 +73,21 @@ export const FIXTURES = [
     fires: [{rule: 'stale-path', severity: 'error', file: 'LESSONS.md'}, {rule: 'stale-path', severity: 'warning', file: 'LESSONS.md'}],
     count: {'stale-path': 2},
   },
+  {
+    // Two other repos' lessons quote git's names: what `git ls-files --eol`
+    // prints, and a remote's ref. Each holds a '/', and none is a file.
+    name: 'git\'s own names in a rule and in Evidence are not file names',
+    source: 'shape',
+    files: repo(lesson({rule: 'Before a commit, `git ls-files --eol <file>` shows `w/crlf` or `w/lf` and `i/lf`, not `w/mixed`. Compare with `origin/HEAD` and `refs/heads/main`.', evidence: '`w/mixed` before the fix, `upstream/main` after'})),
+    quiet: ['stale-path'],
+  },
+  {
+    name: 'a file with an extension under a folder named like git\'s is still a file',
+    source: 'hand',
+    files: repo(lesson({rule: 'read `w/crlf.txt` and `origin/notes.md` first'})),
+    fires: [{rule: 'stale-path', severity: 'error', file: 'LESSONS.md'}],
+    count: {'stale-path': 2},
+  },
   {name: 'a closed lesson is not linted', source: 'hand', files: repo(lesson({why: F9_PIPE_BEFORE, evidence: '`old/gone.txt`, and the session transcript 0b5c2a4e-1d2f-4a6b-9c8d-7e6f5a4b3c2d.jsonl', status: 'closed: the tool enforces it now'})), quiet: ['unsettled-label', 'stale-path', 'unopenable-evidence']},
   {
     name: 'evidence in a session transcript',
