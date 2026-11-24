@@ -4,6 +4,37 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
+## Unreleased: a section's lessons from Status, and --section (Q40, Q41)
+
+Base: 4b98e11 (PR 15's head; PR 15 was open and CLEAN when this began, not merged). From lip-service's growth research, 2026-11-23.
+
+- **Q40, how existing `From:` lines are handled:** kept as optional and checked if present. `--check` no longer asks a promoted lesson's section for a `From:` line (the lesson's half of the two-way match). A `From:` line that is there is still checked: each name must be a lesson promoted to that section. So all five repos pass `--check` with no edit (measured), and a repo may remove its `From:` lines. Making a `From:` line an error was ruled out, since every repo that has one would fail `--check` until edited. Migrating them was not needed.
+- **A reader without Node** finds a section's lessons by searching `LESSONS.md` for `promoted to PLAYBOOK "<section>"`. Template step 5 says so.
+- **Q41:** `--section "<name>"` prints the section's steps (its `From:` line left out), then the rules of the lessons whose Status names it, newest first. The name may differ in case. It prints at most 300 lines of the section and 50 lessons, and a size-budget line past the section budget. A lookup that names a section adds one line pointing at `--section`.
+- **Sizes, measured 2026-11-24:** `From:` lines are 575 words of this repo's PLAYBOOK.md (16.8%), 359 in lip-service (19.9%), 171 in Deep Belt (15.9%), 13 in performance-monitor, 0 in performance-factory. `--section` on every section of the five repos is at most 1,469 tokens (this repo's "The lessons check", remeasured after review round 1), all within the 1,500 budget, so 31 tokens are left there.
+- **This repo:** its 13 `From:` lines are removed, and its "The lessons check" steps 3, 5 and 6 match the template's.
+- **`tests/lessons.test.mjs` never read `LESSONS_SCRIPT`:** every fail-before run of it ran the new script. It reads it now; the fingerprint and copy tests still read the template.
+- **Mutants:** 13 (scratch `q40/mutants.mjs`), 12 killed. `section-with-words` survives and is equivalent: a word before `--section` already sets the mode to words.
+- **Review round 1** (two reviewers, 2026-11-24). All CONFIRMED by a probe, all fixed, each with a test that fails on the round's starting copy (scratch `q40/review1/state`) or kills a mutant of it:
+  - The gate counted `--section <name>` as a lookup, since a name has no dash. It now skips the name. SECURITY.md says so.
+  - Trimming a section's leading blank lines with `shift()` was quadratic: 200,000 blank lines took about 3 s. It trims by index now. The timing test failed 5 of 5 runs on the `shift()` version (scratch `q40/make-slow.mjs`).
+  - A step line that starts `From: ` but names no lesson was dropped. Only a `From:` line that names lessons is left out now.
+  - A second section with the same name was not printed; both are now.
+  - A name that matches two sections by case only said "no section". It now says why.
+  - A name that starts with `-` can't be given, since the parser reads it as a flag. Documented in the code; no section in the five repos starts with one.
+  - Reviewer B's 5 surviving mutants (a case match taken from two, a `From:` line in a code block dropped, the name untrimmed, the format-problem line dropped, a `Budget: section` setting ignored) are killed by a new test. With the round's fixes undone as mutants, 8 of 8 are killed (scratch `q40/mutants-r1.mjs`).
+  - The plugin README still said `--check` asks a section to name its lessons, and its example lookup lacked the `--section` line. Both fixed, and `--section` is described there.
+  - The skills' upgrade note now says setup leaves `From:` lines, removing one is safe, and one that stays lists only lessons promoted before this release.
+  - The largest `--section` output is 1,469 tokens, not 1,425: this repo's PLAYBOOK grew during the work.
+- **Review round 2** (one reviewer, on the round 1 fixes):
+  - CONFIRMED, fixed: a `From:` line that names a lesson and holds other text (`From: <name>. Also: never push on Fridays.`) was left out of `--section` whole, and `--check` passed. Now only a line of names alone is left out. The test fails on the round 2 state. The 18 `From:` lines in lip-service, Deep Belt and performance-monitor are all names alone, so `--section` still leaves each one out (measured).
+  - CONFIRMED, left as is: the gate counts `--section Committing save test` as a lookup, though the script prints its usage and exits 2. `--check save` already does the same: the gate counts topic words and does not run the script. **RS-A-gate-usage** (low): a lookup the script refuses still satisfies the gate.
+  - Fail-before for the gate test: the round 1 hook's FINGERPRINT doesn't match the new template, so that run fails on its first command, for the wrong reason. With only the fingerprint patched (scratch `q40/review2/probes/oldgate/`), it fails on `--section "The lessons check"`, as it should.
+  - INFERRED, noted: only a fence of three backticks counts as a code block, so a `From:` line inside `~~~` is read as a real one. `--check` and `--section` agree on it.
+- **Review round 3** (one reviewer, on the round 2 fix only): nothing CONFIRMED wrong, so the rounds stop here. A line of names alone written with `And`, `&`, parentheses, backticks or a colon is printed by `--section`, which costs a few tokens and drops nothing; none of the 27 real `From:` lines in the five repos uses those forms. Real text written as a quoted dated name is still left out, but `--check` exits 1 on it. The shared `g` regex is safe in `matchAll` then `replace`, and an 8.7 MB line of names loads in about 420 ms, growing linearly.
+- **LESSONS.md is at 15,993 of its 16,000 token budget.** To make room, the Evidence of several promoted lessons was shortened to a search of the file that holds it (for example the 0.2.1 session briefs, now a search of REVIEW.md). No rule or cause was changed.
+- **RS-A-hardpath** (INFERRED, read from code, found in round 1): the lookup's `--section` line and `problemsLine` name `dev/lessons.mjs`. A repo that moved the script, which the skill allows, sees the wrong path. This predates Q41, which adds one more such line. Left for a later release.
+
 ## Unreleased: --leads and --pairs (phase 3)
 
 Base: 7d59289 (PR 14's head). Plan: `lessons-defense-plan.md` revision 5, items 3, 5 and 6. The claims it rests on were settled first, read only: the Deep Belt "after" text is committed now, and performance-factory's rule files are untracked. A recorded parallel owner wasn't found in performance-factory, so nothing is built on it.

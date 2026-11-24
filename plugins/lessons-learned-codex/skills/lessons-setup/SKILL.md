@@ -8,8 +8,8 @@ description: Add a lessons-learned log (LESSONS.md) and a playbook of checklists
 This sets up the lessons check in the current repo. It has five parts:
 
 1. **`LESSONS.md`** at the repo root: a dated log, newest first. Each entry is `## YYYY-MM-DD: short title` followed by the fields `What went wrong`, `Why`, `Rule going forward`, `Evidence`, `Status`, in that order. Status is `open`, `promoted to PLAYBOOK "<section>"` or `closed: <why the rule no longer holds>`. Entries are never deleted.
-2. **`PLAYBOOK.md`** at the repo root: checklists for the project's recurring work. Its first section, "The lessons check", lists the steps a session runs before each significant step. Its second, "Checking your work", lists what a session runs and reports before it calls a change done or commits it. Every later section has a `From:` line naming the lessons it came from.
-3. **`dev/lessons.mjs`**: finds lessons by topic, checks the format of both files, and lists lessons whose evidence names a file that is gone or no longer holds the text it quotes, and a file it didn't check or search, with the reason. It reads and never writes.
+2. **`PLAYBOOK.md`** at the repo root: checklists for the project's recurring work. Its first section, "The lessons check", lists the steps a session runs before each significant step. Its second, "Checking your work", lists what a session runs and reports before it calls a change done or commits it. Every later section is built from lessons, and a lesson's Status names its section.
+3. **`dev/lessons.mjs`**: finds lessons by topic, prints a section's steps with the rules of the lessons promoted into it, checks the format of both files, and lists lessons whose evidence names a file that is gone or no longer holds the text it quotes, and a file it didn't check or search, with the reason. It reads and never writes.
 4. **One entry-point line** in the file agents read at session start (`AGENTS.md`, which Codex reads, or `CLAUDE.md`), pointing at "The lessons check".
 5. **Exclusion from what ships**: both files and the script stay out of whatever the project builds, packages or releases.
 
@@ -33,7 +33,7 @@ To tell whether a repo's `dev/lessons.mjs` is this plugin's version, run this fr
 node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha256').update(f.readFileSync('dev/lessons.mjs','utf8').replace(/\r\n/g,'\n')).digest('hex'))"
 ```
 
-This plugin's version prints `52709c9195e82c1a14932ffd2bed7cd60b6e446ee2317221e51f8ecd5ca78486`. For a script kept in another folder, change the path in the command.
+This plugin's version prints `2beaffe8680691c3418a46ea6802a208b70e0beb0a7890fd05b050b2aa221a8e`. For a script kept in another folder, change the path in the command.
 
 Earlier releases of this plugin print these:
 
@@ -51,7 +51,7 @@ Any other value is a script changed after it was copied, or one from somewhere e
 
 For a repo whose script is an earlier release. Each line is what that step brought.
 
-- **0.4.0 to this release:** the script's `--lint` also reads a promoted lesson's rule, since step 3 now has a session follow it. It has `--leads`, warnings that compare the words of rules and steps: a lesson a step may already cover, two open lessons with one rule, a lesson that looks filed in the wrong section, pasted tool output in Evidence, and a cause stated with no label. It also has `--pairs`, which lists rule pairs that may pull in opposite directions, for a review. The playbook template's step 5 makes lessons that share a rule one short step that names them on its `From:` line and wins where they conflict. Step 3 reads those lessons' rules for their details, and step 6 removes the parts of a step that came only from a closed lesson.
+- **0.4.0 to this release:** the script's `--lint` also reads a promoted lesson's rule, since step 3 now has a session follow it. It has `--leads`, warnings that compare the words of rules and steps: a lesson a step may already cover, two open lessons with one rule, a lesson that looks filed in the wrong section, pasted tool output in Evidence, and a cause stated with no label. It also has `--pairs`, which lists rule pairs that may pull in opposite directions, for a review. The playbook template's step 5 makes lessons that share a rule one short step that wins where they conflict. Step 3 reads those lessons' rules for their details with `--section "<name>"`, which prints a section's steps and the rules of the lessons whose Status names it, and step 6 removes the parts of a step that came only from a closed lesson. A section needs no `From:` line: `--check` no longer asks for one. Setup leaves a repo's `From:` lines as they are, and removing one is safe. One that stays lists only the lessons promoted before this release, since step 5 no longer adds to it, and `--check` still checks each name on it.
 - **0.3.1 to 0.4.0:** the script has `--lint` and `--doctor`, which find rules a session may not be able to follow and a lookup over its size budget. The playbook template's "Limit:" line says what the lessons gate checks.
 - **0.3.0 to 0.3.1:** the script reads each file through one handle and refuses one swapped while it is read. The playbook template's step 6 says that `--stale` also names a file it didn't check. The lessons template says a search text is on one line.
 - **0.2.1 to 0.3.0:** the script has `--stale`, which lists lessons whose evidence names a file that is gone. The playbook template has step 5's reviewer and step 6's `--stale` run. The lessons template says what makes a good entry, and shows the `Evidence` form `--stale` reads.

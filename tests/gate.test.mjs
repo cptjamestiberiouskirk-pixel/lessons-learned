@@ -189,9 +189,9 @@ test('a line written in the same message as the edit passes', () => {
   assert.equal(edit(root, (t) => t.lookup(), {before: [LINE]}).deny, false);
 });
 
-test('a lookup with only --check, --stale or --all is not a lookup', () => {
+test('a lookup with only --check, --stale, --all or --section is not a lookup', () => {
   const root = makeRepo();
-  for (const cmd of ['node dev/lessons.mjs --check', 'node dev/lessons.mjs --stale', 'node dev/lessons.mjs --all', 'node dev/lessons.mjs --dir x --check 2>&1']) {
+  for (const cmd of ['node dev/lessons.mjs --check', 'node dev/lessons.mjs --stale', 'node dev/lessons.mjs --all', 'node dev/lessons.mjs --dir x --check 2>&1', 'node dev/lessons.mjs --section "The lessons check"', 'node dev/lessons.mjs --section Committing', 'node dev/lessons.mjs --dir . --section Committing']) {
     const r = edit(root, (t) => t.newMessage().text(LINE).call('toolu_l', 'Bash', {command: cmd}));
     assert.equal(r.deny, true, cmd);
   }
