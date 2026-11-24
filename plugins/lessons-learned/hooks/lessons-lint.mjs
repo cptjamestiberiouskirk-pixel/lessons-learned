@@ -25,6 +25,7 @@ const MAX_ROOTS = 4; // repos one edit is linted in
 const MAX_EDITS = 100; // edits of one MultiEdit read for new lesson headings
 const MAX_EDIT_TEXT = 1024 * 1024; // characters of an edit's text read for headings
 const MAX_PAIRS = 100000; // renamed and added headings compared; past that, no leads
+const MAX_TITLE_WORDS = 64; // words of a heading's title compared
 const MAX_LINES = 10; // lines the agent is told, the first one included
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
 const CODEX_EDIT = 'apply_patch';
@@ -170,8 +171,9 @@ function patchHeadings(patch) {
 
 // The headings the edit added that are new lessons. A heading added and also
 // removed moves or edits a lesson. A heading removed and not added back was
-// renamed: it takes an added heading of the same title (a date fixed, or a
-// lesson deleted and added again under another date), or else the one of its
+// renamed: it takes the added heading of the same title (a date fixed, or a
+// lesson deleted and added again under another date; two of them make the
+// leads unknown), or else the one of its
 // date with the most title words in common (a title fixed). When one of its
 // date is left but none shares a word, or two tie, which one is new isn't
 // known: null, no leads. It is null past MAX_PAIRS comparisons too, which
@@ -179,7 +181,7 @@ function patchHeadings(patch) {
 // date left was a lesson deleted.
 function newKeys(added, removed) {
   const split = (k) => [k.slice(0, 10), k.slice(12, -1)];
-  const words = (t) => new Set(t.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const words = (t) => new Set(t.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean).slice(0, MAX_TITLE_WORDS));
   const fresh = new Set();
   const byTitle = new Map();
   const byDate = new Map();
@@ -195,8 +197,9 @@ function newKeys(added, removed) {
   const left = [];
   for (const g of removed) {
     if (added.has(g)) continue;
-    const twin = byTitle.get(split(g)[1])?.pop();
-    if (twin) fresh.delete(twin);
+    const twins = byTitle.get(split(g)[1]) ?? [];
+    if (twins.length > 1) return null;
+    if (twins.length) fresh.delete(twins.pop());
     else left.push(g);
   }
   let pairs = 0;

@@ -235,6 +235,44 @@ test('a renamed heading that shares no word with the one added of its date makes
   assert.deepEqual(leadsOf(r), [], r.context);
 });
 
+// Review round 4's probes T1 and T2: X's date is fixed (01-15 to 01-05) and a
+// new lesson N with X's exact title is added, above X or below it. Which of
+// the two is new isn't known, so neither is told. Taking the first or the
+// last twin each tells the wrong one in one order.
+test('a fixed date whose title two added headings share makes the leads unknown', () => {
+  const title = 'Shipped a build with failing tests';
+  const x = entry('2026-01-05', title, {rule: RULE});
+  const y = entry('2026-01-03', 'Pushed with lint errors', {rule: RULE2});
+  const older = entry('2026-01-02', 'Released without the tests', {rule: RULE});
+  for (const date of ['2026-01-06', '2026-01-04']) {
+    const n = entry(date, title, {rule: RULE2});
+    const above = date > '2026-01-05';
+    const root = makeRepo({entries: above ? [n, x, y, older] : [x, n, y, older]});
+    const added = above ? `${n}## 2026-01-05: ${title}` : `## 2026-01-05: ${title}\n${n}`;
+    const r = editOf(root, 'LESSONS.md', `## 2026-01-15: ${title}`, added);
+    assert.deepEqual(leadsOf(r), [], `N on ${date}: ${r.context}`);
+  }
+});
+
+test('title words are Unicode letters, each counted once', () => {
+  const y = entry('2026-01-03', 'Pushed with lint errors', {rule: RULE2});
+  const older = entry('2026-01-02', 'Released without the tests', {rule: RULE});
+  // Probe cyr.mjs: a Cyrillic title's typo fixed, and a new Cyrillic lesson.
+  const cx = entry('2026-01-05', 'Сборка упала без тестов', {rule: RULE});
+  const cn = entry('2026-01-05', 'Новый урок про линтер', {rule: RULE2});
+  const cyr = makeRepo({entries: [cn, cx, y, older]});
+  const c = leadsOf(editOf(cyr, 'LESSONS.md', '## 2026-01-05: Сборка упала без тетсов', `${cn}## 2026-01-05: Сборка упала без тестов`));
+  assert.equal(c.length, 1, c.join('\n') || 'no leads');
+  assert.match(c[0], /Pushed with lint errors/);
+  // Probe D1: "build" three times in the new title is one shared word, not a tie.
+  const bx = entry('2026-01-05', 'Build failed on push', {rule: RULE});
+  const bn = entry('2026-01-05', 'Build build build again', {rule: RULE2});
+  const dup = makeRepo({entries: [bn, bx, y, older]});
+  const d = leadsOf(editOf(dup, 'LESSONS.md', '## 2026-01-05: Build build failed on psh', `${bn}## 2026-01-05: Build failed on push`));
+  assert.equal(d.length, 1, d.join('\n') || 'no leads');
+  assert.match(d[0], /Pushed with lint errors/);
+});
+
 // Timing tests compare growth (PLAYBOOK "Writing a timing test"): the full
 // input against a quarter of it, past the fixed cost of one heading, best of
 // three. Fails on f3e3d8d's hook, whose newKeys compared every renamed
@@ -251,6 +289,28 @@ test('time: an edit full of renamed headings of one date is read in linear time'
   const base = best(run(1));
   const a = best(run(2_000));
   const b = best(run(8_000));
+  const ratio = Math.max(0, b - base) / Math.max(20, a - base);
+  const shown = `quarter ${Math.round(a)} ms, full ${Math.round(b)} ms, fixed cost ${Math.round(base)} ms, ratio past it ${ratio.toFixed(1)}`;
+  t.diagnostic(shown);
+  assert.ok(ratio < 8, shown);
+});
+
+// Review round 4's ghost shape: n added headings, each taken by a twin of
+// another date, then n removed headings of their date that find only those.
+// Fails on a mutant of 4de7315 that counts a comparison only for a candidate
+// still free (`++pairs` after the fresh check): it walks n taken ones each.
+test('time: removed headings whose date holds only taken candidates are read in linear time', (t) => {
+  const {root} = oldPair();
+  const run = (n) => () => {
+    const list = (f) => Array.from({length: n}, (_, i) => f(i)).join('\n');
+    const start = performance.now();
+    editOf(root, 'LESSONS.md', `${list((i) => `## 2026-02-05: t${i}`)}\n${list((i) => `## 2026-01-05: q${i}`)}`, list((i) => `## 2026-01-05: t${i}`));
+    return performance.now() - start;
+  };
+  const best = (f) => Math.min(f(), f(), f());
+  const base = best(run(1));
+  const a = best(run(4_000));
+  const b = best(run(16_000));
   const ratio = Math.max(0, b - base) / Math.max(20, a - base);
   const shown = `quarter ${Math.round(a)} ms, full ${Math.round(b)} ms, fixed cost ${Math.round(base)} ms, ratio past it ${ratio.toFixed(1)}`;
   t.diagnostic(shown);
