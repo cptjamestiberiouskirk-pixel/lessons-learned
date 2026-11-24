@@ -39,6 +39,9 @@ Earlier releases of this plugin print these:
 - 0.2.1: `ec55848c3c07540568dd52be8e0a2cba47408f153490ae7976b9cd591333e455`
 - 0.3.0: `ae8257c08a861066ec1bc5c4eca66b88e4a3e44ba68bde7c17111964041a1622`
 - 0.3.1: `86d3cd28d4d1cbb16eeb04e21fc9bbe542cc86ac1326c03d84deb09f8e5d04ea`
+- 0.4.0: `909da94a2c53a0b0e46aa7d34e4d3e483bb080d4a822a37a94248400cf39881a`
+
+A value that is this plugin's and a release's too is this plugin's version: report it as present.
 
 Any other value is a script changed after it was copied, or one from somewhere else.
 
@@ -46,7 +49,8 @@ Any other value is a script changed after it was copied, or one from somewhere e
 
 For a repo whose script is an earlier release. Each line is what that step brought.
 
-- **0.3.1 to this release:** the script has `--lint` and `--doctor`, which find rules a session may not be able to follow and a lookup over its size budget. The playbook template's "Limit:" line says what the lessons gate checks.
+- **0.4.0 to this release:** nothing yet: the script and the templates are as in 0.4.0.
+- **0.3.1 to 0.4.0:** the script has `--lint` and `--doctor`, which find rules a session may not be able to follow and a lookup over its size budget. The playbook template's "Limit:" line says what the lessons gate checks.
 - **0.3.0 to 0.3.1:** the script reads each file through one handle and refuses one swapped while it is read. The playbook template's step 6 says that `--stale` also names a file it didn't check. The lessons template says a search text is on one line.
 - **0.2.1 to 0.3.0:** the script has `--stale`, which lists lessons whose evidence names a file that is gone. The playbook template has step 5's reviewer and step 6's `--stale` run. The lessons template says what makes a good entry, and shows the `Evidence` form `--stale` reads.
 - **0.2.0 to 0.2.1:** `--check` needs far less memory for a playbook with many bad `From:` names. The templates didn't change.
