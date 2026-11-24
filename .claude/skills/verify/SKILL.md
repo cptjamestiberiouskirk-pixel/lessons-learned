@@ -24,7 +24,7 @@ The script is `plugins/lessons-learned/templates/lessons.mjs`, with its copies i
 Run it end to end, as `PLAYBOOK.md` "Changing the setup skill or templates" says. Each turn counts against the signed-in account: its plan's usage, or a charge with an API key. The CLI's cost for a turn is roughly $0.30 to $1, an estimate on a plan.
 
 - Claude Code: `pwsh -File dev/e2e/make-test-repos.ps1 -Root <new temp folder>`, then `dev/e2e/run-setup.ps1` on `node-app` (two turns: the plan, then "Go ahead."), and on any test repo whose case the change touches.
-- Codex: reinstall the plugin so its cache has the change (`codex plugin remove lessons-learned-codex@lessons-learned-codex`, then `codex plugin add lessons-learned-codex@lessons-learned-codex`), then `pwsh -File dev/e2e/run-live.ps1 -Tool codex -Repo <temp folder>/node-app -Log <temp folder>/codex.jsonl -Prompt '<the setup request>'` on a fresh `node-app`.
+- Codex: reinstall the plugin from this checkout so its cache has the change (`codex plugin remove lessons-learned-codex@lessons-learned-codex`, then `codex plugin add lessons-learned-codex@lessons-learned-codex`, each with the `-c` pair from `dev/e2e/README.md`), then `pwsh -File dev/e2e/run-live.ps1 -Tool codex -Marketplace . -Repo <temp folder>/node-app -Log <temp folder>/codex.jsonl -Prompt '<the setup request>'` on a fresh `node-app`, and `-Resume <thread id>` for the second turn. Without `-Marketplace`, `codex exec` puts the released copy back when it starts. Check that the run printed the version under test as installed. Afterwards, reinstall without `-c`.
 - Check each repo afterwards, not only the session's reply: `git status`, `node dev/lessons.mjs --check`, and the fingerprint command in the skill.
 
 ## 4. Report
