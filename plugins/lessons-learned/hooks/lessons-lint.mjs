@@ -136,7 +136,8 @@ function headings(text, keys, prefix = '') {
 const noHeadings = () => ({added: new Set(), removed: new Set(), known: false});
 
 // The headings a patch adds and removes, by the name of the file whose header
-// they follow. A deleted file adds none.
+// they follow. A deleted file adds none. An added file replaces the whole
+// file, as a Write does, so its headings are not known to be new.
 function patchHeadings(patch) {
   const bodies = new Map();
   if (patch.length > MAX_EDIT_TEXT) return new Map();
@@ -147,16 +148,17 @@ function patchHeadings(patch) {
       const name = m[1].trim();
       if (/^\s*\*\*\* Delete File:/.test(raw)) body = null;
       else {
-        if (!bodies.has(name)) bodies.set(name, []);
+        if (!bodies.has(name)) bodies.set(name, {lines: [], whole: false});
         body = bodies.get(name);
+        if (/^\s*\*\*\* Add File:/.test(raw)) body.whole = true;
       }
       continue;
     }
-    if (body) body.push(raw);
+    if (body) body.lines.push(raw);
   }
   const out = new Map();
-  for (const [name, lines] of bodies) {
-    const h = {added: new Set(), removed: new Set(), known: true};
+  for (const [name, {lines, whole}] of bodies) {
+    const h = {added: new Set(), removed: new Set(), known: !whole};
     const text = lines.join('\n');
     headings(text, h.added, '+');
     headings(text, h.removed, '-');
@@ -165,17 +167,35 @@ function patchHeadings(patch) {
   return out;
 }
 
-// The headings the edit added that are new lessons: not also removed, which
-// moves or edits a lesson, and not a removed heading renamed. A heading the
-// edit removed and didn't add back takes one added heading of its date with it.
+// The headings the edit added that are new lessons. A heading added and also
+// removed moves or edits a lesson. A heading removed and not added back was
+// renamed: it takes an added heading of the same title (a date fixed), or
+// else the one of the same date with the most title words in common (a title
+// fixed). When two tie for it, which one is new isn't known: null, no leads.
 function newKeys(added, removed) {
-  const gone = [...removed].filter((k) => !added.has(k)).map((k) => k.slice(0, 10));
-  const fresh = new Set();
-  for (const k of added) {
-    if (removed.has(k)) continue;
-    const i = gone.indexOf(k.slice(0, 10));
-    if (i >= 0) gone.splice(i, 1);
-    else fresh.add(k);
+  const split = (k) => [k.slice(0, 10), k.slice(12, -1)];
+  const words = (t) => t.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const fresh = new Set([...added].filter((k) => !removed.has(k)));
+  const left = [];
+  for (const g of [...removed].filter((k) => !added.has(k))) {
+    const twin = [...fresh].find((k) => split(k)[1] === split(g)[1]);
+    if (twin) fresh.delete(twin);
+    else left.push(g);
+  }
+  for (const g of left) {
+    const [date, title] = split(g);
+    const had = new Set(words(title));
+    let best = -1;
+    let picks = [];
+    for (const k of fresh) {
+      const [d, t] = split(k);
+      if (d !== date) continue;
+      const n = words(t).filter((w) => had.has(w)).length;
+      if (n > best) [best, picks] = [n, [k]];
+      else if (n === best) picks.push(k);
+    }
+    if (picks.length > 1) return null;
+    if (picks.length) fresh.delete(picks[0]);
   }
   return fresh;
 }
@@ -266,7 +286,7 @@ async function main() {
     if (!files.size) continue;
     for (const f of lint.lintReport(log).findings) if (files.has(f.file)) (f.severity === 'error' ? errors : warnings).push(f);
     // The lessons the edit added: leads for them, and for no other lesson.
-    const keys = known && files.has('LESSONS.md') ? newKeys(added, removed) : new Set();
+    const keys = (known && files.has('LESSONS.md') && newKeys(added, removed)) || new Set();
     const fresh = log.entries.filter((e) => keys.has(e.key));
     if (!fresh.length) continue;
     const spans = fresh.map((e) => [e.line, Math.max(e.line, ...e.lines.map((l) => l.n), ...e.ignores.map((l) => l.n))]);

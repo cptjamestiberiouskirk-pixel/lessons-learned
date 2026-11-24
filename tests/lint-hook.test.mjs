@@ -192,6 +192,57 @@ test('a heading renamed in an edit is not a new lesson, and one added above a le
   assert.match(r.context ?? '', /^WARN  second-sighting LESSONS\.md:\d+ /m, r.out || 'nothing printed');
 });
 
+// Review round 2's probes: a new lesson and a renamed one in the same edit.
+const RULE2 = 'run the linter on each changed file before each push';
+function renameRepo() {
+  const older = entry('2026-01-02', 'Released without the tests', {rule: RULE});
+  const y = entry('2026-01-03', 'Pushed with lint errors', {rule: RULE2});
+  const x = entry('2026-01-05', 'Shipped a build with failing tests', {rule: RULE});
+  const fresh = entry('2026-01-05', 'Pushed without the lint', {rule: RULE2});
+  // The file as it is after the edit: the new lesson above X, X's heading fixed.
+  return {root: makeRepo({entries: [fresh, x, y, older]}), fresh};
+}
+const leadsOf = (r) => (r.context ?? '').split('\n').filter((l) => /second-sighting|dup-rule/.test(l));
+
+test('a new lesson added in the edit that renames another of its date keeps its lead', () => {
+  const {root, fresh} = renameRepo();
+  const typo = NEWER.replace('failing', 'failin');
+  const check = (r) => {
+    const leads = leadsOf(r);
+    assert.equal(leads.length, 1, r.out || 'nothing printed');
+    assert.match(leads[0], /overlaps the open lesson 2026-01-03 "Pushed with lint errors"/);
+  };
+  // Probe A1: an Edit, the new lesson first.
+  check(editOf(root, 'LESSONS.md', typo, `${fresh}${NEWER}`));
+  // Probe C: a patch with two hunks.
+  const body = fresh.split('\n').map((l) => `+${l}`).join('\n');
+  check(patch(root, `*** Begin Patch\n*** Update File: LESSONS.md\n@@\n${body}\n@@\n-${typo}\n+${NEWER}\n*** End Patch\n`));
+  // Two added headings share as many words (2) with the removed one: which is
+  // new isn't known, so neither is told. The one with a lead comes second, so
+  // taking the first as the rename would tell it.
+  const twin = '## 2026-01-05: Pushed without the lint';
+  const other = '## 2026-01-05: Shipped the build';
+  assert.deepEqual(leadsOf(editOf(root, 'LESSONS.md', '## 2026-01-05: Pushed the build', `${other}\n${twin}`)), []);
+});
+
+test('a date fixed in a heading is not a new lesson', () => {
+  const {root} = oldPair();
+  const wrong = NEWER.replace('01-05', '01-15');
+  // Probe B: an Edit. Probe B2: a patch.
+  assert.deepEqual(leadsOf(editOf(root, 'LESSONS.md', wrong, NEWER)), []);
+  assert.deepEqual(leadsOf(patch(root, `*** Begin Patch\n*** Update File: LESSONS.md\n@@\n-${wrong}\n+${NEWER}\n*** End Patch\n`)), []);
+});
+
+test('a patch that adds LESSONS.md whole, or moves it away, names no leads', () => {
+  const {root} = oldPair();
+  const body = readFileSync(join(root, 'LESSONS.md'), 'utf8').split('\n').map((l) => `+${l}`).join('\n');
+  // Probe D1: Add File over the log. Probe D2: Delete File, then Add File.
+  assert.deepEqual(leadsOf(patch(root, `*** Begin Patch\n*** Add File: LESSONS.md\n${body}\n*** End Patch\n`)), []);
+  assert.deepEqual(leadsOf(patch(root, `*** Begin Patch\n*** Delete File: LESSONS.md\n*** Add File: LESSONS.md\n${body}\n*** End Patch\n`)), []);
+  // Probe F2: the log's text moved to docs/LESSONS.md.
+  assert.deepEqual(leadsOf(patch(root, `*** Begin Patch\n*** Update File: LESSONS.md\n*** Move to: docs/LESSONS.md\n@@\n+${NEWER}\n*** End Patch\n`)), []);
+});
+
 test('only the headings an edit adds to the repo\'s own LESSONS.md are new lessons', () => {
   const {root} = oldPair();
   // A patch adds the heading to docs/LESSONS.md and touches the root log.
