@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-24: The template's Limit paragraph was committed before its setup e2e
+- What went wrong: in phase 4, c3de3b9 changed the "Limit:" paragraph of the playbook template and was committed before any setup end-to-end run of that template. The run came after the commit. 476565c skipped the same run in Q40.
+- Why: the paragraph went in with the hook's docs, and was taken as a docs line, not a template change. CONFIRMED: the step 6 run had passed before the paragraph changed, and none ran between the change and the commit.
+- Rule going forward: any change to a file under `plugins/*/templates/`, a paragraph that isn't a step included, gets the setup e2e before the commit that holds it. Before staging, list the changed template files with `git status`.
+- Evidence: commit c3de3b9; `dev/release-state.md`, search "committed before its setup e2e"
+- Status: promoted to PLAYBOOK "Changing the setup skill or templates"
+
 ## 2026-11-24: LESSONS.md went past its budget, and Evidence was cut to fit
 - What went wrong: in Q40, LESSONS.md reached its 16,000 token budget, so the Evidence of several promoted lessons was shortened, and a new lesson put it over again. The user said to raise the budget instead.
 - Why: the user, from Q39's research (not recorded in this repo, not checked here): sessions read lessons through a lookup and `--section`, which keep their own budgets (2,000 and 1,500), so the whole-file budget capped a read no session makes.
