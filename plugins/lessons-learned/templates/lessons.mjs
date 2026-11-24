@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// lessons.mjs from the lessons-learned plugin, version 0.3.1.
+// lessons.mjs from the lessons-learned plugin, version 0.4.0.
 // Prints the rules in LESSONS.md for the lessons check in PLAYBOOK.md, and checks
 // the log's format. Reads LESSONS.md and PLAYBOOK.md (and, for --stale, the repo
 // files their evidence names) and writes nothing.
@@ -58,7 +58,7 @@ import {closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpath
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 export const USAGE =
   'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | --lint [--all] [--json] | --doctor [--all] [--json] | <word>...]';
 export const FIELDS = ['What went wrong', 'Why', 'Rule going forward', 'Evidence', 'Status'];
