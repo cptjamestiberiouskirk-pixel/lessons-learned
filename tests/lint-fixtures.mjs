@@ -61,15 +61,17 @@ export const FIXTURES = [
   {name: 'unsettled-label, before F9 (pwsh pipe)', source: 'real', files: repo(lesson({why: F9_PIPE_BEFORE})), fires: [{rule: 'unsettled-label', severity: 'warning', file: 'LESSONS.md'}]},
   {name: 'unsettled-label, after F9 (pwsh pipe): what was tried is recorded', source: 'real', files: repo(lesson({why: F9_PIPE_AFTER})), quiet: ['unsettled-label']},
   {
-    name: 'a promoted lesson\'s old rule text is not linted, only its Evidence',
+    // Its rule gives the step's details (PLAYBOOK "The lessons check", step 3),
+    // so a command it names that is gone is an error, as in an open lesson.
+    name: 'a promoted lesson\'s rule and Evidence are linted, not its Why',
     source: 'hand',
     files: repo(
-      lesson({why: F9_PIPE_BEFORE, rule: 'run `node dev/gone.mjs` first', evidence: '`old/gone.txt`', status: 'promoted to PLAYBOOK "Checking your work"'}),
+      lesson({why: F9_PIPE_BEFORE, rule: 'run `node dev/gone.mjs` before the tests', evidence: '`old/gone.txt`', status: 'promoted to PLAYBOOK "Checking your work"'}),
       '# PLAYBOOK\n\n## Checking your work\n\nFrom: 2026-01-02 "A lesson"\n\n1. Run the tests.\n',
     ),
     quiet: ['unsettled-label', 'format', 'from-mismatch'],
-    fires: [{rule: 'stale-path', severity: 'warning', file: 'LESSONS.md'}],
-    count: {'stale-path': 1},
+    fires: [{rule: 'stale-path', severity: 'error', file: 'LESSONS.md'}, {rule: 'stale-path', severity: 'warning', file: 'LESSONS.md'}],
+    count: {'stale-path': 2},
   },
   {name: 'a closed lesson is not linted', source: 'hand', files: repo(lesson({why: F9_PIPE_BEFORE, evidence: '`old/gone.txt`, and the session transcript 0b5c2a4e-1d2f-4a6b-9c8d-7e6f5a4b3c2d.jsonl', status: 'closed: the tool enforces it now'})), quiet: ['unsettled-label', 'stale-path', 'unopenable-evidence']},
   {

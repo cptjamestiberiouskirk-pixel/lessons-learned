@@ -33,7 +33,7 @@ To tell whether a repo's `dev/lessons.mjs` is this plugin's version, run this fr
 node -e "const c=require('crypto'),f=require('fs');console.log(c.createHash('sha256').update(f.readFileSync('dev/lessons.mjs','utf8').replace(/\r\n/g,'\n')).digest('hex'))"
 ```
 
-This plugin's version prints `909da94a2c53a0b0e46aa7d34e4d3e483bb080d4a822a37a94248400cf39881a`. For a script kept in another folder, change the path in the command.
+This plugin's version prints `41c5b4a18f69b16be990981f7ba286760bf722afa6624fbf2861d03460ec7a91`. For a script kept in another folder, change the path in the command.
 
 Earlier releases of this plugin print these:
 
@@ -51,7 +51,7 @@ Any other value is a script changed after it was copied, or one from somewhere e
 
 For a repo whose script is an earlier release. Each line is what that step brought.
 
-- **0.4.0 to this release:** the script didn't change. The playbook template's step 5 makes lessons that share a rule one short step that names them on its `From:` line and wins where they conflict. Step 3 reads those lessons' rules for their details, and step 6 removes the parts of a step that came only from a closed lesson.
+- **0.4.0 to this release:** the script's `--lint` also reads a promoted lesson's rule, since step 3 now has a session follow it. The playbook template's step 5 makes lessons that share a rule one short step that names them on its `From:` line and wins where they conflict. Step 3 reads those lessons' rules for their details, and step 6 removes the parts of a step that came only from a closed lesson.
 - **0.3.1 to 0.4.0:** the script has `--lint` and `--doctor`, which find rules a session may not be able to follow and a lookup over its size budget. The playbook template's "Limit:" line says what the lessons gate checks.
 - **0.3.0 to 0.3.1:** the script reads each file through one handle and refuses one swapped while it is read. The playbook template's step 6 says that `--stale` also names a file it didn't check. The lessons template says a search text is on one line.
 - **0.2.1 to 0.3.0:** the script has `--stale`, which lists lessons whose evidence names a file that is gone. The playbook template has step 5's reviewer and step 6's `--stale` run. The lessons template says what makes a good entry, and shows the `Evidence` form `--stale` reads.

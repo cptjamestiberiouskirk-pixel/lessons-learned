@@ -896,8 +896,9 @@ export function lintReport(log) {
 
   // LESSONS.md: the fields of each lesson that isn't closed.
   const ignores = []; // {file, n, text, target, entry}
-  // A promoted lesson's step is its rule's home, and the lesson keeps its old
-  // rule text as the record: only its Evidence is read.
+  // A promoted lesson's step is its rule's home, but the lesson's rule still
+  // gives the step's details (PLAYBOOK "The lessons check", step 3): its rule
+  // and its Evidence are read, not what went wrong or why.
   for (const e of log.entries) {
     for (const ig of e.ignores) {
       ignores.push({file: 'LESSONS.md', n: ig.n, text: ig.text, target: null, entry: e});
@@ -906,7 +907,7 @@ export function lintReport(log) {
     if (e.status === 'closed') continue;
     const attempted = new Map();
     for (const l of e.lines) {
-      if (e.status !== 'open' && l.field !== 'Evidence') continue;
+      if (e.status !== 'open' && l.field !== 'Evidence' && l.field !== 'Rule going forward') continue;
       // Whether the field says what was tried, found once for each field.
       if (!attempted.has(l.field)) attempted.set(l.field, ATTEMPT.test(e.fields[l.field] || ''));
       for (const f of contentFindings(l.text, {kind: 'lesson', field: l.field, attempted: attempted.get(l.field)}, ctx)) push('LESSONS.md', l.n, f, e);
