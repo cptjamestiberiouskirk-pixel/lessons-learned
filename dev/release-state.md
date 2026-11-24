@@ -4,6 +4,14 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
+## Unreleased: the lint hook (phase 4) and step 6
+
+Base: 50a1f1e on main 1d3f303 (PR 16 merged).
+
+- **RS-H-step6 is done** (the user's word, 2026-11-24): template step 6, and this repo's, close a lesson only when a test or tool enforces its whole rule, not when the code changed.
+  - One closed lesson here predates the rule: 2026-11-21 "Node's own start on a busy Windows machine was over the gate's 100 ms budget", closed because its rule failed under load and PLAYBOOK "Writing a timing test" replaced it. Step 6 now has no case for a rule found wrong; it is left as it is, for the user.
+- **RS-T-herestring-flake** (HYPOTHESIZED, low): `tests/gate.test.mjs` "property: an @' after any balanced PowerShell expression opens a here-string" failed once in 4 full `node --test` runs on Windows (704 ms), during the step 6 change, which touched no gate code but its FINGERPRINT. Its input comes from `randomBytes` with no seed, and the failing command was not kept. Tried: 3 more full runs and 150 runs of the test alone (1,500 inputs), all passed. The test writes the transcript before it starts the hook, so the hook's 300 ms wait can't race. Left: a real input rarer than about 1 in 1,500, or load. A fix would seed the generator and print the seed, as `tests/property.test.mjs` does.
+
 ## Unreleased: a section's lessons from Status, and --section (Q40, Q41)
 
 Base: 4b98e11 (PR 15's head; PR 15 was open and CLEAN when this began, not merged). From lip-service's growth research, 2026-11-23.
@@ -49,7 +57,7 @@ Base: 4b98e11 (PR 15's head; PR 15 was open and CLEAN when this began, not merge
   - Review round 8 (on 720bf8c): nothing CONFIRMED in the changed code, so the rounds stop. All 63 Evidence lines of 4b98e11 are at HEAD unchanged (scratch `q40/review8/probes/evidence-compare.mjs`), and 5 mutants of the new warning text each fail its test.
   - **RS-A-budget-comma** (CONFIRMED, low, older parser code): `Budget: lessons 30,000` sets the budget to 30 and warns that `000` is a bad setting. Both warnings print, so it is not silent. A later fix could say "digits only" in the advice or the bad-setting message.
   - **The 5 shortened Evidence fields are restored** to their 4b98e11 text, on the user's word (2026-11-24). No Evidence line of 4b98e11 is now shorter.
-  - **RS-H-step6** (needs the user): template step 6 still closes a lesson when "the code changed, or a tool now enforces it". The user's rule for this repo is narrower (a test enforces the whole rule). Whether step 6 changes, here and in the template, is the user's call.
+  - **RS-H-step6** (done in phase 4's branch, on the user's word): template step 6 still closes a lesson when "the code changed, or a tool now enforces it". The user's rule for this repo is narrower (a test enforces the whole rule). Whether step 6 changes, here and in the template, is the user's call.
   - **RS-H-readlimit** (HYPOTHESIZED, low): near 24,000 estimated tokens (about 96 KB), a whole-file Read of LESSONS.md in Claude Code may pass the Read tool's limit, and a session would need offset and limit to edit it. Not checked; it needs a live run. LESSONS.md is about 16,568 now (`--doctor`, after the Evidence restore).
 - **Earlier, LESSONS.md was at 15,993 of its 16,000 token budget.** To make room, the Evidence of 5 promoted lessons was shortened (since restored, above) to a search of the file that holds it (for example the 0.2.1 session briefs, now a search of REVIEW.md). No rule or cause was changed.
 - **RS-A-hardpath** (INFERRED, read from code, found in round 1): the lookup's `--section` line and `problemsLine` name `dev/lessons.mjs`. A repo that moved the script, which the skill allows, sees the wrong path. This predates Q41, which adds one more such line. Left for a later release.
