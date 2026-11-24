@@ -16,7 +16,7 @@
 //                                    the words, case ignored ("save" finds "saved"),
 //                                    with their rules; promoted ones as a pointer
 //                                    to their section; closed ones not at all
-//   node dev/lessons.mjs --section <name>   a PLAYBOOK section's steps, and the
+//   node dev/lessons.mjs --section <number> a PLAYBOOK section's steps, and the
 //                                    rules of the lessons whose Status names it
 //   node dev/lessons.mjs             counts and this usage only
 //   node dev/lessons.mjs --all       every lesson with its status and rule
@@ -75,7 +75,7 @@ import {fileURLToPath} from 'node:url';
 
 export const VERSION = '0.4.0';
 export const USAGE =
-  'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | --lint [--leads] [--all] [--json] | --doctor [--leads] [--all] [--json] | --leads | --pairs [--json] | --section <name> | <word>...]';
+  'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | --lint [--leads] [--all] [--json] | --doctor [--leads] [--all] [--json] | --leads | --pairs [--json] | --section <number> | <word>...]';
 export const FIELDS = ['What went wrong', 'Why', 'Rule going forward', 'Evidence', 'Status'];
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_LINE = 2000; // characters of one printed line
@@ -638,11 +638,14 @@ export function lookupReport(log, words) {
   }
   // The playbook sections first, so open lessons never push them past the cap
   // below: each one stands for the lessons promoted into it.
-  const pointers = [...promoted].map(([section, n]) => `PLAYBOOK "${section}": follow its steps (${n} matching lesson${n > 1 ? 's' : ''})`);
+  // Each section's number is printed for --section, so a session never puts
+  // a section's name, which is repo text, in a shell command.
+  const numbers = new Map([...log.sections.keys()].map((name, i) => [name, i + 1]));
+  const pointers = [...promoted].map(([section, n]) => `PLAYBOOK "${section}": follow its steps (${n} matching lesson${n > 1 ? 's' : ''})${numbers.has(section) ? `, section ${numbers.get(section)}` : ', not a section of PLAYBOOK.md: run node dev/lessons.mjs --check'}`);
   const items = [...pointers, ...open];
   const lines = items.slice(0, MAX_SHOWN);
   if (items.length > MAX_SHOWN) lines.push(`... and ${items.length - MAX_SHOWN} more, not printed: use more specific words`);
-  if (pointers.length) lines.push('-- for each section named, node dev/lessons.mjs --section "<name>" prints its steps and its lessons\' rules');
+  if (pointers.length) lines.push('-- node dev/lessons.mjs --section <number> prints a section\'s steps and its lessons\' rules: give the section\'s number, never its name');
   lines.push(`-- ${shown} shown; ${log.totals}`);
   // Every session pays to read a lookup, so one past its budget says so.
   const size = tokens(lines.join('\n'));
@@ -654,26 +657,33 @@ export function lookupReport(log, words) {
 // --section: one PLAYBOOK section's steps, then the rules of the lessons whose
 // Status names it, so "The lessons check" step 3 takes one call per section
 // instead of the whole PLAYBOOK. A "From:" line that names lessons is left
-// out: the lessons listed are the section's sources. The name is matched
-// exactly, or else ignoring case when that finds one section. A second section
-// with the same name (a --check problem) is printed with the first. A name
-// that starts with "-" can't be given, since it reads as an option. Returns
-// {lines, ok}.
+// out: the lessons listed are the section's sources.
+// A section is given by its number, the one a lookup prints, counted from 1
+// in file order. A session gives the number, never the name: a name is text
+// from the repo, and a shell runs a $(...) or backtick in it before node
+// starts. A person may give a name instead. It is matched exactly, or else
+// ignoring case when that finds one section. A name of digits only reads as a
+// number, and one that starts with "-" can't be given, since it reads as an
+// option. A second section with the same name (a --check problem) is printed
+// with the first. Returns {lines, ok}.
 export function sectionReport(log, name) {
-  let section = log.sections.get(name);
+  const all = [...log.sections.values()];
+  const number = /^[0-9]+$/.test(name);
+  let section = number ? all[Number(name) - 1] : log.sections.get(name);
   let byCase = [];
-  if (!section) {
+  if (!section && !number) {
     const lower = name.toLowerCase();
-    byCase = [...log.sections.values()].filter((s) => s.name.toLowerCase() === lower);
+    byCase = all.filter((s) => s.name.toLowerCase() === lower);
     if (byCase.length === 1) section = byCase[0];
   }
   if (!section) {
-    const names = [...log.sections.values()].map((s) => `"${s.label}"`);
+    const names = all.map((s, i) => `${i + 1} "${s.label}"`);
     const shown = names.slice(0, MAX_SHOWN).join(', ') + (names.length > MAX_SHOWN ? `, and ${names.length - MAX_SHOWN} more` : '');
-    const why = byCase.length > 1 ? `; it matches ${byCase.length} sections that differ only in case: give the name exactly` : '';
-    return {ok: false, lines: [`no section "${label(name)}" in PLAYBOOK.md${why}; its sections: ${shown || 'none'}`]};
+    const why = byCase.length > 1 ? `; it matches ${byCase.length} sections that differ only in case: give its number` : '';
+    const what = number ? `section ${label(name)}` : `section "${label(name)}"`;
+    return {ok: false, lines: [`no ${what} in PLAYBOOK.md${why}; its sections: ${shown || 'none'}`]};
   }
-  const lines = [`PLAYBOOK "${section.label}" (PLAYBOOK.md line ${section.line})`];
+  const lines = [`PLAYBOOK "${section.label}" (section ${all.indexOf(section) + 1}, PLAYBOOK.md line ${section.line})`];
   const body = log.rows.filter((r) => r.section && r.section.name === section.name && r.n !== section.line && !r.from);
   // Trimmed by index: shift() on a large array copies it each time.
   let first = 0;
@@ -687,7 +697,7 @@ export function sectionReport(log, name) {
   if (lessons.length) {
     lines.push(`-- ${lessons.length} lesson${lessons.length > 1 ? 's' : ''} promoted to this section (their Status names it): their rules' details apply too, where they fit; where one conflicts with a step, the step wins`);
     for (const e of lessons.slice(0, MAX_SHOWN)) lines.push(`${e.key}\n    ${e.fields['Rule going forward'] || ''}`);
-    if (lessons.length > MAX_SHOWN) lines.push(`... and ${lessons.length - MAX_SHOWN} more lessons, not printed: search LESSONS.md for its Status`);
+    if (lessons.length > MAX_SHOWN) lines.push(`... and ${lessons.length - MAX_SHOWN} more lessons, not printed: close the lessons whose rules no longer hold (The lessons check, step 6)`);
   } else lines.push('-- no lesson is promoted to this section');
   // Every session that runs step 3 pays to read this, so one past its budget
   // says so.
@@ -1345,7 +1355,7 @@ const WEAK_SHARED = 4;
 // left unchanged are not a pair. A test keeps this list the same as the
 // template's steps.
 export const SHIPPED_STEPS = new Set([
-  '571da1f9351a8b54', '382527a74578856c', '627657bdcd7363d5', '74058ac1afb648eb', '38dd8e6d512dcef7', 'af4f0835bda00e59',
+  '571da1f9351a8b54', '382527a74578856c', 'eb67b4a4326bbfbc', '74058ac1afb648eb', '38dd8e6d512dcef7', 'af4f0835bda00e59',
   '593310ba476f9a3c', '1723d7cd773a3a79', '777077b20da876e2', 'bf077e03e5a79af5', '98fe0333a5b322b7',
 ]);
 export const stepKey = (text) => createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 16);

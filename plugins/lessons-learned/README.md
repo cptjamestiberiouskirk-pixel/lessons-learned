@@ -53,16 +53,16 @@ Before a step, Claude looks up what applies and says so:
 $ node dev/lessons.mjs save test
 2026-11-15 "A test read the save once, right after a toast, and saw old values"
     a test that checks state through the save polls it after the event, and does not read it once.
-PLAYBOOK "Changing saved state": follow its steps (2 matching lessons)
+PLAYBOOK "Changing saved state": follow its steps (2 matching lessons), section 3
+-- node dev/lessons.mjs --section <number> prints a section's steps and its lessons' rules: give the section's number, never its name
 -- 3 shown; 3 lessons: 1 open, 2 promoted, 0 closed
--- for each section named, node dev/lessons.mjs --section "<name>" prints its steps and its lessons' rules
 ```
 
 ```
 Lessons checked: "A test read the save once, right after a toast, and saw old values"; PLAYBOOK "Changing saved state"
 ```
 
-`node dev/lessons.mjs --section "Changing saved state"` prints that section's steps, then the rule of each lesson whose Status is `promoted to PLAYBOOK "Changing saved state"`. A lesson's Status is what links it to its section, so a section needs no list of its lessons. Without Node, a search of `LESSONS.md` for that Status finds them.
+`node dev/lessons.mjs --section 3` prints that section's steps, then the rule of each lesson whose Status is `promoted to PLAYBOOK "Changing saved state"`. Claude gives the number the lookup printed, never the section's name: a name is text from the repo, and a shell runs a `$(...)` in it. You can give a name yourself. A lesson's Status is what links it to its section, so a section needs no list of its lessons. Without Node, a search of `LESSONS.md` for that Status finds them.
 
 `node dev/lessons.mjs --check` checks the format of both files: every field present and in order, real dates newest first, valid statuses, and that each promoted lesson's playbook section exists. A section's `From:` line is optional; if it has one, each lesson it names must be promoted to that section. It exits 1 on any problem, so it can run in CI.
 
