@@ -20,7 +20,7 @@ import {createHash} from 'node:crypto';
 
 // The fingerprint of this release's templates/lessons.mjs, as the setup skill
 // computes it (sha256 of the text with CRLF made LF). A test keeps it equal.
-const FINGERPRINT = '52709c9195e82c1a14932ffd2bed7cd60b6e446ee2317221e51f8ecd5ca78486';
+const FINGERPRINT = '2beaffe8680691c3418a46ea6802a208b70e0beb0a7890fd05b050b2aa221a8e';
 // The fingerprints of the released scripts, from each release tag's
 // templates/lessons.mjs. Each takes `node dev/lessons.mjs <word>...` as a
 // lookup, so a repo set up by an older release still needs one. Any other
@@ -826,7 +826,8 @@ function walk(command, dialect, cwd, out = [], depth = 0) {
       if (at < 0 || program(args[at].text) !== 'lessons.mjs') continue;
       let topic = false;
       for (let j = at + 1; j < args.length; j++) {
-        if (args[j].text === '--dir') j++;
+        // A section name is not a topic word: --section prints no open lesson.
+        if (args[j].text === '--dir' || args[j].text === '--section') j++;
         else if (!args[j].text.startsWith('-')) topic = true;
       }
       if (topic) out.push({kind: 'lookup', script: args[at].dyn ? null : move(here, args[at])});

@@ -16,6 +16,8 @@
 //                                    the words, case ignored ("save" finds "saved"),
 //                                    with their rules; promoted ones as a pointer
 //                                    to their section; closed ones not at all
+//   node dev/lessons.mjs --section <name>   a PLAYBOOK section's steps, and the
+//                                    rules of the lessons whose Status names it
 //   node dev/lessons.mjs             counts and this usage only
 //   node dev/lessons.mjs --all       every lesson with its status and rule
 //   node dev/lessons.mjs --check     checks the format; exit 1 if anything is wrong
@@ -73,12 +75,13 @@ import {fileURLToPath} from 'node:url';
 
 export const VERSION = '0.4.0';
 export const USAGE =
-  'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | --lint [--leads] [--all] [--json] | --doctor [--leads] [--all] [--json] | --leads | --pairs [--json] | <word>...]';
+  'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | --lint [--leads] [--all] [--json] | --doctor [--leads] [--all] [--json] | --leads | --pairs [--json] | --section <name> | <word>...]';
 export const FIELDS = ['What went wrong', 'Why', 'Rule going forward', 'Evidence', 'Status'];
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_LINE = 2000; // characters of one printed line
 const MAX_BAD = 50; // BAD lines printed by --check
-const MAX_SHOWN = 50; // lessons printed by a lookup or --all
+const MAX_SHOWN = 50; // lessons printed by a lookup, --all or --section
+const MAX_SECTION_LINES = 300; // lines of a section --section prints
 const MAX_NAME = 200; // characters of a title or section name in a problem message
 const MAX_REFS = 100; // file names --stale checks
 const MAX_SEARCH = 1024 * 1024; // bytes of a file --stale searches
@@ -303,7 +306,16 @@ export function loadLog(root) {
         else sections.set(current.name, current);
         rows[rows.length - 1].section = current;
       } else if (current && line.startsWith('From: ')) {
-        for (const m of line.matchAll(/(\d{4}-\d{2}-\d{2}) "([^"]+)"/g)) current.from.add(`${m[1]} "${m[2]}"`);
+        const names = /(\d{4}-\d{2}-\d{2}) "([^"]+)"/g;
+        let named = false;
+        for (const m of line.matchAll(names)) {
+          current.from.add(`${m[1]} "${m[2]}"`);
+          named = true;
+        }
+        // A From: line that holds only names is left out of --section; one
+        // with other text is printed, so a step written on it is not lost.
+        const rest = line.slice(6).replace(names, '').replace(/\band\b/g, '').replace(/[\s,;.]+/g, '');
+        if (named && rest === '') rows[rows.length - 1].from = true;
       }
     });
   }
@@ -333,9 +345,9 @@ export function loadLog(root) {
       else if ((m = status.match(/^promoted to PLAYBOOK "([^"]+)"$/))) {
         entry.status = 'promoted';
         entry.section = m[1];
-        const section = sections.get(m[1]);
-        if (!section) problem(entry.line, `${entry.label}: PLAYBOOK.md has no section "## ${label(m[1])}"`, {rule: 'from-mismatch'});
-        else if (!section.from.has(entry.key)) problem(entry.line, `${entry.label}: the "From:" line of "${label(m[1])}" does not name it`, {rule: 'from-mismatch'});
+        // A section's lessons are the ones whose Status names it, so a section
+        // needs no "From:" line. One that has one is checked below.
+        if (!sections.has(m[1])) problem(entry.line, `${entry.label}: PLAYBOOK.md has no section "## ${label(m[1])}"`, {rule: 'from-mismatch'});
       } else if (/^closed: .+$/s.test(status)) {
         entry.status = 'closed';
       } else if (status) {
@@ -413,7 +425,8 @@ export function loadLog(root) {
     if (fence) problem(fenceLine, 'code fence is never closed');
   }
 
-  // Every "From:" name in PLAYBOOK.md must be a lesson promoted to that section.
+  // A "From:" line is optional. Every name on one must be a lesson promoted to
+  // that section, so the line never points a reader at the wrong lesson.
   for (const section of sections.values()) {
     for (const key of section.from) {
       const e = byKey.get(key);
@@ -629,12 +642,59 @@ export function lookupReport(log, words) {
   const items = [...pointers, ...open];
   const lines = items.slice(0, MAX_SHOWN);
   if (items.length > MAX_SHOWN) lines.push(`... and ${items.length - MAX_SHOWN} more, not printed: use more specific words`);
+  if (pointers.length) lines.push('-- for each section named, node dev/lessons.mjs --section "<name>" prints its steps and its lessons\' rules');
   lines.push(`-- ${shown} shown; ${log.totals}`);
   // Every session pays to read a lookup, so one past its budget says so.
   const size = tokens(lines.join('\n'));
   const budget = log.settings.budget.lookup;
   if (size > budget) lines.push(`-- size-budget: this lookup is about ${size} tokens, over its budget of ${budget}: use more specific words, and see node dev/lessons.mjs --lint`);
   return lines;
+}
+
+// --section: one PLAYBOOK section's steps, then the rules of the lessons whose
+// Status names it, so "The lessons check" step 3 takes one call per section
+// instead of the whole PLAYBOOK. A "From:" line that names lessons is left
+// out: the lessons listed are the section's sources. The name is matched
+// exactly, or else ignoring case when that finds one section. A second section
+// with the same name (a --check problem) is printed with the first. A name
+// that starts with "-" can't be given, since it reads as an option. Returns
+// {lines, ok}.
+export function sectionReport(log, name) {
+  let section = log.sections.get(name);
+  let byCase = [];
+  if (!section) {
+    const lower = name.toLowerCase();
+    byCase = [...log.sections.values()].filter((s) => s.name.toLowerCase() === lower);
+    if (byCase.length === 1) section = byCase[0];
+  }
+  if (!section) {
+    const names = [...log.sections.values()].map((s) => `"${s.label}"`);
+    const shown = names.slice(0, MAX_SHOWN).join(', ') + (names.length > MAX_SHOWN ? `, and ${names.length - MAX_SHOWN} more` : '');
+    const why = byCase.length > 1 ? `; it matches ${byCase.length} sections that differ only in case: give the name exactly` : '';
+    return {ok: false, lines: [`no section "${label(name)}" in PLAYBOOK.md${why}; its sections: ${shown || 'none'}`]};
+  }
+  const lines = [`PLAYBOOK "${section.label}" (PLAYBOOK.md line ${section.line})`];
+  const body = log.rows.filter((r) => r.section && r.section.name === section.name && r.n !== section.line && !r.from);
+  // Trimmed by index: shift() on a large array copies it each time.
+  let first = 0;
+  let last = body.length;
+  while (first < last && body[first].text.trim() === '') first++;
+  while (last > first && body[last - 1].text.trim() === '') last--;
+  const shownRows = last - first;
+  for (const r of body.slice(first, first + Math.min(shownRows, MAX_SECTION_LINES))) lines.push(r.text);
+  if (shownRows > MAX_SECTION_LINES) lines.push(`... and ${shownRows - MAX_SECTION_LINES} more lines, not printed: read the section in PLAYBOOK.md`);
+  const lessons = log.entries.filter((e) => e.status === 'promoted' && e.section === section.name);
+  if (lessons.length) {
+    lines.push(`-- ${lessons.length} lesson${lessons.length > 1 ? 's' : ''} promoted to this section (their Status names it): their rules' details apply too, where they fit; where one conflicts with a step, the step wins`);
+    for (const e of lessons.slice(0, MAX_SHOWN)) lines.push(`${e.key}\n    ${e.fields['Rule going forward'] || ''}`);
+    if (lessons.length > MAX_SHOWN) lines.push(`... and ${lessons.length - MAX_SHOWN} more lessons, not printed: search LESSONS.md for its Status`);
+  } else lines.push('-- no lesson is promoted to this section');
+  // Every session that runs step 3 pays to read this, so one past its budget
+  // says so.
+  const size = tokens(lines.join('\n'));
+  const budget = log.settings.budget.section;
+  if (size > budget) lines.push(`-- size-budget: this section and its lessons' rules are about ${size} tokens, over the section budget of ${budget}: split the section, or close lessons whose rules no longer hold`);
+  return {ok: true, lines};
 }
 
 // The line every mode but --check ends with when the log has format problems.
@@ -1285,7 +1345,7 @@ const WEAK_SHARED = 4;
 // left unchanged are not a pair. A test keeps this list the same as the
 // template's steps.
 export const SHIPPED_STEPS = new Set([
-  '571da1f9351a8b54', '382527a74578856c', '0aaef69d40705001', '74058ac1afb648eb', '5c01ab6599d2e5ae', '3e59ac7fbaa2e25f',
+  '571da1f9351a8b54', '382527a74578856c', '627657bdcd7363d5', '74058ac1afb648eb', '38dd8e6d512dcef7', 'af4f0835bda00e59',
   '593310ba476f9a3c', '1723d7cd773a3a79', '777077b20da876e2', 'bf077e03e5a79af5', '98fe0333a5b322b7',
 ]);
 export const stepKey = (text) => createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 16);
@@ -1664,10 +1724,15 @@ function parseArgs(args) {
   let all = false; // --all after --lint or --doctor
   let json = false;
   let leads = false;
+  let section = null;
   const words = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--leads') {
+    if (a === '--section') {
+      if (mode !== 'counts' || words.length || args[i + 1] === undefined || args[i + 1].startsWith('-') || !args[i + 1].trim()) return null;
+      mode = 'section';
+      section = args[++i].trim();
+    } else if (a === '--leads') {
       if (leads) return null;
       leads = true;
     } else if (a === '--pairs') {
@@ -1705,7 +1770,7 @@ function parseArgs(args) {
   }
   if (leads && mode !== 'lint' && mode !== 'doctor') return null;
   if (json && mode !== 'lint' && mode !== 'doctor' && mode !== 'pairs') return null;
-  return {dir, mode, words, all, json, leads};
+  return {dir, mode, words, all, json, leads, section};
 }
 
 function main() {
@@ -1715,7 +1780,7 @@ function main() {
     process.exitCode = 2;
     return;
   }
-  const {dir, mode, words, all, json, leads} = parsed;
+  const {dir, mode, words, all, json, leads, section} = parsed;
   const log = loadLog(dir);
   if (log.error) {
     if (json) console.log(JSON.stringify({version: VERSION, error: show(log.error)}));
@@ -1739,6 +1804,14 @@ function main() {
   if (mode === 'check') {
     const {lines, ok} = checkReport(log);
     lines.forEach((l) => say(l));
+    process.exitCode = ok ? 0 : 1;
+    return;
+  }
+  if (mode === 'section') {
+    const {lines, ok} = sectionReport(log, section);
+    lines.forEach((l) => say(l));
+    const end = problemsLine(log);
+    if (end) say(end);
     process.exitCode = ok ? 0 : 1;
     return;
   }
