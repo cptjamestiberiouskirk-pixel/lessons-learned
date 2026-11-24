@@ -4,6 +4,7 @@
 
 - The playbook template's "The lessons check" step 5: lessons that share a rule become one short step that states it without copying them. The section's `From:` line names each lesson, and their rules give the details. Where a lesson's rule conflicts with the step, the step wins; a detail the step doesn't mention still applies. Step 3 reads the rules of the lessons on a section's `From:` line and follows their details with its steps. Step 5's reviewer asks whether the step states the rule its lessons give, in short form, and nothing they don't say. Step 6 also removes the parts of a step that came only from a closed lesson.
 - `--lint` reads a promoted lesson's rule too, not only its Evidence, since step 3 now has a session follow it. A file or flag it names that is gone is an error, as in an open lesson.
+- `--lint` and `--stale` no longer read git's own names as file names: the line endings `git ls-files --eol` prints (`w/crlf`, `i/lf`, `w/mixed`) and a ref such as `origin/HEAD` or `refs/heads/main`. They made `--lint` fail on two repos that quote them. A name with an extension, such as `origin/notes.md`, is still a file name.
 
 ## 0.4.0 (2026-11-23)
 

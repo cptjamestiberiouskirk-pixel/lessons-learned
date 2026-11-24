@@ -462,10 +462,15 @@ function settingsOf(header) {
 // it for text of at most MAX_QUOTE UTF-16 units (a longer one would make the
 // search slow), and its text is never printed. Backticks pair left to right, as
 // in Markdown, so a span with a space in it (a command) doesn't shift the pairs.
+// Git's own names hold a '/' but name no file: the line endings `git ls-files
+// --eol` prints (`w/crlf`, `i/lf`), and a ref such as `origin/HEAD` or
+// `refs/heads/main` with no extension that starts with a letter.
 const EVIDENCE_REF = /`([^`]*)`(?:,? search "([^"]+)")?/g;
+const GIT_NAME = /^(?:[iw]\/(?:lf|crlf|mixed|none|-text)|(?:origin|upstream|refs\/(?:heads|tags|remotes))\/[A-Za-z0-9._/-]+)$/;
 function isFileName(name) {
   if (!/^[A-Za-z0-9._/-]+$/.test(name)) return false;
-  if (!name.includes('/') && !/\.[A-Za-z][A-Za-z0-9]*$/.test(name)) return false;
+  const extension = /\.[A-Za-z][A-Za-z0-9]*$/.test(name);
+  if (!extension && (!name.includes('/') || GIT_NAME.test(name))) return false;
   return name.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
 }
 const foldAscii = (p) => (/^(win32|darwin)$/.test(process.platform) ? p.replace(/[A-Z]/g, (c) => c.toLowerCase()) : p);
