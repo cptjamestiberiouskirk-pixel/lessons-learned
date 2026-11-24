@@ -85,6 +85,7 @@ for (const fx of PAIR_FIXTURES) {
       const {a, b, pair} = find(want);
       assert.ok(pair, `expected a pair ${a.file}:${a.line} ${b.file}:${b.line}; got ${JSON.stringify(json.pairs)}`);
       if (fx.cue) assert.ok(pair.cue.includes(fx.cue), `expected the cue ${fx.cue}; got ${pair.cue}`);
+      for (const w of fx.notShared || []) assert.ok(!pair.shared.includes(w), `"${w}" should not be a shared word; got ${pair.shared}`);
     }
     // `lacks`: pairs that must not be listed.
     for (const not of fx.lacks || []) {
@@ -97,6 +98,82 @@ for (const fx of PAIR_FIXTURES) {
     assert.match(text[text.length - 1], /^-- pairs: \d+ candidate pairs? among \d+ rules and steps, \d+ printed \(at most 40\); a lead for review, not a verdict$/);
   });
 }
+
+// From review round 1 of phase 3. A step over MAX_LINT_LINE whose earlier keys
+// shrink it once removed, so a key the 4000-character cut left short came into
+// the text read; and a private key, whose body is not key-shaped, on its own
+// lines and in backticks on one line.
+test('no part of a key cut by the line limit, or of a private key, reaches --pairs', () => {
+  const filler = `ghp_${'A'.repeat(36)}`;
+  const secret = `ghp_${'SECRETpayload0123456789abcdefghijk'.padEnd(36, 'Z')}`;
+  let long = 'Xever deploy service ';
+  while (long.length + filler.length + 1 <= 4970) long += `${filler} `;
+  long = `${long.padEnd(4970, ' ')}${secret} tail`;
+  // The secret itself across the 4000-character cut.
+  let straddle = 'Xever deploy service ';
+  while (straddle.length + filler.length + 1 <= 3980) straddle += `${filler} `;
+  straddle = `${straddle.padEnd(3980, ' ')}${secret} tail`;
+  const body = ['MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj', 'MZ2ldSecretPayloadWordsHereAbCdEfGh0123456789AbCdEfGhIjKlMnOpQr'];
+  const pem = ['   -----BEGIN PRIVATE KEY-----', ...body.map((b) => `   ${b}`), '   -----END PRIVATE KEY-----'].join('\n');
+  const oneLine = `\`-----BEGIN PRIVATE KEY----- ${body.join(' ')} -----END PRIVATE KEY-----\``;
+  const books = [
+    `# PLAYBOOK\n\n## Deploying\n\n1. Never  ${long}\n2. Always ${long}\n`,
+    `# PLAYBOOK\n\n## Deploying\n\n1. Never deploy the service with this:\n${pem}\n2. Always deploy the service with this:\n${pem}\n`,
+    `# PLAYBOOK\n\n## Deploying\n\n1. Never deploy the service with ${oneLine} by hand.\n2. Always deploy the service with ${oneLine} by hand.\n`,
+    `# PLAYBOOK\n\n## Deploying\n\n1. Never  ${straddle}\n2. Always ${straddle}\n`,
+  ];
+  for (const [k, book] of books.entries()) {
+    const dir = folder({'LESSONS.md': '# LESSONS\n', 'PLAYBOOK.md': book});
+    for (const args of [['--pairs'], ['--pairs', '--json']]) {
+      const out = run(args, dir).out;
+      for (const piece of ['secr', 'SECR', 'aaaaaaaa', 'AAAAAAAA', 'MIIEvQIBADAN', 'miievqibadan', 'SecretPayloadWords', 'secretpayloadwords'])
+        assert.ok(!out.includes(piece), `case ${k + 1}: ${args.join(' ')} printed "${piece}": ${out.slice(0, 400)}`);
+    }
+  }
+});
+
+// From review round 1 of phase 3: one second-sighting per pair of 300 similar
+// lessons made 44,850 findings, past MAX_KEEP, and they were kept before a
+// bad lint-ignore was found, so that error was only counted.
+test('many similar lessons give one second-sighting each, and an error is still listed', () => {
+  const entries = Array.from({length: 300}, (_, i) => `## 2026-01-02: Lesson ${i}\n- What went wrong: w\n- Why: c\n- Rule going forward: run the whole test suite before each release build and read its summary line\n- Evidence: e\n- Status: open\n`);
+  const dir = folder({'LESSONS.md': `# LESSONS\n\n${entries.join('\n')}`, 'PLAYBOOK.md': '# PLAYBOOK\n\n## Steps\n\n<!-- lint-ignore nothing-here: no such rule -->\n1. A step.\n'});
+  const json = JSON.parse(run(['--lint', '--leads', '--json'], dir).out);
+  const sightings = json.findings.filter((f) => f.rule === 'second-sighting');
+  // Each lesson but the oldest gets one; the newest counts the other 298.
+  assert.equal(sightings.length, 299, `${sightings.length} second-sighting findings for 300 lessons`);
+  assert.ok(sightings.some((f) => f.message.includes(', and 298 more open lessons:')), 'the newest lesson should count the rest');
+  assert.ok(json.findings.some((f) => f.rule === 'bad-ignore'), 'the bad lint-ignore should be listed');
+  // The text output prints 100 findings: the error must be one of them.
+  const text = run(['--lint', '--leads'], dir).out;
+  assert.match(text, /^ERROR bad-ignore PLAYBOOK\.md/m, 'the printed list should hold the error, not only leads');
+  const printed = text.split('\n').filter((l) => /^(?:ERROR|WARN ) /.test(l));
+  assert.equal(printed.length, 100, 'the print cap is 100 findings');
+  assert.match(text, new RegExp(`^\\.\\.\\. and ${json.findings.length - 100} more, not printed$`, 'm'));
+  // Printed in file and line order: the leads in LESSONS.md, then the error.
+  const at = printed.map((l) => l.match(/ (\S+?):(\d+) /)).map((m) => [m[1], Number(m[2])]);
+  assert.ok(at.every((p, k) => k === 0 || at[k - 1][0] < p[0] || (at[k - 1][0] === p[0] && at[k - 1][1] < p[1])), `not in file and line order: ${JSON.stringify(at)}`);
+});
+
+// A key outside backticks: the tokens split `ghp_` from its payload, so the
+// payload alone would be a shared topic word that a pair and a lead print.
+test('no part of a key in two rules reaches --pairs or --leads', () => {
+  const payload = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const entry = (date, title, rule) =>
+    `## ${date}: ${title}\n- What went wrong: it broke\n- Why: a cause\n- Rule going forward: ${rule}\n- Evidence: a test run\n- Status: open\n\n`;
+  const dir = folder({
+    'LESSONS.md': `# LESSONS\n\nLessons for this repo.\n\n${entry('2026-01-03', 'Tag pushed', `Always push the release tag with the token ghp_${payload} from the vault.`)}${entry('2026-01-02', 'Tag held', `Never push the release tag with the token ghp_${payload} from the vault.`)}`,
+    'PLAYBOOK.md': '# PLAYBOOK\n\n## Steps\n\n1. Run the tests.\n',
+  });
+  const pairsJson = JSON.parse(run(['--pairs', '--json'], dir).out);
+  assert.ok(pairsJson.pairs.length >= 1, 'the two rules should still be a pair');
+  const leads = run(['--lint', '--leads'], dir).out;
+  assert.match(leads, /second-sighting/, 'the two rules should still be a second sighting');
+  for (const args of [['--pairs'], ['--pairs', '--json'], ['--lint', '--leads'], ['--lint', '--leads', '--json']]) {
+    const out = run(args, dir).out;
+    assert.ok(!out.includes(payload.slice(0, 12)), `${args.join(' ')} printed part of the key: ${out.slice(0, 400)}`);
+  }
+});
 
 // The keys are found here with node:crypto, not with the script's stepKey, so a
 // change to either side shows. On a mismatch the message gives the list to paste.
@@ -163,7 +240,7 @@ test('--leads alone is --lint --leads; with --doctor it adds the summary', () =>
   const doctor = run(['--doctor', '--leads'], dir);
   assert.match(doctor.out, /^WARN {2}unlabeled-claim /m);
   assert.match(doctor.out, /^-- doctor: /m);
-  // Each lead rule can be named in a silencing comment.
+  // Every lead finding is a warning, never an error.
   const json = JSON.parse(run(['--lint', '--leads', '--json'], dir).out);
   assert.ok(json.findings.every((f) => !LEAD_RULES.includes(f.rule) || f.severity === 'warning'));
 });
@@ -363,18 +440,52 @@ test('on random text, --lint --json always prints one JSON object, exits 0 or 1,
   }
 });
 
+// Keys of each shape the script knows, with random payloads, at random points
+// in two rules that share their other words, so they pair and are a second
+// sighting. A space on each side: a key run into a letter is not key-shaped.
+test('on random text, no part of a key reaches --pairs or --leads', () => {
+  const ALNUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let seed = 1; seed <= 30; seed++) {
+    const next = generator(seed);
+    const pick = (chars, n) => Array.from({length: n}, () => chars[Math.floor(next() * chars.length)]).join('');
+    const keys = [
+      ['ghp_', pick(ALNUM, 36)],
+      ['github_pat_', pick(ALNUM + '_', 40)],
+      ['sk-ant-', pick(ALNUM + '_-', 30)],
+      ['AKIA', pick('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 16)],
+      ['xoxb-', pick(ALNUM + '-', 20)],
+    ];
+    const words = 'push the release tag with the token from the vault'.split(' ');
+    const rule = (lead) => {
+      const parts = [lead, ...words];
+      for (const [prefix, payload] of keys) parts.splice(1 + Math.floor(next() * parts.length), 0, `${prefix}${payload}`);
+      return `${parts.join(' ')} ${random(next, 6).replace(/[`\n]/g, ' ')}`;
+    };
+    const entry = (date, title, lead) => `## ${date}: ${title}\n- What went wrong: it broke\n- Why: a cause\n- Rule going forward: ${rule(lead)}\n- Evidence: a test run\n- Status: open\n\n`;
+    const dir = folder({
+      'LESSONS.md': `# LESSONS\n\nLessons for this repo.\n\n${entry('2026-01-03', 'Tag pushed', 'Always')}${entry('2026-01-02', 'Tag held', 'Never')}`,
+      'PLAYBOOK.md': '# PLAYBOOK\n\n## Steps\n\n1. Run the tests.\n',
+    });
+    for (const args of [['--pairs', '--json'], ['--lint', '--leads', '--json']]) {
+      const out = run(args, dir).out;
+      for (const [, payload] of keys)
+        for (let at = 0; at + 8 <= payload.length; at += 4) assert.ok(!out.includes(payload.slice(at, at + 8)), `seed ${seed}: ${args.join(' ')} printed part of ${payload}`);
+    }
+  }
+});
+
 // ---- Running time -----------------------------------------------------------
 
 // Times loadLog and lintReport on a repo written by `make(part)`, fastest of
 // three runs, in this process.
-async function timeLint(make) {
+async function timeLint(make, leads = false) {
   const {loadLog, lintReport} = await import(pathToFileURL(SCRIPT).href);
   const dir = folder(make);
   let best = Infinity;
   for (let k = 0; k < 3; k++) {
     const t0 = process.hrtime.bigint();
     const log = loadLog(dir);
-    lintReport(log);
+    lintReport(log, {leads});
     best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e6);
   }
   return best;
@@ -407,6 +518,37 @@ test('a long Evidence line costs linear time', async () => {
   const base = await timeLint(make(8));
   const quarter = await timeLint(make(1000));
   const full = await timeLint(make(4000));
+  assert.ok(full - base < 8 * (quarter - base) + 50, `4000 characters took ${full} ms, 1000 took ${quarter} ms, 8 took ${base} ms`);
+});
+
+// Slow version it fails on: promoted-drift comparing each promoted lesson with
+// each step of its section (review round 1 of phase 3), so the cost is lessons
+// times steps. Both grow 4 times here, 100 lessons and 150 steps against 400
+// and 600, and no lesson shares a word with a step, so every pair is compared.
+test('promoted-drift costs linear time in lessons and steps together', async () => {
+  const make = (k) => {
+    const steps = Array.from({length: 150 * k}, (_, i) => `${i + 1}. ${Array.from({length: 128}, (_, w) => `s${i}w${w}q`).join(' ')}`);
+    const rule = Array.from({length: 128}, (_, w) => `l${w}m`).join(' ');
+    const entries = Array.from({length: 100 * k}, (_, i) => `## 2026-01-02: Lesson ${i}\n- What went wrong: w\n- Why: c\n- Rule going forward: ${rule}\n- Evidence: e\n- Status: promoted to PLAYBOOK "Steps"\n`);
+    return {'LESSONS.md': `# LESSONS\n\n${entries.join('\n')}`, 'PLAYBOOK.md': `# PLAYBOOK\n\n## Steps\n\n${steps.join('\n')}\n`};
+  };
+  const base = await timeLint({'LESSONS.md': '# LESSONS\n', 'PLAYBOOK.md': '# PLAYBOOK\n'}, true);
+  const quarter = await timeLint(make(1), true);
+  const full = await timeLint(make(4), true);
+  assert.ok(full - base < 8 * (quarter - base) + 50, `400 lessons and 600 steps took ${full} ms, 100 and 150 took ${quarter} ms, none took ${base} ms`);
+});
+
+// Slow version it fails on: a curly-quote pattern whose run can hold an opening
+// quote, so on a line of them each try reads to the line's end (review round 1
+// of phase 3). Only the line length changes, 1000 against 4000.
+test('--leads on a long line of opening curly quotes costs linear time', async () => {
+  const make = (len) => ({
+    'LESSONS.md': '# LESSONS\n\n## 2026-01-02: Quotes\n- What went wrong: w\n- Why: c\n- Rule going forward: r\n- Evidence: e\n' + `  ${String.fromCharCode(0x201c).repeat(len)}\n`.repeat(300) + '- Status: open\n',
+    'PLAYBOOK.md': '# PLAYBOOK\n',
+  });
+  const base = await timeLint(make(8), true);
+  const quarter = await timeLint(make(1000), true);
+  const full = await timeLint(make(4000), true);
   assert.ok(full - base < 8 * (quarter - base) + 50, `4000 characters took ${full} ms, 1000 took ${quarter} ms, 8 took ${base} ms`);
 });
 
