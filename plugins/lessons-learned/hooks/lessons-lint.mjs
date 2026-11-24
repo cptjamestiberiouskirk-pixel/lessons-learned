@@ -24,6 +24,7 @@ const MAX_PATCH_PARTS = 16384; // names in all of a patch's paths looked at; pas
 const MAX_ROOTS = 4; // repos one edit is linted in
 const MAX_EDITS = 100; // edits of one MultiEdit read for new lesson headings
 const MAX_EDIT_TEXT = 1024 * 1024; // characters of an edit's text read for headings
+const MAX_PAIRS = 100000; // renamed and added headings compared; past that, no leads
 const MAX_LINES = 10; // lines the agent is told, the first one included
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
 const CODEX_EDIT = 'apply_patch';
@@ -169,33 +170,54 @@ function patchHeadings(patch) {
 
 // The headings the edit added that are new lessons. A heading added and also
 // removed moves or edits a lesson. A heading removed and not added back was
-// renamed: it takes an added heading of the same title (a date fixed), or
-// else the one of the same date with the most title words in common (a title
-// fixed). When two tie for it, which one is new isn't known: null, no leads.
+// renamed: it takes an added heading of the same title (a date fixed, or a
+// lesson deleted and added again under another date), or else the one of its
+// date with the most title words in common (a title fixed). When one of its
+// date is left but none shares a word, or two tie, which one is new isn't
+// known: null, no leads. It is null past MAX_PAIRS comparisons too, which
+// keeps an edit full of headings linear. A removed heading with none of its
+// date left was a lesson deleted.
 function newKeys(added, removed) {
   const split = (k) => [k.slice(0, 10), k.slice(12, -1)];
-  const words = (t) => t.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const fresh = new Set([...added].filter((k) => !removed.has(k)));
+  const words = (t) => new Set(t.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const fresh = new Set();
+  const byTitle = new Map();
+  const byDate = new Map();
+  for (const k of added) {
+    if (removed.has(k)) continue;
+    fresh.add(k);
+    const [date, title] = split(k);
+    if (!byTitle.has(title)) byTitle.set(title, []);
+    byTitle.get(title).push(k);
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date).push({key: k, words: null});
+  }
   const left = [];
-  for (const g of [...removed].filter((k) => !added.has(k))) {
-    const twin = [...fresh].find((k) => split(k)[1] === split(g)[1]);
+  for (const g of removed) {
+    if (added.has(g)) continue;
+    const twin = byTitle.get(split(g)[1])?.pop();
     if (twin) fresh.delete(twin);
     else left.push(g);
   }
+  let pairs = 0;
   for (const g of left) {
     const [date, title] = split(g);
-    const had = new Set(words(title));
-    let best = -1;
+    const had = words(title);
+    let seen = false;
+    let best = 0;
     let picks = [];
-    for (const k of fresh) {
-      const [d, t] = split(k);
-      if (d !== date) continue;
-      const n = words(t).filter((w) => had.has(w)).length;
-      if (n > best) [best, picks] = [n, [k]];
-      else if (n === best) picks.push(k);
+    for (const c of byDate.get(date) ?? []) {
+      if (++pairs > MAX_PAIRS) return null;
+      if (!fresh.has(c.key)) continue;
+      seen = true;
+      c.words ??= words(split(c.key)[1]);
+      let n = 0;
+      for (const w of c.words) if (had.has(w)) n++;
+      if (n > best) [best, picks] = [n, [c.key]];
+      else if (n && n === best) picks.push(c.key);
     }
-    if (picks.length > 1) return null;
-    if (picks.length) fresh.delete(picks[0]);
+    if (picks.length === 1) fresh.delete(picks[0]);
+    else if (seen) return null;
   }
   return fresh;
 }

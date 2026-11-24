@@ -225,6 +225,38 @@ test('a new lesson added in the edit that renames another of its date keeps its 
   assert.deepEqual(leadsOf(editOf(root, 'LESSONS.md', '## 2026-01-05: Pushed the build', `${other}\n${twin}`)), []);
 });
 
+test('a renamed heading that shares no word with the one added of its date makes the leads unknown', () => {
+  // Review round 3's probe P4b: X's date and title are both fixed, and a new
+  // lesson has X's old date. Taking the new one as the rename told X's lead.
+  const {root} = renameRepo();
+  const n = entry('2026-01-15', 'Pushed without the lint', {rule: RULE2});
+  writeFileSync(join(root, 'LESSONS.md'), readFileSync(join(root, 'LESSONS.md'), 'utf8').replace('## 2026-01-05: Pushed without the lint', '## 2026-01-15: Pushed without the lint'));
+  const r = editOf(root, 'LESSONS.md', '## 2026-01-15: Shipped a build with failin tests', `${n}${NEWER}`);
+  assert.deepEqual(leadsOf(r), [], r.context);
+});
+
+// Timing tests compare growth (PLAYBOOK "Writing a timing test"): the full
+// input against a quarter of it, past the fixed cost of one heading, best of
+// three. Fails on f3e3d8d's hook, whose newKeys compared every renamed
+// heading with every added one (about 9 s at 8,000).
+test('time: an edit full of renamed headings of one date is read in linear time', (t) => {
+  const {root} = oldPair();
+  const run = (n) => () => {
+    const heads = (end) => Array.from({length: n}, (_, i) => `## 2026-01-05: a${i} ${end}`).join('\n');
+    const start = performance.now();
+    editOf(root, 'LESSONS.md', heads('b'), heads('c'));
+    return performance.now() - start;
+  };
+  const best = (f) => Math.min(f(), f(), f());
+  const base = best(run(1));
+  const a = best(run(2_000));
+  const b = best(run(8_000));
+  const ratio = Math.max(0, b - base) / Math.max(20, a - base);
+  const shown = `quarter ${Math.round(a)} ms, full ${Math.round(b)} ms, fixed cost ${Math.round(base)} ms, ratio past it ${ratio.toFixed(1)}`;
+  t.diagnostic(shown);
+  assert.ok(ratio < 8, shown);
+});
+
 test('a date fixed in a heading is not a new lesson', () => {
   const {root} = oldPair();
   const wrong = NEWER.replace('01-05', '01-15');
