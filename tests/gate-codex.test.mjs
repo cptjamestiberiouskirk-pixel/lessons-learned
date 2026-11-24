@@ -357,7 +357,7 @@ const onlyJson = (run, what) => {
 
 test('codex: hooks.json matches Bash and apply_patch, and its command runs the hook from PLUGIN_ROOT in each shell Codex may use', () => {
   const hooks = JSON.parse(readFileSync(join(PLUGIN, 'hooks/hooks.json'), 'utf8'));
-  assert.deepEqual(Object.keys(hooks.hooks), ['PreToolUse']);
+  assert.deepEqual(Object.keys(hooks.hooks), ['PreToolUse', 'PostToolUse']);
   const [entry] = hooks.hooks.PreToolUse;
   assert.equal(hooks.hooks.PreToolUse.length, 1);
   const re = new RegExp(entry.matcher);
@@ -386,6 +386,53 @@ test('codex: hooks.json matches Bash and apply_patch, and its command runs the h
     const run = launch(how, h.command, {PLUGIN_ROOT: PLUGIN}, input, planted);
     assert.doesNotMatch(run.stdout, /PLANTED/, `${name}: a planted node ran`);
     assert.equal(onlyJson(run, `${name}, planted`), REASON_LOOKUP, `${name}, planted`);
+    for (const env of [{}, {PLUGIN_ROOT: 'plugins/lessons-learned-codex'}, {PLUGIN_ROOT: '\\\\server\\share\\plugin'}]) {
+      const quiet = launch(how, h.command, env, input);
+      assert.equal(quiet.status, 0, `${name} ${JSON.stringify(env)}: ${quiet.stderr}`);
+      assert.equal(quiet.stdout.trim(), '', `${name} ${JSON.stringify(env)}`);
+    }
+  }
+});
+
+// The lint hook (hooks/lessons-lint.mjs) is started by the same command as
+// the gate, with only the file name changed, so it gets the same checks: each
+// shell Codex may use, a planted node, and a PLUGIN_ROOT that isn't a full
+// local path.
+test('codex: hooks.json starts the lint hook after apply_patch, from PLUGIN_ROOT, in each shell Codex may use', () => {
+  const hooks = JSON.parse(readFileSync(join(PLUGIN, 'hooks/hooks.json'), 'utf8'));
+  assert.equal(hooks.hooks.PostToolUse.length, 1);
+  const [entry] = hooks.hooks.PostToolUse;
+  const re = new RegExp(entry.matcher);
+  assert.ok(re.test('apply_patch'));
+  for (const name of ['Bash', 'Edit', 'Write', 'xapply_patch', 'apply_patchx']) assert.ok(!re.test(name), name);
+  assert.equal(entry.hooks.length, 1);
+  const h = entry.hooks[0];
+  assert.equal(h.type, 'command');
+  assert.equal(h.timeout, 10);
+  const gate = hooks.hooks.PreToolUse[0].hooks[0].command;
+  assert.equal(h.command, gate.replace("'lessons-gate.mjs'", "'lessons-lint.mjs'"), 'the same command as the gate\'s, but the file');
+  assert.notEqual(h.command, gate);
+  const root = makeRepo();
+  writeFileSync(join(root, 'LESSONS.md'), '# LESSONS\n\n## 2026-01-03: A lesson with no rule\n\n- What went wrong: it broke.\n- Why: a cause.\n- Evidence: a run.\n- Status: open\n');
+  const input = JSON.stringify({session_id: 's', turn_id: 't1', transcript_path: join(root, 'rollout.jsonl'), cwd: root, hook_event_name: 'PostToolUse', tool_name: 'apply_patch', tool_input: {command: patchOf('LESSONS.md')}, tool_response: 'ok', tool_use_id: 'call_1'});
+  const context = (run, what) => {
+    assert.equal(run.status, 0, `${what}: ${run.stderr}`);
+    assert.equal(run.stdout.trim().split(/\r?\n/).length, 1, `${what}: one line on stdout, got ${JSON.stringify(run.stdout)}`);
+    const out = JSON.parse(run.stdout.trim()).hookSpecificOutput;
+    assert.equal(out.hookEventName, 'PostToolUse', what);
+    return out.additionalContext;
+  };
+  const planted = join(scratch(), 'planted');
+  mkdirSync(planted);
+  writeFileSync(join(planted, 'node.cmd'), '@echo PLANTED node.cmd ran\r\n');
+  writeFileSync(join(planted, 'node.bat'), '@echo PLANTED node.bat ran\r\n');
+  writeFileSync(join(planted, 'node.ps1'), "Write-Output 'PLANTED node.ps1 ran'\n");
+  writeFileSync(join(planted, 'node'), '#!/bin/sh\necho PLANTED node ran\n', {mode: 0o755});
+  for (const [name, how] of LAUNCHERS) {
+    assert.match(context(launch(how, h.command, {PLUGIN_ROOT: PLUGIN}, input), name), /^ERROR format LESSONS\.md:3 /m, name);
+    const run = launch(how, h.command, {PLUGIN_ROOT: PLUGIN}, input, planted);
+    assert.doesNotMatch(run.stdout, /PLANTED/, `${name}: a planted node ran`);
+    assert.match(context(run, `${name}, planted`), /^ERROR format LESSONS\.md:3 /m, `${name}, planted`);
     for (const env of [{}, {PLUGIN_ROOT: 'plugins/lessons-learned-codex'}, {PLUGIN_ROOT: '\\\\server\\share\\plugin'}]) {
       const quiet = launch(how, h.command, env, input);
       assert.equal(quiet.status, 0, `${name} ${JSON.stringify(env)}: ${quiet.stderr}`);
