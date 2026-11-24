@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-24: Template step 3 had the session put a section's name in a shell command
+- What went wrong: Q41's step 3 said to run `--section "<name>"` with a PLAYBOOK heading. Codex's security review of PR 16 found that a heading like `$(touch marker)` runs in the shell first. Three review rounds missed it.
+- Why: CONFIRMED by a probe: `--check` accepts such a heading, and double quotes still expand `$()`. The rounds checked the script's parsing, not what a step tells the session to type.
+- Rule going forward: a step or printed hint never has a session put repo text (a heading, title or path) in a command. It gives a value the script makes safe, such as a number. A review of a new step asks what the session will type.
+- Evidence: `tests/lessons.test.mjs`, search "step 3 never puts a name in a command"
+- Status: open
+
 ## 2026-11-24: A fail-before run of tests/lessons.test.mjs ran the new script, so every new test passed
 - What went wrong: for Q40 and Q41, a fail-before run with `LESSONS_SCRIPT` passed all 13 tests on the old script, the new ones too.
 - Why: CONFIRMED: that file never read `LESSONS_SCRIPT`, unlike the other script test files, so every fail-before run of it ran the new script.
