@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-24: A fix for errors lost among leads was tested through --json, which has no print cap
+- What went wrong: round 1's fix kept errors ahead of leads, and its test read `--lint --leads --json`. Round 2 found the text output, which prints 100 findings sorted by file and line, still showed no error past 100 leads.
+- Why: CONFIRMED: `lintLines` caps and sorts what it prints; `--json` lists every finding, so the test could not see the cap.
+- Rule going forward: a test for what a user reads checks the text output, not only `--json`, where the two differ (a cap, an order, a summary line).
+- Evidence: `tests/lint.test.mjs`, search "the print cap is 100 findings"
+- Status: open
+
 ## 2026-11-24: A compare against local main read a branch that was behind the release
 - What went wrong: to find which version added the stale-path errors in two other repos, I ran the script from `git show main:...`. It had no `--lint`, so it printed its usage, and my count of ERROR lines read 0. I nearly reported that 0.4.0 gave none of them.
 - Why: CONFIRMED: local `main` was at a5c9e5b, and `git log main..7d59289` listed the 0.4.0 release commit. This worktree never moves local `main`; `origin/main` was at 1f95a46.
@@ -37,18 +44,18 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Status: open
 
 ## 2026-11-24: Phase 3 was built in a second worktree this session can't edit
-- What went wrong: I cut phase 3's branch into a new worktree, `q5-phase3`, so Auto-fix could still push to PR 14 here, and had a subagent build it there. When I came to tune it, the worktree hook refused every edit from this session ("belongs to a different worktree"). I removed the worktree and checked its branch out here, after a rebase I had to do over.
+- What went wrong: I cut phase 3's branch into a new worktree, `q5-phase3`, so Auto-fix could still push to PR 14 here, and had a subagent build it there. When I came to tune it, the worktree hook refused every edit from this session, since the files were in another worktree. I removed the worktree and checked its branch out here, after a rebase I had to do over.
 - Why: the session runs in its own isolated worktree, and its hook refuses writes to any other one. I hadn't checked that before choosing where the work would go.
 - Rule going forward: a second branch is built in this session's own worktree: commit or push the first branch, then switch with a clean tree. Don't start a worktree for work this session will edit.
 - Evidence: `dev/release-state.md`, search "Phase 3 was built in a subagent"
 - Status: open
 
 ## 2026-11-23: A node -e edit to the lint fixture left a bare quote in a JS string
-- What went wrong: for Q32 I changed the `STEP3` fixture in `tests/lint-fixtures.mjs` with a `node -e` script in the Bash tool. The new text held an escaped quote inside a single-quoted JS string, and its backslash was lost on the way from the command to the file, so the file no longer parsed. The script reported "ok", and I only saw it when the next edit's search text didn't match.
-- Why: I broke "Editing files" step 1, which already says text with a backslash goes in through the Edit or Write tool. A text replace never parses what it writes, so nothing else would have caught it before `node --test`.
+- What went wrong: for Q32 I changed the `STEP3` fixture in `tests/lint-fixtures.mjs` with a `node -e` script. The new text's backslash was lost on the way to the file, so the file no longer parsed, and the script reported "ok". Seen again on 2026-11-24 in phase 3: a scripted edit of text with backslashes matched nothing twice, and the check-first guard wrote nothing.
+- Why: I broke "Editing files" step 1. A text replace never parses what it writes.
 - Rule going forward: as "Editing files" step 1 says, text with a backslash goes through the Edit or Write tool, also for a quick edit. After any scripted edit to a `.mjs` file, import it once (`node -e "import('./<file>')"`) before going on.
 - Evidence: `tests/lint-fixtures.mjs`, search "const STEP3 ="
-- Status: open
+- Status: promoted to PLAYBOOK "Editing files"
 
 ## 2026-11-23: run-live.ps1's new options were committed without running them through the script
 - What went wrong: I added `-Marketplace` and `-Resume` to `run-live.ps1` after typing the same Codex commands by hand, and the commit said they were the commands that ran. Review found two bugs a single run would have shown: `-Marketplace .` was resolved after the script moved into the test repo, so it named the repo, and the cache line used `USERPROFILE`, which Linux and macOS don't set, so the script stopped before the reply.
@@ -271,7 +278,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: the copy command falls back to a rename where a hard link fails, and its docs name a FAT drive as one such place. Its last check compared the target's ID with the ID it read from its file before the move. exFAT has no hard links, and a rename there changes a file's ID, so every copy on an exFAT drive failed with "is not the file this copy wrote", though the file was right. Another session found it with a test run on an exFAT disk.
 - Why: the fallback was probed only where hard links are refused on NTFS (the Codex sandbox), where a rename keeps the ID. The FAT case was written down as a reason for the fallback but never run.
 - Rule going forward: a path the code takes for a named file system or platform is run there before it ships: for the copy, an exFAT drive (a virtual disk) with the repo and `TEMP` on it. A check that compares file IDs across a move reads the moved file's ID after the move, from a handle it holds. This widens the probe rule in "A create-only write was trusted to refuse a link".
-- Evidence: `tests/codex.test.mjs`, search "the copy renames the file into place and accepts it"; `dev/release-state.md`, search "exFAT".
+- Evidence: `tests/codex.test.mjs`, search "the copy renames the file into place and accepts it".
 - Status: promoted to PLAYBOOK "Testing on more than one system"
 
 ## 2026-11-17: Counting the search limit in code points let text past V8's slow-search threshold
@@ -292,7 +299,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: 0.3.0's `--stale` refused a link on the way to a file by `lstat` alone. Review round 1 planted a junction to a volume path at `docs`, which `lstat` reports as a plain folder, and the script searched a file outside the repo and printed whether it held the quoted text. 0.2.1 review round 8 had found the same in the copy command, and fixed it there with a real-path check, but no lesson was logged, so the new walk was written without it.
 - Why: a fix to one piece of code was not turned into a rule for the next code that walks a path.
 - Rule going forward: code that refuses a link on a path in the repo also checks that the path's real path (`realpathSync.native`) is the repo's real path plus the name, with case folded only on Windows and macOS, since `lstat` calls a junction to a volume path a plain folder. Its tests make such a junction with `mklink /J` to the volume path `mountvol` prints.
-- Evidence: `dev/lessons.mjs`, search "A junction to a volume path is a plain folder to lstat"; `tests/stale.test.mjs`, search "which lstat calls a folder"; `dev/release-state.md`, search "the same class as 0.2.1 round 8".
+- Evidence: `tests/stale.test.mjs`, search "which lstat calls a folder".
 - Status: promoted to PLAYBOOK "Walking a path in the repo"
 
 ## 2026-11-17: A test asserted the cut marker's format from memory, and failed on the fixed script
@@ -320,7 +327,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: for eleven review rounds of 0.2.1 every test ran on Windows only. A reviewer used WSL for a probe; running the suite there then showed two failures that CI (ubuntu, windows and macOS) would have shown only after a push. The copy command's end check passed a swapped-in file, because the random-name file's handle was closed and Linux gave the next new file the same inode number. The heap test's 96 MB limit was too little for the new script on Node 18, which needs 128 MB (Node 26 needs 40).
 - Why: I ran `node --test` and the release check on this Windows machine only, and took one machine's numbers (inode behavior, heap use) as the code's.
 - Rule going forward: before a release commit, also run `node --test` under WSL (Linux) from a copy on its own file system. A test that measures a resource (heap, time) gets its limit from runs on more than one Node version and OS, with room on both sides.
-- Evidence: the 0.2.1 work: `not ok 35 - the copy command fails when its random-name file is replaced by another plain file before the fallback rename` under WSL, and the probe showing the same inode after unlink with the handle closed and a new one with it held; `heapfloor.mjs`: new script 128 MB and old 256 MB on Node 18, 40 MB and 256 MB on Node 26.
+- Evidence: the 0.2.1 work: `not ok 35 - the copy command fails when its random-name file is replaced by another plain file before the fallback rename` under WSL, and a heap probe: 128 MB on Node 18, 40 MB on Node 26.
 - Status: promoted to PLAYBOOK "Testing on more than one system"
 
 ## 2026-11-17: Review rounds re-reviewed the whole release instead of the diff since the last round
@@ -334,7 +341,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: an edit script for 0.2.1, written through a quoted Git Bash heredoc (`<<'EOF'`), searched for a test line holding `/staged\.md/` and found nothing: the script Node read had lost a backslash. The 0.2.0 work hit the same loss in a RegExp template, fixed then with the Edit tool and `String.raw`, but logged no lesson.
 - Why: in this environment a doubled backslash in a Bash tool heredoc reaches the file as one, even when the heredoc is quoted; a single backslash before an ordinary character is kept. Tried: `one:\. two:\\. four:\\\\.` came out as `one:\. two:\. four:\\.` (`od -c`). The script had `\\.` inside a JS string, so it reached Node as `\.`, which JS reads as a plain `.`.
 - Rule going forward: text that holds a backslash (a regex, an escape, a Windows path) goes into a file through the Edit or Write tool, not through a Git Bash heredoc.
-- Evidence: the 0.2.1 session's `round1-fix.mjs` run ("0 matches: assert.match(r.stderr, /staged.md: ...", the backslash gone), then the same change made with the Edit tool; and the 0.2.0 session's RegExp template fix.
+- Evidence: the 0.2.1 session's round 1 fix script ("0 matches", the backslash gone), then the same change made with the Edit tool.
 - Status: promoted to PLAYBOOK "Editing files"
 
 ## 2026-11-17: A command meant to run one billed setup run held a leftover call to another
@@ -348,7 +355,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: the 0.2.0 copy command relied on a create-only write (`flag: 'wx'`) as its last guard against a link made after its check, and `dev/release-state.md` said only a link made in that instant would get through. A probe for 0.2.1 showed more on Windows: the write follows a dangling file symbolic link and writes the text where it points, and a dangling junction makes it create an empty folder where the junction points.
 - Why: on Linux and macOS, `O_CREAT | O_EXCL` fails on any link at the name. Windows has no such rule for `CREATE_NEW`: it follows the link, so "create only" holds for the target, not for the name.
 - Rule going forward: to create a file at a name where a link may appear, write it under a random name beside it and give it the name with a hard link (`linkSync`), which fails on anything at the name and follows nothing. Where the hard link fails for any other reason (Codex's Windows sandbox refuses it with `EPERM`), rename it into place, which replaces the name and writes through nothing. Probe a guard's behavior on Windows, and in the Codex sandbox, before relying on it.
-- Evidence: the probes in the 0.2.1 work (a dangling file link: "WROTE", the text at the target; a dangling junction: `EISDIR` and an empty folder; `linkSync` over either: `EEXIST`, nothing made; `renameSync` over a junction: `EPERM`, nothing made), the Codex end-to-end run for 0.2.1 (`LESSONS.md: cannot be made (EPERM)` from `linkSync` in the sandbox), and `tests/codex.test.mjs`, "the copy command is not led by a dangling junction made after its look at the target".
+- Evidence: the 0.2.1 probes (a dangling file link: the text written at the target; `linkSync` over a link: `EEXIST`), and `tests/codex.test.mjs`, search "refuses a dangling junction at the target".
 - Status: promoted to PLAYBOOK "Testing on more than one system"
 
 ## 2026-11-16: A growth test was claimed to guard a cost that an output cap keeps linear
@@ -369,7 +376,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: the first run of the new property tests found rules that `--check` called "missing or empty" and "not a field", though each had its `- Rule going forward:` line. The lookup printed them as empty rules. Unit tests had never put a line separator inside a field.
 - Why: in a JavaScript regex, `.` doesn't match U+2028 or U+2029, which it treats as line ends. The field and heading patterns end in `(.*)$`, so a line holding one never matched.
 - Rule going forward: a regex that must match a whole line of untrusted text uses the `s` flag (or `[^]`), and a new parsing rule gets a property test with random text, not only examples.
-- Evidence: `tests/property.test.mjs`, seeds 1 to 5, fail on the script before the `s` flag; `tests/hardening.test.mjs`, "a line separator (U+2028) in a rule is reported as hidden". Seen again in 0.3.0: the `--stale` evidence parser was written with example tests only, though the lookup had printed this rule, and paired backticks wrongly (a command in backticks, a slash, then a file name in backticks hid the file name) until a property test with random text was written; `tests/stale.test.mjs`, search "property: --stale reports the file names a plain parser finds".
+- Evidence: `tests/hardening.test.mjs`, search "a line separator (U+2028) in a rule is reported as hidden". Seen again in 0.3.0, in the `--stale` parser: `tests/stale.test.mjs`, search "property: --stale reports the file names a plain parser finds".
 - Status: promoted to PLAYBOOK "Parsing untrusted text"
 
 ## 2026-11-16: A timing test passed on the slow script it was written to catch
@@ -390,14 +397,14 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: in the first live run next to Trailmark, setup wrote `templates/lessons.mjs` with the Write tool, and the `\uFEFF` in the BOM check became a literal U+FEFF. The fingerprint didn't match until that session found the character and fixed it. Later a PowerShell command of mine that held the same escape was refused for holding U+FEFF.
 - Why: text passed through a tool call is JSON, where a single-backslash unicode escape is read as the character. Any agent that writes the template out can do this, not only the Edit tool.
 - Rule going forward: the templates and skills hold no single-backslash unicode escape: match an invisible character by its code (`charCodeAt(0) === 0xfeff`) or a property class (`\p{Cf}`). A test checks the shipped files.
-- Evidence: the first live run's log (a local file, `s1-claude.json`, not kept in the repo), the reply's note on line 103 of the script; `tests/hardening.test.mjs`, "hold no single-backslash unicode escape".
+- Evidence: `tests/hardening.test.mjs`, search "hold no single-backslash unicode escape".
 - Status: promoted to PLAYBOOK "Changing the setup skill or templates"
 
 ## 2026-11-16: A fail-before run used a copy of the old script that was one line long
 - What went wrong: to show the new hardening tests fail on the old script, `git show HEAD:<script> | Set-Content -NoNewline <file>` made the old copy. Its lines were joined with no separator, so everything after the first `//` was a comment and the copy did nothing. The run reported 8 failures, which looked right but proved nothing; a guard test that should pass on both versions failing gave it away.
 - Why: in PowerShell, a native program's output reaches `Set-Content` as separate lines, and `-NoNewline` drops the line breaks between them, not only the last one.
 - Rule going forward: copy an old version of a file with a byte-exact redirect (`cmd /c "git show <rev>:<path> > <file>"`), and check the copy with `git hash-object <file>` against `git rev-parse <rev>:<path>` before using it.
-- Evidence: the 0.2.0 hardening session: the second fail-before run, with a copy whose hash matched the blob: 8 hardening tests failed, the near-miss and imports tests passed. Seen again in the round-5 timing check: the v0.1.0 copy made the same way exited 0 with no output, until a `cmd /c` copy whose hash matched failed the test at a ratio of 14.6.
+- Evidence: the 0.2.0 hardening session's second fail-before run, with a copy whose hash matched the blob. Seen again in the round-5 timing check of the v0.1.0 copy.
 - Status: promoted to PLAYBOOK "Running a test against old code"
 
 ## 2026-11-16: The Edit tool wrote a \uFEFF escape into the script as a literal BOM

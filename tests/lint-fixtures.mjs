@@ -372,6 +372,19 @@ function leadFixtures() {
       quiet: ['second-sighting', 'promoted-drift', 'from-mismatch'],
     },
     {
+      // The closest older lesson is named, not the first one found, and the
+      // other is counted.
+      name: 'second-sighting: names the closest older lesson and counts the rest',
+      source: 'hand',
+      leads: true,
+      files: repo(
+        lesson({title: 'Release built without tests', date: '2026-03-01', rule: 'run the whole test suite before each release build and read its summary line.'}) +
+          lesson({title: 'Tests skipped once', date: '2026-02-01', rule: 'run the whole test suite before each release build.'}) +
+          lesson({title: 'Release built without the suite', date: '2026-01-01', rule: 'run the whole test suite before each release build and read its summary line twice.'}),
+      ),
+      fires: [{rule: 'second-sighting', severity: 'warning', file: 'LESSONS.md', line: 8, has: 'the open lesson 2026-01-01 "Release built without the suite" ('}, {rule: 'second-sighting', severity: 'warning', file: 'LESSONS.md', line: 8, has: ', and 1 more open lesson:'}],
+    },
+    {
       name: 'second-sighting: two open lessons on different topics',
       source: 'hand',
       leads: true,
@@ -383,6 +396,18 @@ function leadFixtures() {
       source: 'real',
       leads: true,
       files: repo(lesson({title: COMMIT_TITLE, date: '2026-11-16', rule: COMMIT_RULE, status: 'promoted to PLAYBOOK "Committing"'}), `# PLAYBOOK\n\n${COMMITTING}`),
+      quiet: ['promoted-drift', 'from-mismatch'],
+    },
+    {
+      // Steps past the 600th were cut before they were grouped by section, so a
+      // lesson promoted there was compared with its heading alone.
+      name: 'promoted-drift: a lesson whose section comes after 600 steps',
+      source: 'hand',
+      leads: true,
+      files: repo(
+        lesson({title: 'A flaky test was marked failed', rule: 'rerun a flaky test twice first.', status: 'promoted to PLAYBOOK "Handoffs"'}),
+        `# PLAYBOOK\n\n## Filler\n\n${Array.from({length: 600}, (_, i) => `${i + 1}. Filler step ${i}.`).join('\n')}\n\n## Handoffs\n\nFrom: 2026-01-02 "A flaky test was marked failed"\n\n1. Rerun a flaky test twice.\n`,
+      ),
       quiet: ['promoted-drift', 'from-mismatch'],
     },
     {
@@ -401,6 +426,8 @@ function leadFixtures() {
     {name: 'quoted-tool-output: a Traceback', source: 'hand', leads: true, files: repo(lesson({evidence: 'the run ended with a Traceback after the third test.'})), fires: [{rule: 'quoted-tool-output', severity: 'warning', file: 'LESSONS.md'}]},
     {name: 'quoted-tool-output: an indented line that starts with Error:', source: 'hand', leads: true, files: repo(lesson({evidence: 'the first run printed this.\n  Error: Cannot find module \'x\''})), fires: [{rule: 'quoted-tool-output', severity: 'warning', file: 'LESSONS.md', line: 10}]},
     {name: 'quoted-tool-output: a quote over 200 characters', source: 'hand', leads: true, files: repo(lesson({evidence: `the run printed "${'step done; '.repeat(20)}".`})), fires: [{rule: 'quoted-tool-output', severity: 'warning', file: 'LESSONS.md'}]},
+    {name: 'quoted-tool-output: a curly quote over 200 characters that holds a second opening quote', source: 'hand', leads: true, files: repo(lesson({evidence: `the run printed ${String.fromCharCode(0x201c)}${'step done; '.repeat(14)}${String.fromCharCode(0x201c)}${'step done; '.repeat(8)}${String.fromCharCode(0x201d)}.`})), fires: [{rule: 'quoted-tool-output', severity: 'warning', file: 'LESSONS.md'}]},
+    {name: 'quoted-tool-output: a curly quote of exactly 200 characters', source: 'hand', leads: true, files: repo(lesson({evidence: `the run printed ${String.fromCharCode(0x201c)}${'step done; '.repeat(18)}ok${String.fromCharCode(0x201d)}`})), quiet: ['quoted-tool-output']},
     {name: 'quoted-tool-output: short quotes far apart', source: 'real', leads: true, files: repo(lesson({title: F4_LINK_TITLE, date: '2026-11-17', evidence: PROBES_EVIDENCE})), quiet: ['quoted-tool-output']},
     {name: 'quoted-tool-output: an Evidence line that names a file and a search text', source: 'real', leads: true, files: repo(lesson({evidence: F8_AFTER}), BOOK, STUB), quiet: ['quoted-tool-output']},
     {name: 'unlabeled-claim: a Why that names a cause with no label', source: 'real', leads: true, files: repo(lesson({why: SKIPPED_WHY})), fires: [{rule: 'unlabeled-claim', severity: 'warning', file: 'LESSONS.md', line: 7}]},
@@ -431,8 +458,9 @@ export const LEAD_FIXTURES = leadFixtures();
 // ---- --pairs ------------------------------------------------------------------
 
 // Each case lists pairs that --pairs must print, each side named by its file
-// and a text its line holds. A "may list" case has none: the sieve may pass
-// it on, and the review clears it.
+// and a text its line holds. An "after" case whose fix is a pointer from one
+// rule to the other still lists its pair: --pairs compares words and can't see
+// the pointer, so the review clears it.
 const TIMING_BEFORE = [
   '## Testing on more than one system',
   '',
@@ -467,7 +495,7 @@ const HOLDS_RULES_FILE = [
 const RETRY_STEP = "4. Don't make a check pass by weakening it: no sleep, retry or skip for a flaky test, and no change to a test in the same step as the code it checks unless your report names it and says why. A flaky test gets its cause fixed, or is removed with an entry in `LESSONS.md` that says why.";
 const RETRY_RECONCILED = '5. Use the project retry rule in AGENTS.md. Preserve failed evidence, diagnose the cause, and resume a safe retry when a correction or changed condition supports it.';
 const RETRY_AGENTS =
-  '# Work rules\n\n- For this project, a few unsuccessful runs of the same step trigger diagnosis. Preserve the evidence, check relevant shared resources and ownership, and retry automatically when a correction or changed condition gives the next attempt a reasonable chance of success. If the cause persists, record what would unblock the step, work on other open items and resume when that condition changes.\n';
+  '# Work rules\n\n- For this project, a few unsuccessful runs of the same step trigger diagnosis. Preserve the evidence, and retry automatically when a correction or changed condition gives the next attempt a reasonable chance of success. If the cause persists, record what would unblock the step, work on other open items and resume when that condition changes.\n';
 
 export const PAIR_FIXTURES = [
   {
@@ -491,7 +519,13 @@ export const PAIR_FIXTURES = [
     files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': `# PLAYBOOK\n\n${TIMING_BEFORE.join('\n')}\n`},
     lists: [[{file: 'PLAYBOOK.md', has: '(heap, time)'}, {file: 'PLAYBOOK.md', has: 'A timing test compares growth'}]],
   },
-  {name: 'this repo after F1', source: 'real', files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': `# PLAYBOOK\n\n${TIMING_AFTER.join('\n')}\n`}, lists: []},
+  {
+    name: 'this repo after F1: still listed, since the fix is a pointer',
+    source: 'real',
+    files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': `# PLAYBOOK\n\n${TIMING_AFTER.join('\n')}\n`},
+    lists: [[{file: 'PLAYBOOK.md', has: 'measures heap use'}, {file: 'PLAYBOOK.md', has: 'A timing test compares growth'}]],
+    cue: 'a "not" against a plain statement',
+  },
   {
     name: 'clearing held sessions one at a time, against a rule file that keeps every slot filled',
     source: 'real',
@@ -506,8 +540,15 @@ export const PAIR_FIXTURES = [
     source: 'real',
     files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': `# PLAYBOOK\n\n## Checking your work\n\n${RETRY_STEP}\n`, 'AGENTS.md': RETRY_AGENTS},
     lists: [[{file: 'PLAYBOOK.md', has: 'no sleep, retry or skip'}, {file: 'AGENTS.md', has: 'retry automatically'}]],
+    cue: '"no retry" against "retry"',
   },
-  {name: 'the same, with the next step pointing at the retry rule', source: 'real', files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': `# PLAYBOOK\n\n## Checking your work\n\n${RETRY_STEP}\n${RETRY_RECONCILED}\n`, 'AGENTS.md': RETRY_AGENTS}, lists: []},
+  {
+    name: 'the same, with the next step pointing at the retry rule: still listed',
+    source: 'real',
+    files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': `# PLAYBOOK\n\n## Checking your work\n\n${RETRY_STEP}\n${RETRY_RECONCILED}\n`, 'AGENTS.md': RETRY_AGENTS},
+    lists: [[{file: 'PLAYBOOK.md', has: 'no sleep, retry or skip'}, {file: 'AGENTS.md', has: 'retry automatically'}]],
+    cue: '"no retry" against "retry"',
+  },
   {
     name: 'two commands for one action',
     source: 'hand',
@@ -547,6 +588,45 @@ export const PAIR_FIXTURES = [
     ),
     lists: [[{file: 'LESSONS.md', has: 'Never retry'}, {file: 'PLAYBOOK.md', has: 'from the CI page'}]],
     lacks: [[{file: 'LESSONS.md', has: 'Never retry'}, {file: 'PLAYBOOK.md', has: 'retry a failed upload of the release build twice'}]],
+  },
+  {
+    // Two lessons promoted into one section: each one's details still apply
+    // where the step says nothing, so two that conflict are a pair.
+    name: 'two promoted lessons of one section that conflict',
+    source: 'hand',
+    files: repo(
+      lesson({title: 'Uploads by hand', rule: 'Never retry a failed upload of the release build by hand.', status: 'promoted to PLAYBOOK "Uploads"'}) +
+        lesson({title: 'Uploads again', rule: 'Always retry a failed upload of the release build by hand.', status: 'promoted to PLAYBOOK "Uploads"'}),
+      '# PLAYBOOK\n\n## Uploads\n\nFrom: 2026-01-02 "Uploads by hand", 2026-01-02 "Uploads again"\n\n1. Upload the release build and record the result.\n',
+    ),
+    lists: [[{file: 'LESSONS.md', has: 'Never retry'}, {file: 'LESSONS.md', has: 'Always retry'}]],
+  },
+  {
+    name: 'must against do not',
+    source: 'hand',
+    files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': '# PLAYBOOK\n\n## Releases\n\n1. You must rebase the release branch onto main before the merge.\n2. Do not rebase the release branch onto main; merge it as it is.\n'},
+    lists: [[{file: 'PLAYBOOK.md', has: 'You must rebase'}, {file: 'PLAYBOOK.md', has: 'Do not rebase'}]],
+    cue: '"must rebase" against "do not rebase"',
+  },
+  {
+    // "or" carries the negation on to the next topic word: "move" is
+    // forbidden too, not only "rename".
+    name: 'a negation that goes on through "or"',
+    source: 'hand',
+    files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': "# PLAYBOOK\n\n## Releases\n\n1. Don't rename or move the release folder on the build server.\n2. Move the release folder to the archive on the build server after each build.\n"},
+    lists: [[{file: 'PLAYBOOK.md', has: "Don't rename"}, {file: 'PLAYBOOK.md', has: 'Move the release'}]],
+    cue: '"don\'t move" against "move"',
+  },
+  {
+    // A lint-ignore line inside a step belongs to the line after it, so the
+    // step's text goes on past it, as md-steps reads it.
+    name: 'a step that goes on past a lint-ignore line',
+    source: 'hand',
+    files: {'LESSONS.md': HEAD, 'PLAYBOOK.md': '# PLAYBOOK\n\n## Uploads\n\n1. Run the release upload from the build server.\n   <!-- lint-ignore md-steps: an example -->\n   Never retry a failed upload of the release build by hand.\n2. Always retry a failed upload of the release build by hand, as in the example.\n'},
+    lists: [[{file: 'PLAYBOOK.md', has: 'Run the release upload'}, {file: 'PLAYBOOK.md', has: 'Always retry'}]],
+    // The comment is not part of the step: "example" is a word only it holds.
+    notShared: ['example'],
+    cue: '"never" against "always"',
   },
   {
     // A weak cue ("never paste" against "paste") on two steps that share only

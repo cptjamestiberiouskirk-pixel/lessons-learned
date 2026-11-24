@@ -947,8 +947,26 @@ const AT_ONCE = /\b(?:all at once|at once|together|in parallel)\b|\ball\b/i;
 // topic words of each clause that holds a negator, and the cue words it holds.
 // Reads at most MAX_LINT_LINE characters, and keeps at most MAX_ITEM_WORDS of
 // each kind, so comparing two of them costs at most that much.
+// Text shaped like a key is removed first, so no part of it becomes a topic
+// word that a lead or a pair prints: `ghp_` and its payload are split by the
+// tokens, and unkeyed() can't find a payload without its prefix. A private key
+// goes from its BEGIN line to its END line, or to the end of the text. The text
+// is cut to MAX_LINT_LINE first, so the search stays linear; a key that the cut
+// leaves without its end (too short to be key-shaped) goes from its prefix on.
+const KEYS = new RegExp(KEY_SHAPED.source, 'g');
+const PEM_BLOCK = /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[^]*?(?:-----END (?:[A-Z]+ )?PRIVATE KEY-----|$)/g;
+const KEY_PREFIX = /\b(?:ghp_|github_pat_|sk-|AKIA|xox[abprs]-)/;
 function topicOf(text) {
-  const line = text.length > MAX_LINT_LINE ? text.slice(0, MAX_LINT_LINE) : text;
+  let line = text;
+  if (text.length > MAX_LINT_LINE) {
+    line = text.slice(0, MAX_LINT_LINE);
+    // The last word, found from the end so a long one costs its length once.
+    let k = line.length;
+    while (k > 0 && !/[\s`]/.test(line[k - 1])) k--;
+    const at = line.slice(k).search(KEY_PREFIX);
+    if (at >= 0) line = `${line.slice(0, k + at)} `;
+  }
+  line = line.replace(PEM_BLOCK, ' ').replace(KEYS, ' ');
   const t = {words: new Map(), pairs: new Set(), spans: new Map(), commands: new Map(), negated: new Map(), negClauses: [], negator: false};
   let prev = null; // the last topic stem, for word pairs
   let verb = null; // the last topic stem in this clause, for a command's verb
@@ -1095,11 +1113,14 @@ function playbookSteps(log) {
       last = null;
       continue;
     }
+    // A lint-ignore line belongs to the line after it, as in md-steps: it is
+    // not part of a step's text, and the step goes on past it.
+    if (IGNORE_START.test(r.text)) continue;
     const m = r.text.match(/^(\d{1,9})\. (.*)$/s);
     if (m && r.section) {
       last = {line: r.n, n: m[1], section: r.section, parts: [m[2]]};
       steps.push(last);
-    } else if (last && /^\s+\S/.test(r.text) && !IGNORE_START.test(r.text)) last.parts.push(r.text.trim());
+    } else if (last && /^\s+\S/.test(r.text)) last.parts.push(r.text.trim());
     else last = null;
   }
   return steps.map(({parts, ...s}) => ({...s, text: parts.join(' ')}));
@@ -1110,9 +1131,10 @@ function playbookSteps(log) {
 const STACK_FRAME = /\bat [\w.$<>]{1,200} \([^\s()]{1,400}:\d{1,9}:\d{1,9}\)|\bFile "[^"\n]{1,400}", line \d{1,9}/;
 const TRACEBACK = /\bTraceback\b/;
 const ERROR_LINE = /^(?:[A-Z][A-Za-z]{0,40})?[Ee]rror:/;
-const LONG_CURLY = new RegExp(LDQUO + '[^' + RDQUO + '\\n]{201,}' + RDQUO);
 // Straight quotes pair left to right, as backticks do, so the text between
-// one quote's end and the next one's start is not taken for a quote.
+// one quote's end and the next one's start is not taken for a quote. A curly
+// quote runs from the first opening quote after the last closing one, so a
+// second opening quote inside it doesn't end it. One pass each: linear time.
 function longQuote(line) {
   let open = -1;
   for (let i = line.indexOf('"'); i >= 0; i = line.indexOf('"', i + 1)) {
@@ -1122,7 +1144,17 @@ function longQuote(line) {
       open = -1;
     }
   }
-  return LONG_CURLY.test(line);
+  open = -1;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === LDQUO) {
+      if (open < 0) open = i;
+    } else if (c === RDQUO) {
+      if (open >= 0 && i - open - 1 > 200) return true;
+      open = -1;
+    } else if (c === '\n') open = -1;
+  }
+  return false;
 }
 function pastedOutput(text) {
   const line = text.length > MAX_LINT_LINE ? text.slice(0, MAX_LINT_LINE) : text;
@@ -1144,9 +1176,8 @@ function leadFindings(log) {
   const fieldLine = (e, field) => e.lines.find((l) => l.field === field)?.n ?? e.line;
   const open = log.entries.filter((e) => e.status === 'open').slice(0, MAX_ITEMS);
   const rules = open.map((e) => ({e, line: fieldLine(e, 'Rule going forward'), t: topicOf(e.fields['Rule going forward'] || '')}));
-  const steps = playbookSteps(log)
-    .slice(0, MAX_ITEMS)
-    .map((s) => ({...s, t: topicOf(s.text)}));
+  const allSteps = playbookSteps(log);
+  const steps = allSteps.slice(0, MAX_ITEMS).map((s) => ({...s, t: topicOf(s.text)}));
 
   // dup-rule: the step closest to each open lesson's rule, if close enough.
   for (const r of rules) {
@@ -1159,39 +1190,58 @@ function leadFindings(log) {
       add(r.line, 'dup-rule', `its rule shares ${sharedText(best.o)} with PLAYBOOK "${best.s.section.label}" step ${best.s.n}: if the step covers it, promote the lesson there (the lessons check, step 5). A lead, not a verdict`, r.e);
   }
 
-  // second-sighting: two open lessons whose rules overlap, once per pair, on
-  // the newer one. The log is newest first, so of two on one date the newer
-  // is higher up.
+  // second-sighting: two open lessons whose rules overlap, on the newer one.
+  // The log is newest first, so of two on one date the newer is higher up.
+  // One finding per lesson, naming the closest older one and counting the
+  // rest, so many similar lessons give at most one finding each.
+  const sightings = new Map(); // rules index of the newer -> {older, o, count}
   for (let i = 0; i < rules.length; i++)
     for (let j = i + 1; j < rules.length; j++) {
       const o = overlap(rules[i].t, rules[j].t);
       if (!similar(o)) continue;
       const a = rules[i].e;
       const b = rules[j].e;
-      const [newer, older] = a.date > b.date || (a.date === b.date && a.line < b.line) ? [rules[i], rules[j]] : [rules[j], rules[i]];
-      add(newer.line, 'second-sighting', `its rule overlaps the open lesson ${label(older.e.key)} (${sharedText(o)}): promote both into one step (the lessons check, step 5). A lead, not a verdict`, newer.e);
+      const [newer, older] = a.date > b.date || (a.date === b.date && a.line < b.line) ? [i, j] : [j, i];
+      const s = sightings.get(newer);
+      if (!s) sightings.set(newer, {older, o, count: 1});
+      else {
+        s.count++;
+        if (o.ratio > s.o.ratio) Object.assign(s, {older, o});
+      }
     }
+  for (const [newer, {older, o, count}] of [...sightings].sort((x, y) => x[0] - y[0])) {
+    const more = count > 1 ? `, and ${count - 1} more open lesson${count > 2 ? 's' : ''}` : '';
+    add(rules[newer].line, 'second-sighting', `its rule overlaps the open lesson ${label(rules[older].e.key)} (${sharedText(o)})${more}: promote them into one step (the lessons check, step 5). A lead, not a verdict`, rules[newer].e);
+  }
 
   // promoted-drift. A promoted step is short, and its lessons keep the details
   // (the lessons check, step 5), so a lesson's terms missing from its section
   // are by design. What this finds instead is a promoted lesson whose title
   // and rule share no topic word and no span with its section's heading and
-  // steps: it looks filed in the wrong section.
-  const bySection = new Map();
-  for (const s of steps) {
-    if (!bySection.has(s.section)) bySection.set(s.section, []);
-    bySection.get(s.section).push(s.t);
-  }
+  // steps: it looks filed in the wrong section. Each section's topic words and
+  // spans are gathered once, from its heading and all its steps (not only the
+  // first MAX_ITEMS), so a lesson costs time in its own words only.
+  const sectionTopics = new Map(); // section -> {words, spans}
+  const topicsOf = (section) => {
+    if (!sectionTopics.has(section)) {
+      const t = topicOf(section.name);
+      sectionTopics.set(section, {words: new Set(t.words.keys()), spans: new Set(t.spans.keys())});
+    }
+    return sectionTopics.get(section);
+  };
+  allSteps.forEach((s, k) => {
+    const t = k < steps.length ? steps[k].t : topicOf(s.text);
+    const u = topicsOf(s.section);
+    for (const w of t.words.keys()) u.words.add(w);
+    for (const n of t.spans.keys()) u.spans.add(n);
+  });
   for (const e of log.entries) {
     if (e.status !== 'promoted') continue;
     const section = log.sections.get(e.section);
     if (!section) continue; // from-mismatch reports it
     const own = topicOf(`${e.title}. ${e.fields['Rule going forward'] || ''}`);
-    const topics = [topicOf(section.name), ...(bySection.get(section) || [])];
-    const apart = topics.every((t) => {
-      const o = overlap(own, t);
-      return o.shared.length === 0 && o.spans.length === 0;
-    });
+    const u = topicsOf(section);
+    const apart = ![...own.words.keys()].some((w) => u.words.has(w)) && ![...own.spans.keys()].some((n) => u.spans.has(n));
     if (apart)
       add(e.line, 'promoted-drift', `promoted to "${section.label}", but its title and rule share no topic word or span with that section's heading and steps: check that it is filed in the right section. A lead, not a verdict`, e);
   }
@@ -1323,11 +1373,11 @@ export function pairsReport(log) {
     for (const j of touched) {
       if (count[j] >= 2 || sameCommand[j]) {
         const a = items[j];
-        // A promoted lesson and a step of its own section (or two lessons of one
-        // section: both give that step's details, so neither is followed alone),
-        // or two template steps left unchanged.
+        // A promoted lesson and a step of its own section, where the step wins,
+        // or two template steps left unchanged. Two lessons of one section are
+        // compared: a detail the step doesn't mention still applies, from each.
         // Not a `continue`: count[j] and sameCommand[j] are reset below.
-        const own = (a.shipped && items[i].shipped) || (a.section !== null && a.section === items[i].section && (a.file === 'LESSONS.md' || items[i].file === 'LESSONS.md'));
+        const own = (a.shipped && items[i].shipped) || (a.section !== null && a.section === items[i].section && (a.file === 'LESSONS.md') !== (items[i].file === 'LESSONS.md'));
         const cue = own ? null : cueOf(a.t, it);
         const o = cue ? overlap(a.t, it) : null;
         // A weak cue counts only for two texts that share more of their topic:
@@ -1478,8 +1528,6 @@ export function lintReport(log, {leads = false} = {}) {
     ignores.push(...lineIgnores(rows).map((ig) => ({...ig, file: file.name})));
   }
 
-  if (leads) for (const l of leadFindings(log)) push('LESSONS.md', l.line, l.f, l.entry);
-
   // Sizes.
   const {budget} = log.settings;
   const allTokens = tokens(allReport(log).join('\n'));
@@ -1519,6 +1567,8 @@ export function lintReport(log, {leads = false} = {}) {
       if (!byTarget.has(key)) byTarget.set(key, v);
     }
   }
+  // Leads last, so past MAX_KEEP they are what is dropped, not an error.
+  if (leads) for (const l of leadFindings(log)) push('LESSONS.md', l.line, l.f, l.entry);
   for (const f of found) {
     const ig = FIXED.has(f.rule) ? null : byTarget.get(keyOf(f.file, f.rule, f.entry ? `entry ${f.entry.line}` : f.line));
     if (ig) {
@@ -1546,7 +1596,13 @@ const findingLine = (f) => `${f.severity === 'error' ? 'ERROR' : 'WARN '} ${f.ru
 // --lint and --doctor as lines. `all` also lists the silenced findings;
 // `doctor` adds the summary of the whole log.
 export function lintLines(log, report, {all = false, doctor = false} = {}) {
-  const lines = report.findings.slice(0, MAX_FINDINGS).map(findingLine);
+  // Past the cap, errors are chosen before warnings, so many leads can't push
+  // an error out of the list. The printed ones keep their file and line order.
+  const rank = (f) => (f.severity === 'error' ? 0 : 1);
+  const shown = report.findings.length <= MAX_FINDINGS ? report.findings
+    : report.findings.map((f, k) => [f, k]).sort((x, y) => rank(x[0]) - rank(y[0]) || x[1] - y[1])
+      .slice(0, MAX_FINDINGS).sort((x, y) => x[1] - y[1]).map(([f]) => f);
+  const lines = shown.map(findingLine);
   if (report.findings.length > MAX_FINDINGS) lines.push(`... and ${report.findings.length - MAX_FINDINGS} more, not printed`);
   if (all) for (const f of report.silenced.slice(0, MAX_FINDINGS)) lines.push(`SILENCED ${f.rule} ${f.file}${f.line ? `:${f.line}` : ''} ${f.message} (reason: ${f.reason})`);
   for (const n of report.notes) lines.push(`-- ${n}`);

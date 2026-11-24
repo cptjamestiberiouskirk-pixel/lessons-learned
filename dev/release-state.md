@@ -24,6 +24,44 @@ Base: 7d59289 (PR 14's head). Plan: `lessons-defense-plan.md` revision 5, items 
   - Judge the leads and pairs from the five repos (plan item 6, fallback). Each finding judged fine becomes a quiet fixture.
 - **Settled by the user on 2026-11-24:** the fixture text taken from other repos goes in as shown (D-D), and the two fixes above.
 
+### Review rounds
+
+- **Codex on PR 15 (f06d1d2):** two findings, both fixed.
+  - Key text reached `--pairs`: a key cut short by the line limit kept its prefix, and a private key block kept its body. `topicOf` now removes a whole PEM block (to its END line or the end of the text) and a key the cut splits.
+  - Two promoted lessons of one section were never paired, since the `own` skip covered any two items of one section. It now skips only a lesson against its own section's steps.
+- **Round 1, two reviewers, the diff from 7d59289 (saved state: scratch `p3/review1/state`).** Reviewer A, the code: 6 CONFIRMED, all fixed, each with a test that fails on the reviewed state.
+  - A1: `promoted-drift` rescanned every step of the section for each lesson. Each section's topic words and spans are now gathered once.
+  - A2: the long curly quote pattern of `quoted-tool-output` was quadratic on a line of opening quotes. It now stops at a quote mark.
+  - A3: `second-sighting` gave one finding per pair, so many similar lessons gave a quadratic count of findings and pushed errors out of the list. It now gives one per lesson, naming the closest older one and counting the rest. Leads are also kept after the errors, so the cap on kept findings drops leads first (the printed list: round 2, A2-1).
+  - A4: key fragments, as Codex found.
+  - A5: a `lint-ignore` line inside a step ended the step, so its indented lines after the comment were not read. The comment is now skipped, and the step goes on past it, as `md-steps` reads it.
+  - A6: `promoted-drift` read only the first 600 steps, so a lesson in a later section was always reported. It now reads all steps.
+  - Not reported, minor: the negation lookback's `last` word is not reset at a clause end, and `--pairs` doesn't print a rule file it couldn't read.
+- Reviewer B, the tests and docs: 7 CONFIRMED, all fixed.
+  - The retry fixture didn't check its cue, and two "after" fixtures were vacuous: they listed some pair, not the pair they name. Each now names its pair and cue.
+  - The "must" against "do not" cue had no fixture, and an "or" continuation of a negation had none.
+  - CHANGELOG: it named the wrong triggers, left out that a weak cue counts when two texts share a command, and said "the playbook template" where it meant this release's. SECURITY row 30 didn't say what `--pairs` prints for two commands.
+  - A test comment and a LESSONS quote were wrong.
+- **Mutants after round 1:** the two whose search text the fixes changed were updated, and 8 were added for the fixes (scratch `p3/mutants.mjs`).
+- **Round 2, two reviewers, the diff from round 1's state (saved: scratch `p3/review2/state`).** Reviewer A, the code: 3 CONFIRMED, all fixed.
+  - A2-1: with `--leads`, a hundred leads in LESSONS.md filled the 100 printed findings, sorted by file and line, so no error in PLAYBOOK.md or a rule file was printed. Past the cap, `lintLines` now takes the errors first and prints them in file and line order with the rest. The round 1 test read `--json`, which has no print cap; it now reads the text too, and fails on the reviewed state.
+  - A2-2, minor: round 1's linear `LONG_CURLY` missed a long curly quote that holds a second opening quote. It is now one pass that keeps the first opening quote since the last closing one. A fixture fails on the reviewed state.
+  - A2-3, docs: this file had A5 backwards. Fixed above.
+  - Checked and fine: key removal (2,834 cut positions, 0 leaks), the `own` skip, second-sighting's order and count, and the drift union's cost.
+  - Not in this diff, minor, deferred: `label()` cuts a title or section name at 200 characters before `unkeyed` runs, so a key across character 200 of a title could print its prefix and part of its payload. Not probed.
+- Reviewer B, the tests and docs: 6 CONFIRMED and 1 PLAUSIBLE, all addressed. These were tests that passed with the guard they were written for removed, not bugs in the code.
+  - The cut-key test never cut a key: a case now puts the secret across character 4000, and the filler key's payload is looked for too. The mutant for it had the wrong indent, so it never ran.
+  - The step past a lint-ignore line didn't check that the comment stays out of the step: the fixture now checks that a word only the comment holds is not shared.
+  - second-sighting's count and its choice of the closest older lesson had no test: the volume test asserts 299 findings and "and 298 more", and a fixture names the closest of two older lessons.
+  - Two cues were loose (`retry`) and one "after" fixture had none: each now gives the whole cue.
+  - "Editing files" step 3 said "the Edit tool" where step 1 says "the Edit or Write tool". It now matches.
+  - "Leads kept after the errors" has no test: one would need over 20,000 kept findings (`MAX_KEEP`). It is stated here instead of claimed as tested.
+- **Round 3, one reviewer, round 2's fixes (saved: scratch `p3/review3/state`).** Nothing CONFIRMED in the changed code, so the rounds stop here.
+  - Fixed anyway: CHANGELOG and the `lintLines` comment said errors are printed first; they are chosen first and printed in file and line order. Three mutants passed every test: the printed list unsorted, 99 printed, and a curly quote of exactly 200 characters counted. The volume test now checks 100 printed lines, the "... and N more" count and the order, and a fixture holds a curly quote of exactly 200 characters.
+  - By design, minor: a stray unclosed opening quote followed by a short quote over 200 characters later is read as one long quote. A nested quote whose tail is the long part (opening, short head, inner quote, 250 characters, closing) is missed, as before round 2. One pass can't tell these from the round 2 fixture's shape.
+  - Minor: the newline reset in the curly pass can't run, since `pastedOutput` passes one line at a time. Kept as a guard.
+- **Mutants after round 3:** 49 (scratch `p3/mutants.mjs`), each killed by the test written for it on 2026-11-24, `pairs-quadratic-words` included in this run.
+
 ## Unreleased: the playbook template's steps 3, 5 and 6
 
 Base: 1f95a46. The wording started from lip-service's draft: step 5 merges lessons that share a rule into one short step, and step 3 follows a step with its lessons' specifics.
