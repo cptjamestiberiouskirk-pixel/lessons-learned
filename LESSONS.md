@@ -15,6 +15,34 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-24: A compare against local main read a branch that was behind the release
+- What went wrong: to find which version added the stale-path errors in two other repos, I ran the script from `git show main:...`. It had no `--lint`, so it printed its usage, and my count of ERROR lines read 0. I nearly reported that 0.4.0 gave none of them.
+- Why: CONFIRMED: local `main` was at a5c9e5b, and `git log main..7d59289` listed the 0.4.0 release commit. This worktree never moves local `main`; `origin/main` was at 1f95a46.
+- Rule going forward: to compare with a release, use its tag (`v0.4.0`), or `origin/main` after a fetch, not local `main`. Read the old run's output before counting lines in it.
+- Evidence: `dev/release-state.md`, search "v0.4.0 already gives three of them"
+- Status: open
+
+## 2026-11-24: An exit code printed inside an echo was the exit of a command substitution
+- What went wrong: `node ... > out; echo "$(basename "$r"): exit $?"` printed exit 0 for v0.4.0's `--lint` on a repo with errors, so `--lint` looked like it had changed its exit code.
+- Why: CONFIRMED: `$?` in that line is read after `$(basename ...)` runs, so it was basename's exit. Saved right after node, the exit was 1 in all three versions.
+- Rule going forward: save a command's exit code on the next statement (`e=$?`), before anything else runs, a `$(...)` in the line that prints it included.
+- Evidence: in Git Bash, `false; echo "$(true) $?"` prints 0.
+- Status: open
+
+## 2026-11-24: A continue in the pairs loop skipped the reset at the loop's end
+- What went wrong: to keep a promoted lesson from being paired with its own section's steps, I added a `continue` in the loop over the items `--pairs` compares. The loop zeroes `count[j]` and `sameCommand[j]` at its end, so the `continue` left them set and the item was never compared again. A new fixture listed no pairs at all, even with the cutoff at 0.
+- Why: CONFIRMED by reading the loop: the reset sits at the end of the body, after the pair logic, and I didn't read past the line I changed.
+- Rule going forward: before adding a `continue` or an early `return` inside a loop in `dev/lessons.mjs`, read the rest of the loop's body for state it resets or records. Skip the work with a condition instead.
+- Evidence: `plugins/lessons-learned/templates/lessons.mjs`, search "Not a `continue`: count[j] and sameCommand[j] are reset below."
+- Status: open
+
+## 2026-11-24: Phase 3 was built in a second worktree this session can't edit
+- What went wrong: I cut phase 3's branch into a new worktree, `q5-phase3`, so Auto-fix could still push to PR 14 here, and had a subagent build it there. When I came to tune it, the worktree hook refused every edit from this session ("belongs to a different worktree"). I removed the worktree and checked its branch out here, after a rebase I had to do over.
+- Why: the session runs in its own isolated worktree, and its hook refuses writes to any other one. I hadn't checked that before choosing where the work would go.
+- Rule going forward: a second branch is built in this session's own worktree: commit or push the first branch, then switch with a clean tree. Don't start a worktree for work this session will edit.
+- Evidence: `dev/release-state.md`, search "Phase 3 was built in a subagent"
+- Status: open
+
 ## 2026-11-23: A node -e edit to the lint fixture left a bare quote in a JS string
 - What went wrong: for Q32 I changed the `STEP3` fixture in `tests/lint-fixtures.mjs` with a `node -e` script in the Bash tool. The new text held an escaped quote inside a single-quoted JS string, and its backslash was lost on the way from the command to the file, so the file no longer parsed. The script reported "ok", and I only saw it when the next edit's search text didn't match.
 - Why: I broke "Editing files" step 1, which already says text with a backslash goes in through the Edit or Write tool. A text replace never parses what it writes, so nothing else would have caught it before `node --test`.
@@ -278,8 +306,8 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: a `node -e` mutant generator inside Git Bash failed on its quoting and wrote no files. The loop that followed ran the stale tests with `LESSONS_SCRIPT` set to each missing path, and every run showed 8 of 8 failing, the same as a mutant caught by every test.
 - Why: the loop didn't check that each mutant file existed, and a missing script fails every test the same way a broken one does.
 - Rule going forward: write a mutant or copy generator as a script file, not nested quotes in `node -e`, and check each mutant exists and differs from the original before reading its test results. A mutant should fail the one test written for its guard, not all of them.
-- Evidence: the 0.3.0 session: the "Expected ',', got 'string literal'" error above six "fail 8" lines; rerun from a script file, each mutant failed only its own test.
-- Status: open
+- Evidence: the 0.3.0 session: the "Expected ',', got 'string literal'" error above six "fail 8" lines; rerun from a script file, each mutant failed only its own test. Seen again 2026-11-24: a variant of the script built through `node -e` put an import above the shebang, and every run failed with a SyntaxError; rebuilt from a script file.
+- Status: promoted to PLAYBOOK "Running a test against old code"
 
 ## 2026-11-17: A scripted edit across four files wrote three before it found the fourth didn't match
 - What went wrong: a node script replaced text in both playbook templates and in this repo's own `PLAYBOOK.md` and `LESSONS.md`. It wrote the first three, then stopped on the repo's `LESSONS.md`, which has no "Entries go below this line" sentence. An earlier script for the two setup skills expected a line in both word orders, which each skill holds only one of.

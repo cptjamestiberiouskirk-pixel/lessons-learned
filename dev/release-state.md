@@ -4,6 +4,26 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
+## Unreleased: --leads and --pairs (phase 3)
+
+Base: 7d59289 (PR 14's head). Plan: `lessons-defense-plan.md` revision 5, items 3, 5 and 6. The claims it rests on were settled first, read only: the Deep Belt "after" text is committed now, and performance-factory's rule files are untracked. A recorded parallel owner wasn't found in performance-factory, so nothing is built on it.
+
+- **Where it was built:** Phase 3 was built in a subagent, from a brief, in a second worktree. It was then rebased onto 7d59289 and moved into this session's worktree, because this session can't edit another worktree (LESSONS.md, 2026-11-24).
+- **`promoted-drift` is redefined:** it now fires on a promoted lesson that shares no topic word or span with its section. The plan's version, a lesson's terms gone from its section, is correct by design since Q32 makes a step short.
+- **`--pairs` tuning, on the five repos, before the user judges any finding:** at first, all of this repo's 40 printed pairs came from one cue, a word one rule forbids against the same word said plainly ("no tool" against "tool"). That cue and the "not" cue are now weak (weight 1). A weak cue makes a pair only at an overlap score of 4 or more (`WEAK_SHARED`).
+  - 7 and 5 dropped real pairs (F1 is at 4, the retry pair at 5).
+  - Candidates went from 320 to 110 here, 47 to 7 (Deep Belt), 113 to 40 (lip-service), 51 to 16 (performance-monitor) and 48 to 25 (performance-factory).
+  - Then promoted lessons were added, as `--lint` reads them since 7d59289, except with their own section's steps: 160, 21, 56, 16 and 25.
+- **Mutants:** 31 (scratch `p3/mutants.mjs`). 30 are killed in every run by the test written for them. `pairs-quadratic-words`, a topicOf that keeps every word and looks each up with `Array.includes`, was killed in 3 of 5 runs on 2026-11-24: its slowdown ratio is about 8.6, near the timing test's bound of 8. The timing test's comment says it is not trusted to catch that version; it is written for the regex lookback (`pairs-quadratic-lookback`, ratio about 14), which it kills every time.
+- **The shipped templates pair with themselves:** `--pairs` on a fresh repo holding only the template `PLAYBOOK.md` and `LESSONS.md` prints 8 pairs. All 8 are the weak negated-word cue between two template steps, such as step 4 of "The lessons check" ("a redo or retry") against step 4 of "Checking your work" ("no sleep, retry or skip"). So every repo's list starts with up to 8 pairs that are not conflicts. Three fixes were measured in scratch:
+  - No weak pair between two PLAYBOOK steps, or between two items of one file: either drops all 8, and either loses F1 and the hand fixture "a step that forbids what another says to do". Ruled out.
+  - No pair between two steps whose text is unchanged from the template (variant C, scratch `p3/varc.mjs`): 111 of 111 lint tests pass, the bare templates give 0 pairs, the retry pair stays. In the five repos it removes 0 to 5 pairs even with every released template's steps, since their steps were edited or promoted into. The script would carry the template's step texts, kept in step with a test.
+  - The user chose this one on 2026-11-24. It is `SHIPPED_STEPS`, the sha256 keys of the current template's 11 steps, kept in step by a test that finds them with `node:crypto`. Two fixtures: the bare templates give no pairs, and a template step a repo changed is paired again. Two mutants, each killed.
+- **stale-path reads git's tokens as paths:** `w/crlf`, `w/lf` and `w/mixed` (from `git ls-files --eol`) and `origin/HEAD` are errors in Deep Belt and lip-service. v0.4.0 already gives three of them (Deep Belt PLAYBOOK.md:69 twice, lip-service LESSONS.md:21). 7d59289 adds three on Deep Belt LESSONS.md:155, a promoted lesson's rule. Fixed on PR 14 in f8eab54, as the user chose, and phase 3 rebased on it.
+- **Waiting on the user:**
+  - Judge the leads and pairs from the five repos (plan item 6, fallback). Each finding judged fine becomes a quiet fixture.
+- **Settled by the user on 2026-11-24:** the fixture text taken from other repos goes in as shown (D-D), and the two fixes above.
+
 ## Unreleased: the playbook template's steps 3, 5 and 6
 
 Base: 1f95a46. The wording started from lip-service's draft: step 5 merges lessons that share a rule into one short step, and step 3 follows a step with its lessons' specifics.

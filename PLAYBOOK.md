@@ -41,11 +41,12 @@ From: 2026-11-16 "A shell copy out of the plugin folder was refused", 2026-11-16
 
 ## Running a test against old code
 
-From: 2026-11-16 "A fail-before run used a copy of the old script that was one line long", 2026-11-18 "A fail-before copy of the repo was made from the working tree, so it ran the new skills"
+From: 2026-11-16 "A fail-before run used a copy of the old script that was one line long", 2026-11-18 "A fail-before copy of the repo was made from the working tree, so it ran the new skills", 2026-11-17 "Mutant runs against files that were never written looked like six caught mutants"
 
 1. In pwsh, copy an old version of a file with a byte-exact redirect: `cmd /c "git show <rev>:<path> > <file>"`. Not `| Set-Content -NoNewline`, which joins the lines, and not from Git Bash, which rewrites `/c`.
 2. Check the copy before using it: `git hash-object <file>` must print what `git rev-parse <rev>:<path>` prints.
 3. A fail-before run can use a copy of the whole repo. In that copy, every file the fix changed, other than the tests written for it, comes from `git show <rev>:<path>`, where `<rev>` is the commit before the fix. Copy each one as step 1 says, and check each one as step 2 says before the run.
+4. Make mutants and other changed copies of a file with a script file, not with inline code such as `node -e`. Before reading a test result from a copy, check that it exists and differs from the original: a missing copy fails every test, as a broken one does.
 
 ## Testing on more than one system
 
