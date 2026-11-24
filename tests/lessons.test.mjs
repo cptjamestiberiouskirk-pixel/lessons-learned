@@ -134,7 +134,7 @@ test('--section prints the steps and the rules of the lessons promoted there, an
   const r = run(['--section', 'Changing saved state'], {lessons: SECTION_LESSONS, playbook: SECTION_BOOK});
   assert.equal(r.code, 0, r.out);
   const lines = r.out.trimEnd().split('\n');
-  assert.match(lines[0], /^PLAYBOOK "Changing saved state" \(PLAYBOOK\.md line \d+\)$/);
+  assert.match(lines[0], /^PLAYBOOK "Changing saved state" \(section 3, PLAYBOOK\.md line \d+\)$/);
   assert.deepEqual(lines.slice(1, 3), ['1. Edit every writer and reader.', '2. Read the save back.']);
   assert.match(lines[3], /^-- 2 lessons promoted to this section \(their Status names it\)/);
   assert.deepEqual(lines.slice(4), [
@@ -152,7 +152,7 @@ test('--section matches a name in another case, and an unknown name lists the se
   assert.match(lower.out, /^PLAYBOOK "Changing saved state"/);
   const none = run(['--section', 'Nowhere'], {lessons: SECTION_LESSONS, playbook: SECTION_BOOK});
   assert.equal(none.code, 1, none.out);
-  assert.match(none.out, /^no section "Nowhere" in PLAYBOOK\.md; its sections: "The lessons check", "Checking your work", "Changing saved state", "Deploying"$/m);
+  assert.match(none.out, /^no section "Nowhere" in PLAYBOOK\.md; its sections: 1 "The lessons check", 2 "Checking your work", 3 "Changing saved state", 4 "Deploying"$/m);
   const empty = run(['--section', 'Checking your work'], {lessons: SECTION_LESSONS, playbook: SECTION_BOOK});
   assert.match(empty.out, /^-- no lesson is promoted to this section$/m);
 });
@@ -191,7 +191,7 @@ test('--section prints a From: line that names no lesson, both sections of a dup
   assert.match(dup.out, /^1\. Second\.$/m, 'the second section of the same name is printed too');
   const foo = run(['--section', 'foo'], {playbook: book});
   assert.equal(foo.code, 1, foo.out);
-  assert.match(foo.out, /^no section "foo" in PLAYBOOK\.md; it matches 2 sections that differ only in case: give the name exactly; /m);
+  assert.match(foo.out, /^no section "foo" in PLAYBOOK\.md; it matches 2 sections that differ only in case: give its number; /m);
 });
 
 test('--section prints a From: line in a code block, trims the name, keeps a section Budget: and ends with the format-problem line', () => {
@@ -233,7 +233,44 @@ test('--section on a section that starts with many blank lines costs linear time
 
 test('a lookup that names a section points to --section, and one that names none does not', () => {
   const saved = run(['save'], {lessons: SECTION_LESSONS, playbook: SECTION_BOOK});
-  assert.match(saved.out, /^-- for each section named, node dev\/lessons\.mjs --section "<name>" prints its steps and its lessons' rules$/m);
+  assert.match(saved.out, /^-- node dev\/lessons\.mjs --section <number> prints a section's steps and its lessons' rules: give the section's number, never its name$/m);
   const deploy = run(['migration'], {lessons: SECTION_LESSONS, playbook: SECTION_BOOK});
   assert.doesNotMatch(deploy.out, /--section/);
+});
+
+// From Codex's security review of PR 16. A section's name is repo text: in a
+// command, a shell runs a $(...) or backtick in it before node starts. So the
+// lookup prints each section's number, and step 3 gives that, never the name.
+test('a lookup prints each section\'s number, --section takes it, and step 3 never puts a name in a command', () => {
+  const book = `${SECTION_BOOK}\n## Ship $(touch marker)\n\n1. Ship it.\n\n## 7\n\n1. A section named with digits.\n`;
+  const lessons = SECTION_LESSONS + entry('2025-12-01', 'Shipping broke', {rule: 'ship with care', status: 'promoted to PLAYBOOK "Ship $(touch marker)"'});
+  const look = run(['save', 'ship'], {lessons, playbook: book});
+  assert.match(look.out, /^PLAYBOOK "Changing saved state": follow its steps \(2 matching lessons\), section 3$/m);
+  assert.match(look.out, /^PLAYBOOK "Ship \$\(touch marker\)": follow its steps \(1 matching lesson\), section 5$/m);
+  const byNumber = run(['--section', '5'], {lessons, playbook: book});
+  assert.equal(byNumber.code, 0, byNumber.out);
+  assert.match(byNumber.out, /^PLAYBOOK "Ship \$\(touch marker\)" \(section 5, PLAYBOOK\.md line \d+\)$/m);
+  assert.match(byNumber.out, /^ {4}ship with care$/m);
+  const digits = run(['--section', '7'], {lessons, playbook: book});
+  assert.equal(digits.code, 1, 'a value of digits only is a number, and there is no section 7');
+  assert.match(digits.out, /^no section 7 in PLAYBOOK\.md; its sections: 1 "The lessons check", .*, 6 "7"$/m);
+  for (const n of ['0', '99']) assert.equal(run(['--section', n], {lessons, playbook: book}).code, 1, n);
+  // No printed line asks for a name: not the usage, not a Status that names no
+  // section (it gets no number), not the line past 50 lessons.
+  const usage = run([], {lessons, playbook: book});
+  assert.match(usage.out, /\| --section <number> \|/);
+  assert.doesNotMatch(usage.out, /--section <name>/);
+  const gone = run(['gone'], {lessons: lessons + entry('2025-11-01', 'Gone broke', {rule: 'r', status: 'promoted to PLAYBOOK "Gone"'}), playbook: book});
+  assert.match(gone.out, /^PLAYBOOK "Gone": follow its steps \(1 matching lesson\), not a section of PLAYBOOK\.md: run node dev\/lessons\.mjs --check$/m);
+  const many = Array.from({length: 51}, (_, i) => entry(`2025-10-${String(28 - Math.floor(i / 3)).padStart(2, '0')}`, `Many ${i}`, {rule: `rule ${i}`, status: 'promoted to PLAYBOOK "Deploying"'})).join('');
+  const long = run(['--section', '4'], {lessons: lessons + many, playbook: book});
+  assert.match(long.out, /^\.\.\. and 2 more lessons, not printed: close the lessons whose rules no longer hold \(The lessons check, step 6\)$/m);
+  assert.doesNotMatch(long.out, /search LESSONS\.md/);
+  for (const copy of [TEMPLATES, resolve(TEMPLATES, '../../lessons-learned-codex/templates'), resolve(TEMPLATES, '../../..')]) {
+    const text = readFileSync(join(copy, 'PLAYBOOK.md'), 'utf8');
+    const step3 = text.split('\n').find((l) => l.startsWith('3. Follow each rule named.'));
+    assert.ok(step3, copy);
+    assert.match(step3, /`node dev\/lessons\.mjs --section <number>` with the number the lookup printed/, copy);
+    assert.doesNotMatch(step3, /--section "/, `${copy}: step 3 puts a section's name in a command`);
+  }
 });
