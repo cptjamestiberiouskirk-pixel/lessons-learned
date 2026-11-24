@@ -4,6 +4,22 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
+## Unreleased: the playbook template's steps 3, 5 and 6
+
+Base: 1f95a46. The wording started from lip-service's draft: step 5 merges lessons that share a rule into one short step, and step 3 follows a step with its lessons' specifics.
+
+### Review rounds
+
+- Two rounds by a no-context reviewer, given only the old and new "The lessons check".
+  - Round 1 found that step 3 didn't say where the specifics come from, or that the step wins. It found that "the step wins where they differ" could be read as "drop the details", and that a lesson promoted on its own wasn't covered.
+  - Round 2 found that "step" meant both the work being checked and a playbook step in step 3, and that the reviewer wasn't asked about short form. It also found that step 6 didn't remove a step's wording that came from a closed lesson.
+  - All findings fixed, so the text now differs from the draft.
+
+### End-to-end runs (2026-11-23, fingerprint 909da94a, the script unchanged)
+
+- Claude Code (`run-setup.ps1`), fresh `node-app`. Turn 1: all parts missing but the exclusion, both offers, and it waited. Turn 2, "Go ahead.": built all parts. Checked in the repo: `PLAYBOOK.md` differs from the template only in step 1's topic words, fingerprint 909da94a, `--check` 0 bad, `--doctor` exit 0, `package.json` unchanged, `core.hooksPath` empty, no staging folder left. USD 0.28 and 2.07. The 5 refused calls were commands chained with `;` or newlines, outside the allow list.
+- Codex (`run-live.ps1 -Marketplace .`), installed from this checkout with the `-c` override, cache 0.4.0 matching the checkout's skill and template. Turn 1, "Set up lessons-learned in this repo.": the plan with both offers, and no change. Turn 2, "Go ahead.": built all parts, with `AGENTS.md` and the line in `CLAUDE.md`. Same checks in the repo, same results. Afterwards, the plugin was reinstalled from GitHub (`marketplace upgrade`, remove, add): the cache matches `origin/main` 1f95a46 file for file, and `config.toml` is unchanged.
+
 ## 0.4.0: --lint and --doctor (phase 1a), ESLint (phase 2), the setup offers (phase 1b)
 
 Base: 3076665. One review round run on 1a (below), with two reviewers: one on the script and tests, one on the docs.
