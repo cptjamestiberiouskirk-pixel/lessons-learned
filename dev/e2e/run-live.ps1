@@ -35,6 +35,7 @@ $ErrorActionPreference = 'Stop'
 $Repo = (Resolve-Path -LiteralPath $Repo).Path
 $Log = [IO.Path]::GetFullPath($Log, (Get-Location).Path)
 if ($AddDir) { $AddDir = (Resolve-Path -LiteralPath $AddDir).Path }
+if ($Marketplace) { $Marketplace = (Resolve-Path -LiteralPath $Marketplace).Path }
 Push-Location -LiteralPath $Repo
 try {
   if ($Tool -eq 'claude') {
@@ -56,9 +57,8 @@ try {
     $extra = if ($AddDir) { @('--add-dir', $AddDir) } else { @() }
     $mk = @()
     if ($Marketplace) {
-      $root = (Resolve-Path -LiteralPath $Marketplace).Path
       $mk = @('-c', 'marketplaces.lessons-learned-codex.source_type="local"',
-        '-c', "marketplaces.lessons-learned-codex.source='$root'")
+        '-c', "marketplaces.lessons-learned-codex.source='$Marketplace'")
     }
     $last = "$Log.last.txt"
     if ($Resume) {
@@ -73,8 +73,12 @@ try {
     "=== exit $LASTEXITCODE"
     $thread = Get-Content -LiteralPath $Log | Select-String '"thread.started"' | Select-Object -First 1
     if ($thread) { "=== thread $(($thread.Line | ConvertFrom-Json).thread_id)" }
-    $cache = Join-Path $env:USERPROFILE '.codex/plugins/cache/lessons-learned-codex/lessons-learned-codex'
-    "=== installed lessons-learned-codex: $((Get-ChildItem -LiteralPath $cache -Name -ErrorAction SilentlyContinue) -join ', ')"
+    # Codex's home is CODEX_HOME, or .codex in the user's home on any system.
+    $codexHome = $env:CODEX_HOME
+    if (-not $codexHome) { $codexHome = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex' }
+    $cache = Join-Path $codexHome 'plugins/cache/lessons-learned-codex/lessons-learned-codex'
+    $installed = @(Get-ChildItem -LiteralPath $cache -Name -ErrorAction SilentlyContinue) -join ', '
+    "=== installed lessons-learned-codex: $(if ($installed) { $installed } else { "(none found in $cache)" })"
     "=== reply"; Get-Content -LiteralPath $last -Raw -ErrorAction SilentlyContinue
   }
 } finally { Pop-Location }

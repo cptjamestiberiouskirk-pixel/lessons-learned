@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-23: run-live.ps1's new options were committed without running them through the script
+- What went wrong: I added `-Marketplace` and `-Resume` to `run-live.ps1` after typing the same Codex commands by hand, and the commit said they were the commands that ran. Review found two bugs a single run would have shown: `-Marketplace .` was resolved after the script moved into the test repo, so it named the repo, and the cache line used `USERPROFILE`, which Linux and macOS don't set, so the script stopped before the reply.
+- Why: the hand-typed run used absolute paths from the checkout, so I took the script's version as the same and checked only that it parsed.
+- Rule going forward: a change to an e2e script is run through the script before it is committed, with a fake for the billed tool on `PATH` (a `codex.cmd` that prints its arguments), and once with each environment variable it reads unset.
+- Evidence: `dev/e2e/run-live.ps1`, search "Codex's home is CODEX_HOME"
+- Status: open
+
 ## 2026-11-23: The 0.4.0 Codex setup run tested the released plugin, not the one installed from the checkout
 - What went wrong: for the 0.4.0 end-to-end run I installed the Codex plugin from this checkout with the `-c` marketplace override, then ran `run-live.ps1`. `codex exec` refreshed the GitHub marketplace when it started and put main's copy back, 26 seconds after the install. Codex built `node-app` with the old script and reported "matches the plugin fingerprint", so its reply looked like a pass.
 - Why: the override covered the install commands only, and nothing checked which copy the run used. Only the fingerprint in the repo afterwards showed it.
