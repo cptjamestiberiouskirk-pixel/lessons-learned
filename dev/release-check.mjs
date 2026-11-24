@@ -44,7 +44,7 @@ const distinct = new Set(Object.values(versions));
 record('versions agree', distinct.size === 1 ? 'PASS' : 'FAIL', Object.entries(versions).map(([k, v]) => `${k} ${v}`).join(', '));
 
 // Files the two copies and this repo's own script share.
-const shared = ['LICENSE', 'templates/LESSONS.md', 'templates/PLAYBOOK.md', 'templates/lessons.mjs', 'hooks/lessons-gate.mjs'];
+const shared = ['LICENSE', 'templates/LESSONS.md', 'templates/PLAYBOOK.md', 'templates/lessons.mjs', 'hooks/lessons-gate.mjs', 'hooks/lessons-lint.mjs'];
 const differ = shared.filter((f) => !bytes(`plugins/lessons-learned/${f}`).equals(bytes(`plugins/lessons-learned-codex/${f}`)));
 if (!bytes('plugins/lessons-learned/templates/lessons.mjs').equals(bytes('dev/lessons.mjs'))) differ.push('dev/lessons.mjs');
 if (!bytes('plugins/lessons-learned-codex/plugin.json').equals(bytes('plugins/lessons-learned-codex/.codex-plugin/plugin.json'))) differ.push('Codex plugin.json pair');
