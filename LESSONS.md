@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-23: The 0.4.0 Codex setup run tested the released plugin, not the one installed from the checkout
+- What went wrong: for the 0.4.0 end-to-end run I installed the Codex plugin from this checkout with the `-c` marketplace override, then ran `run-live.ps1`. `codex exec` refreshed the GitHub marketplace when it started and put main's copy back, 26 seconds after the install. Codex built `node-app` with the old script and reported "matches the plugin fingerprint", so its reply looked like a pass.
+- Why: the override covered the install commands only, and nothing checked which copy the run used. Only the fingerprint in the repo afterwards showed it.
+- Rule going forward: a Codex run that tests a copy installed from here passes the same marketplace override to `codex exec` (`run-live.ps1 -Marketplace`), and the check afterwards names the plugin version the run read (the cache folder and the skill paths in its log), with the fingerprint in the repo.
+- Evidence: `dev/e2e/run-live.ps1`, search "-Marketplace points"
+- Status: open
+
 ## 2026-11-23: The Codex gate's command was never run in the shell Codex starts hooks with
 - What went wrong: the live Codex runs found that the gate never denied. Codex runs a hook through the session's shell, pwsh here, and pwsh prints a job table before the gate's JSON, so Codex let every call through. The command had been tested only under cmd. Two paid runs went by before I read the source, and a third tested a flag the source settled.
 - Why: RS-H-codexhook read the source path for a session with no shell (`%COMSPEC% /C`) and took it as the only one. The tests start the command through cmd alone.
