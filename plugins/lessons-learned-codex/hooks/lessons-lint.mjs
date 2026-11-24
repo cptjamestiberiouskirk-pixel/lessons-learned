@@ -118,8 +118,10 @@ function readPayload() {
 
 // Adds the key (`<date> "<title>"`, as the script keys an entry) of each lesson
 // heading in `text` to `keys`. `prefix` is a patch line's mark (+ or -).
+// Returns false when the text is too long to read.
 function headings(text, keys, prefix = '') {
-  if (typeof text !== 'string' || text.length > MAX_EDIT_TEXT) return;
+  if (typeof text !== 'string') return true;
+  if (text.length > MAX_EDIT_TEXT) return false;
   for (let line of text.split('\n')) {
     if (prefix) {
       if (!line.startsWith(prefix)) continue;
@@ -128,24 +130,54 @@ function headings(text, keys, prefix = '') {
     const m = ENTRY.exec(line.replace(/\r$/, ''));
     if (m) keys.add(`${m[1]} "${m[2].trim()}"`);
   }
+  return true;
 }
 
-// The headings a patch adds and removes in a file named LESSONS.md.
-function patchHeadings(patch, added, removed) {
-  if (patch.length > MAX_EDIT_TEXT) return;
-  let lessons = false;
-  const body = [];
+const noHeadings = () => ({added: new Set(), removed: new Set(), known: false});
+
+// The headings a patch adds and removes, by the name of the file whose header
+// they follow. A deleted file adds none.
+function patchHeadings(patch) {
+  const bodies = new Map();
+  if (patch.length > MAX_EDIT_TEXT) return new Map();
+  let body = null;
   for (const raw of patch.split('\n')) {
     const m = PATCH_FILE.exec(raw);
     if (m) {
-      lessons = foldAscii(basename(native(m[1].trim()))) === foldAscii('LESSONS.md') && !/^\s*\*\*\* Delete File:/.test(raw);
+      const name = m[1].trim();
+      if (/^\s*\*\*\* Delete File:/.test(raw)) body = null;
+      else {
+        if (!bodies.has(name)) bodies.set(name, []);
+        body = bodies.get(name);
+      }
       continue;
     }
-    if (lessons) body.push(raw);
+    if (body) body.push(raw);
   }
-  const text = body.join('\n');
-  headings(text, added, '+');
-  headings(text, removed, '-');
+  const out = new Map();
+  for (const [name, lines] of bodies) {
+    const h = {added: new Set(), removed: new Set(), known: true};
+    const text = lines.join('\n');
+    headings(text, h.added, '+');
+    headings(text, h.removed, '-');
+    out.set(name, h);
+  }
+  return out;
+}
+
+// The headings the edit added that are new lessons: not also removed, which
+// moves or edits a lesson, and not a removed heading renamed. A heading the
+// edit removed and didn't add back takes one added heading of its date with it.
+function newKeys(added, removed) {
+  const gone = [...removed].filter((k) => !added.has(k)).map((k) => k.slice(0, 10));
+  const fresh = new Set();
+  for (const k of added) {
+    if (removed.has(k)) continue;
+    const i = gone.indexOf(k.slice(0, 10));
+    if (i >= 0) gone.splice(i, 1);
+    else fresh.add(k);
+  }
+  return fresh;
 }
 
 // ---- The hook ---------------------------------------------------------------
@@ -161,31 +193,33 @@ async function main() {
   if (!input) return;
   const cwd = typeof p.cwd === 'string' && isAbsolute(p.cwd) && !unc(p.cwd) && !tooLong(p.cwd) ? p.cwd : null;
 
-  // The files the edit changed, and the lesson headings it added and removed.
-  // A Write gives no old text, so its headings are not known to be new.
+  // The files the edit changed, each with the lesson headings the edit added
+  // to it and removed from it. Headings are not known when the edit's text
+  // wasn't all read, and after a Write, which gives no old text.
   let targets;
-  const added = new Set();
-  const removed = new Set();
   if (EDIT_TOOLS.has(p.tool_name)) {
     if (typeof input.file_path !== 'string') return;
-    targets = [input.file_path];
-    const edits = p.tool_name === 'Edit' ? [input] : p.tool_name === 'MultiEdit' && Array.isArray(input.edits) ? input.edits.slice(0, MAX_EDITS) : [];
-    for (const e of edits) {
+    const h = {added: new Set(), removed: new Set(), known: p.tool_name !== 'Write'};
+    const edits = p.tool_name === 'Edit' ? [input] : p.tool_name === 'MultiEdit' && Array.isArray(input.edits) ? input.edits : [];
+    if (edits.length > MAX_EDITS) h.known = false;
+    for (const e of edits.slice(0, MAX_EDITS)) {
       if (!e || typeof e !== 'object') continue;
-      headings(e.new_string, added);
-      headings(e.old_string, removed);
+      if (!headings(e.new_string, h.added) || !headings(e.old_string, h.removed)) h.known = false;
     }
+    targets = [[input.file_path, h]];
   } else if (p.tool_name === CODEX_EDIT) {
     if (typeof input.command !== 'string') return;
-    targets = patchTargets(input.command);
-    if (!targets) return;
-    patchHeadings(input.command, added, removed);
+    const names = patchTargets(input.command);
+    if (!names) return;
+    const byName = patchHeadings(input.command);
+    targets = names.map((n) => [n, byName.get(n) ?? noHeadings()]);
   } else return;
 
   // Each target's repo, and its path there with ASCII case folded where the
-  // file system ignores case. A repo with no LESSONS.md is not looked at.
+  // file system ignores case. A repo with no LESSONS.md is not looked at. Only
+  // the headings of an edit to the repo's own LESSONS.md count.
   const byRoot = new Map();
-  for (const raw of targets) {
+  for (const [raw, h] of targets) {
     if (typeof raw !== 'string' || !raw || unc(raw) || tooLong(raw)) continue;
     const given = native(raw);
     const abs = isAbsolute(given) ? given : cwd && resolve(cwd, given);
@@ -203,9 +237,16 @@ async function main() {
       } catch {
         continue;
       }
-      byRoot.set(root, new Set());
+      byRoot.set(root, {rels: new Set(), ...noHeadings(), known: true});
     }
-    byRoot.get(root).add(foldAscii(target.real.slice(base.length)));
+    const at = byRoot.get(root);
+    const rel = foldAscii(target.real.slice(base.length));
+    at.rels.add(rel);
+    if (rel === foldAscii('LESSONS.md')) {
+      if (!h.known) at.known = false;
+      for (const k of h.added) at.added.add(k);
+      for (const k of h.removed) at.removed.add(k);
+    }
   }
   if (!byRoot.size) return;
 
@@ -213,7 +254,7 @@ async function main() {
   const errors = [];
   const leads = [];
   const warnings = [];
-  for (const [root, rels] of byRoot) {
+  for (const [root, {rels, added, removed, known}] of byRoot) {
     const log = lint.loadLog(root);
     if (log.error || !log.sections.has(CHECK)) continue;
     // The files --lint reads, by their path in the repo, and the name its
@@ -224,9 +265,9 @@ async function main() {
     const files = new Set([...rels].filter((r) => names.has(r)).map((r) => names.get(r)));
     if (!files.size) continue;
     for (const f of lint.lintReport(log).findings) if (files.has(f.file)) (f.severity === 'error' ? errors : warnings).push(f);
-    // A lesson whose heading the edit added, and didn't also remove (a moved
-    // or edited lesson keeps its heading).
-    const fresh = files.has('LESSONS.md') ? log.entries.filter((e) => added.has(e.key) && !removed.has(e.key)) : [];
+    // The lessons the edit added: leads for them, and for no other lesson.
+    const keys = known && files.has('LESSONS.md') ? newKeys(added, removed) : new Set();
+    const fresh = log.entries.filter((e) => keys.has(e.key));
     if (!fresh.length) continue;
     const spans = fresh.map((e) => [e.line, Math.max(e.line, ...e.lines.map((l) => l.n), ...e.ignores.map((l) => l.n))]);
     for (const f of lint.lintReport(log, {leads: true}).findings)
@@ -237,7 +278,8 @@ async function main() {
   const room = MAX_LINES - 1;
   const shown = all.length <= room ? all : all.slice(0, room - 1);
   const lines = [HEADER, ...shown.map((f) => lint.show(findingLine(f)))];
-  if (shown.length < all.length) lines.push(`... and ${all.length - shown.length} more: node dev/lessons.mjs --lint lists them`);
+  // No command here: the repo's own script is not checked, and may not list them.
+  if (shown.length < all.length) lines.push(`... and ${all.length - shown.length} more in the edited files`);
   process.stdout.write(`${JSON.stringify({hookSpecificOutput: {hookEventName: 'PostToolUse', additionalContext: lines.join('\n')}})}\n`);
 }
 

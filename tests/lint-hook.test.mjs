@@ -146,7 +146,9 @@ test('the findings come out of the plugin\'s own script, made safe to read, at m
   const lines = r.context.split('\n');
   assert.equal(lines.length, 10, r.context);
   assert.equal(lines[0], HEADER);
-  assert.match(lines[9], /^\.\.\. and \d+ more: node dev\/lessons\.mjs --lint lists them$/);
+  // The count names no command: the repo's own script is not checked.
+  assert.match(lines[9], /^\.\.\. and \d+ more in the edited files$/);
+  assert.doesNotMatch(r.context, /dev\/lessons\.mjs/, 'the agent was told to run the repo\'s unchecked script');
   assert.ok(!r.context.includes(hidden), 'a bidi control reached the agent');
   assert.match(r.context, /<U\+202E>/);
 });
@@ -167,6 +169,83 @@ test('an edit that adds a lesson whose rule another open lesson has is told the 
   assert.match(multi.context, /second-sighting/);
   // The other leads are not told, and plain --lint findings still are.
   assert.doesNotMatch(r.context, /unlabeled-claim|promoted-drift|quoted-tool-output/);
+});
+
+// Two open lessons with the same rule, both in the log for a while: their
+// second sighting is old news, and an edit that adds neither isn't told it.
+function oldPair() {
+  const older = entry('2026-01-02', 'Released without the tests', {rule: RULE});
+  const newer = entry('2026-01-05', 'Shipped a build with failing tests', {rule: RULE});
+  return {root: makeRepo({entries: [newer, older], files: {'docs/LESSONS.md': 'notes\n'}}), newer, older};
+}
+const NEWER = '## 2026-01-05: Shipped a build with failing tests';
+
+test('a heading renamed in an edit is not a new lesson, and one added above a lesson of its date is', () => {
+  const {root, newer} = oldPair();
+  // A typo fixed in the heading: the old title goes, the new one comes.
+  const typo = editOf(root, 'LESSONS.md', NEWER.replace('failing', 'failin'), NEWER);
+  assert.doesNotMatch(typo.out, /second-sighting/, typo.context);
+  // A new lesson added above a lesson of the same date, anchored on its heading.
+  const added = entry('2026-01-05', 'Shipped again with failing tests', {rule: RULE});
+  writeFileSync(join(root, 'LESSONS.md'), readFileSync(join(root, 'LESSONS.md'), 'utf8').replace(newer, `${added}\n${newer}`));
+  const r = editOf(root, 'LESSONS.md', NEWER, `${added}\n${NEWER}`);
+  assert.match(r.context ?? '', /^WARN  second-sighting LESSONS\.md:\d+ /m, r.out || 'nothing printed');
+});
+
+test('only the headings an edit adds to the repo\'s own LESSONS.md are new lessons', () => {
+  const {root} = oldPair();
+  // A patch adds the heading to docs/LESSONS.md and touches the root log.
+  const other = patch(root, `*** Begin Patch\n*** Update File: docs/LESSONS.md\n@@\n+${NEWER}\n*** Update File: LESSONS.md\n@@\n+\n*** End Patch\n`);
+  assert.doesNotMatch(other.out, /second-sighting/, other.context);
+  // An Edit of PLAYBOOK.md that quotes the heading.
+  const book = editOf(root, 'PLAYBOOK.md', 'x', NEWER);
+  assert.doesNotMatch(book.out, /second-sighting/, book.context);
+  // The control: the same patch line in the root log is told.
+  const own = patch(root, `*** Begin Patch\n*** Update File: LESSONS.md\n@@\n+${NEWER}\n*** End Patch\n`);
+  assert.match(own.context ?? '', /second-sighting/, own.out || 'nothing printed');
+});
+
+test('an edit whose text was not all read names no leads', () => {
+  const {root} = oldPair();
+  // The old text is past the 1 MB read for headings, so its heading is unknown.
+  const big = editOf(root, 'LESSONS.md', `${NEWER}\n${'x'.repeat(1024 * 1024)}`, NEWER);
+  assert.doesNotMatch(big.out, /second-sighting/, big.context);
+  // The 101st edit of a MultiEdit removes the heading the first one adds.
+  const edits = [{old_string: 'a', new_string: NEWER}, ...Array.from({length: 99}, () => ({old_string: 'a', new_string: 'b'})), {old_string: NEWER, new_string: 'c'}];
+  const multi = claude(root, 'MultiEdit', {file_path: join(root, 'LESSONS.md'), edits});
+  assert.doesNotMatch(multi.out, /second-sighting/, multi.context);
+  // The control: 100 edits are all read.
+  const control = claude(root, 'MultiEdit', {file_path: join(root, 'LESSONS.md'), edits: edits.slice(0, 100)});
+  assert.match(control.context ?? '', /second-sighting/, control.out || 'nothing printed');
+});
+
+test('leads are told for the new lesson only, before the warnings, and a CRLF heading counts', () => {
+  const older = entry('2026-01-02', 'Released without the tests', {rule: RULE});
+  const pairRule = 'run the linter on each changed file before each push';
+  const pairA = entry('2026-01-04', 'Pushed without the lint', {rule: pairRule});
+  const pairB = entry('2026-01-03', 'Pushed with lint errors', {rule: pairRule});
+  // Lessons whose rule names a web address: a warning each.
+  const linked = Array.from({length: 12}, (_, i) => entry(`2025-12-${30 - i}`, `Linked ${i}`, {rule: `read https://example.com/page${i} first`}));
+  const root = makeRepo({entries: [pairA, pairB, older, ...linked]});
+  const added = entry('2026-01-05', 'Shipped a build with failing tests', {rule: RULE});
+  writeFileSync(join(root, 'LESSONS.md'), readFileSync(join(root, 'LESSONS.md'), 'utf8').replace(pairA, `${added}\n${pairA}`));
+  const r = editOf(root, 'LESSONS.md', pairA, `${added}\n${pairA}`.replace(/\n/g, '\r\n'));
+  const lines = (r.context ?? '').split('\n');
+  const leads = lines.filter((l) => /second-sighting|dup-rule/.test(l));
+  assert.equal(leads.length, 1, r.out || 'nothing printed');
+  assert.match(leads[0], /overlaps the open lesson 2026-01-02 "Released without the tests"/);
+  assert.equal(lines.indexOf(leads[0]), 1, 'the lead comes after the errors and before the warnings');
+  assert.match(lines[2], /^WARN  /, r.context);
+});
+
+test('a case-folding file system matches a rule file named in a different case', {skip: !/^(win32|darwin)$/.test(process.platform) && 'Linux tells the names apart'}, () => {
+  const hidden = String.fromCharCode(0x200b);
+  const root = makeRepo({files: {'docs/RULES.md': `# Rules\n\nRun the tests${hidden} first.\n`}});
+  writeFileSync(join(root, 'LESSONS.md'), readFileSync(join(root, 'LESSONS.md'), 'utf8').replace('# LESSONS\n', '# LESSONS\n\nRule files: docs/rules.md\n'));
+  const r = claude(root, 'Write', {file_path: join(root, 'docs', 'RULES.md'), content: 'x'});
+  assert.match(r.context ?? '', /^ERROR suspicious-instruction docs\/rules\.md:3 /m, r.out || 'nothing printed');
+  const p = patch(root, '*** Begin Patch\n*** Update File: ./docs/rules.md\n@@\n+x\n*** End Patch\n');
+  assert.match(p.context ?? '', /suspicious-instruction/, p.out || 'nothing printed');
 });
 
 test('a new lesson that a PLAYBOOK step covers is told the step (dup-rule)', () => {
