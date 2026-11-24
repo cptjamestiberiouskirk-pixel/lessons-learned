@@ -34,6 +34,18 @@
 //   node dev/lessons.mjs --doctor    --lint with a summary of the whole log
 //   --lint --all, --doctor --all     also list the findings silenced in place
 //   --lint --json, --doctor --json   the same as one JSON object, for CI
+//   --lint --leads, --doctor --leads also the leads: warnings from comparing
+//                                    words, so noisy by design. A rule a step
+//                                    already covers, two open lessons with one
+//                                    rule, a promoted lesson that looks filed in
+//                                    the wrong section, pasted tool output in
+//                                    Evidence, and a cause stated with no label.
+//                                    --leads alone is --lint --leads
+//   node dev/lessons.mjs --pairs     rule pairs from the lessons, PLAYBOOK and
+//                                    rule files that share a topic and may pull
+//                                    in opposite directions, at most 40,
+//                                    strongest first, for a review to judge
+//   --pairs --json                   the same as one JSON object
 //
 // A finding that is wrong can be silenced where it is, with its rule ID and a
 // reason, on a line of its own: <!-- lint-ignore <rule>: <reason> -->. In
@@ -54,13 +66,14 @@
 // root, keep their state per call, and return what they found. They never print
 // or exit. The command line part runs only when this file is started directly.
 
+import {createHash} from 'node:crypto';
 import {closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 export const VERSION = '0.4.0';
 export const USAGE =
-  'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | --lint [--all] [--json] | --doctor [--all] [--json] | <word>...]';
+  'usage: node dev/lessons.mjs [--dir <folder>] [--check | --all | --stale | --lint [--leads] [--all] [--json] | --doctor [--leads] [--all] [--json] | --leads | --pairs [--json] | <word>...]';
 export const FIELDS = ['What went wrong', 'Why', 'Rule going forward', 'Evidence', 'Status'];
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_LINE = 2000; // characters of one printed line
@@ -648,6 +661,12 @@ export const RULES = {
   'bad-setting': 'warning',
   'bad-ignore': 'error',
   'unused-ignore': 'warning',
+  // Leads, with --leads only.
+  'dup-rule': 'warning',
+  'second-sighting': 'warning',
+  'promoted-drift': 'warning',
+  'quoted-tool-output': 'warning',
+  'unlabeled-claim': 'warning',
 };
 const FIXED = new Set(['format', 'from-mismatch', 'bad-ignore', 'unused-ignore']);
 
@@ -874,10 +893,499 @@ function lineIgnores(rows) {
   return out;
 }
 
+// ---- Leads: --leads and --pairs ----------------------------------------------
+
+// These rules compare the words of rules and steps, so they are leads, never
+// verdicts: they run only with --leads, and are warnings. --pairs uses the
+// same words to list rule pairs that may pull against each other.
+const LEADS = new Set(['dup-rule', 'second-sighting', 'promoted-drift', 'quoted-tool-output', 'unlabeled-claim']);
+const MAX_ITEMS = 600; // rules and steps compared by --pairs, and lessons and steps by --leads
+const MAX_ITEM_WORDS = 128; // topic words, word pairs and spans kept for one rule or step
+const MAX_PAIRS = 40; // pairs printed by --pairs
+const MAX_SHARED = 8; // shared words named in one message or pair
+const LEAD_SCORE = 5; // the least overlap score for dup-rule and second-sighting
+const LEAD_RATIO = 0.22; // and the least score for the two texts' sizes
+// Words too common to say what a rule is about. Topic words have 4 letters or
+// more, so shorter words need no place here.
+const STOP = new Set(
+  'about above after again also always another because been before being below between both cannot could does done down during each either else even ever every first from have having here into just less like made make many more most much must never next none nothing once only onto other over same should since some such than that their them then there these they this those though through under unless until upon very were what when where whether which while will with within without would your says said'.split(' '),
+);
+// A word's stem: a plural, -ing, -ed and a final e taken off, so "measures",
+// "measured" and "measuring" are one word.
+function stem(w) {
+  if (w.length > 4 && w.endsWith('ies')) w = `${w.slice(0, -3)}y`;
+  else if (w.length > 4 && w.endsWith('s') && !w.endsWith('ss')) w = w.slice(0, -1);
+  if (w.length >= 6 && w.endsWith('ing')) w = w.slice(0, -3);
+  else if (w.length >= 5 && w.endsWith('ed')) w = w.slice(0, -2);
+  if (w.length >= 4 && w.endsWith('e')) w = w.slice(0, -1);
+  return w;
+}
+const NEGATOR = new Set(['not', 'no', 'never', 'nor', 'without', 'cannot', "don't", "doesn't", "didn't", "isn't", "aren't", "won't", "can't", "shouldn't", "mustn't"]);
+// The negators that forbid, not describe: "don't", "never", "no", "nor", and
+// "not" after do, must or should. Only these cover a word; "it didn't check"
+// says what happened, not what to do.
+const FORBID = new Set(['no', 'never', 'nor', "don't", "shouldn't", "mustn't"]);
+const FORBID_NOT = new Set(['do', 'must', 'should']);
+// A negator covers the first topic word after it, within two other words, and
+// a list that goes on from that word with a comma, "or", "and" or "nor" ("no
+// sleep, retry or skip").
+const NEG_REACH = 2;
+// One token: a span in backticks, a word, a mark that ends a clause, or a
+// comma. Each alternative reads forward only, so a line is read once.
+// The curly quotes are made from their codes, as the hidden characters above are.
+const RSQUO = String.fromCharCode(0x2019);
+const LDQUO = String.fromCharCode(0x201c);
+const RDQUO = String.fromCharCode(0x201d);
+const TOKEN = new RegExp("`([^`\\n]+)`|([A-Za-z0-9]+(?:['" + RSQUO + "][A-Za-z]+)?)|([.;:!?])|(,)", 'g');
+const ONE_AT_A_TIME = /\bone at a time\b|\bone by one\b/i;
+const AT_ONCE = /\b(?:all at once|at once|together|in parallel)\b|\ball\b/i;
+
+// What a rule or step is about: its topic words (stem -> the word as written),
+// the pairs of topic words next to each other, its spans in backticks
+// (normalized -> as written; a <placeholder> is dropped), the commands among
+// them with the topic word before each, the words a negator covers, the
+// topic words of each clause that holds a negator, and the cue words it holds.
+// Reads at most MAX_LINT_LINE characters, and keeps at most MAX_ITEM_WORDS of
+// each kind, so comparing two of them costs at most that much.
+function topicOf(text) {
+  const line = text.length > MAX_LINT_LINE ? text.slice(0, MAX_LINT_LINE) : text;
+  const t = {words: new Map(), pairs: new Set(), spans: new Map(), commands: new Map(), negated: new Map(), negClauses: [], negator: false};
+  let prev = null; // the last topic stem, for word pairs
+  let verb = null; // the last topic stem in this clause, for a command's verb
+  // A negator's reach: 0 none; 1 waiting for its first topic word, with `reach`
+  // other words left; 2 just after a word it covers, where a comma, "or" or
+  // "and" goes on to 3, which covers the next topic word too.
+  let neg = 0;
+  let reach = 0;
+  let negWord = '';
+  let clause = new Set();
+  let clauseNeg = false;
+  // "must", "before" or "after", waiting for the topic word it governs, with
+  // `leadReach` other words left.
+  let lead = null;
+  let leadReach = 0;
+  let last = ''; // the word before, lower case
+  const governed = {must: new Map(), before: new Map(), after: new Map()};
+  let never = false;
+  let always = false;
+  const endClause = () => {
+    if (clauseNeg && clause.size && t.negClauses.length < MAX_ITEM_WORDS) t.negClauses.push(clause);
+    clause = new Set();
+    clauseNeg = false;
+    prev = null;
+    verb = null;
+    neg = 0;
+    lead = null;
+  };
+  for (const m of line.matchAll(TOKEN)) {
+    if (m[3]) {
+      endClause();
+      continue;
+    }
+    if (m[4]) {
+      if (neg === 2) {
+        neg = 3;
+        reach = NEG_REACH;
+      }
+      continue;
+    }
+    if (m[1] !== undefined) {
+      prev = null;
+      neg = 0;
+      lead = null;
+      const n = m[1].replace(/<[^<>\n]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (n.length < 2 || t.spans.size >= MAX_ITEM_WORDS) continue;
+      if (!t.spans.has(n)) t.spans.set(n, m[1]);
+      // A command: a span with a space whose first word is a program, not a flag.
+      const program = n.includes(' ') ? n.split(' ')[0] : '';
+      if (verb && program && !program.startsWith('-')) {
+        if (!t.commands.has(verb)) t.commands.set(verb, new Set());
+        t.commands.get(verb).add(program);
+      }
+      continue;
+    }
+    const lower = m[2].toLowerCase().replace(RSQUO, "'");
+    const before = last;
+    last = lower;
+    if (NEGATOR.has(lower)) {
+      t.negator = true;
+      clauseNeg = true;
+      const forbids = FORBID.has(lower) || (lower === 'not' && FORBID_NOT.has(before));
+      neg = forbids ? 1 : 0;
+      reach = NEG_REACH;
+      negWord = lower === 'not' ? `${before} not` : lower;
+      lead = null; // "must not" is a negator's
+      if (lower === 'never') never = true;
+      continue;
+    }
+    if (lower === 'always') always = true;
+    if (lower === 'must' || lower === 'before' || lower === 'after') {
+      lead = lower;
+      leadReach = NEG_REACH;
+      continue;
+    }
+    const w = lower.endsWith("'s") ? lower.slice(0, -2) : lower;
+    if (w.length < 4 || w.includes("'") || /^\d+$/.test(w) || STOP.has(w)) {
+      if (neg === 2 && (lower === 'or' || lower === 'and')) {
+        neg = 3;
+        reach = NEG_REACH;
+      } else if (neg === 2) neg = 0;
+      else if (neg && --reach < 0) neg = 0;
+      if (lead && --leadReach < 0) lead = null;
+      continue;
+    }
+    const covered = neg === 1 || neg === 3;
+    neg = covered ? 2 : 0;
+    const s = stem(w);
+    if (lead) {
+      if (!governed[lead].has(s) && governed[lead].size < MAX_ITEM_WORDS) governed[lead].set(s, w);
+      lead = null;
+    }
+    if (t.words.size < MAX_ITEM_WORDS && !t.words.has(s)) t.words.set(s, w);
+    if (prev && prev !== s && t.pairs.size < MAX_ITEM_WORDS) t.pairs.add(`${prev} ${s}`);
+    prev = s;
+    verb = s;
+    if (clause.size < MAX_ITEM_WORDS) clause.add(s);
+    if (covered && !t.negated.has(s) && t.negated.size < MAX_ITEM_WORDS) t.negated.set(s, `${negWord} ${w}`);
+  }
+  endClause();
+  t.must = governed.must;
+  t.before = governed.before;
+  t.after = governed.after;
+  t.never = never;
+  t.always = always;
+  t.oneAtATime = ONE_AT_A_TIME.test(line);
+  t.atOnce = t.oneAtATime ? '' : (line.match(AT_ONCE)?.[0] || '').toLowerCase();
+  return t;
+}
+
+// The overlap of two topics: shared words (as the first text writes them), how
+// many word pairs and spans they share, and a score: one for a word, two for a
+// word pair or a span. Costs at most the smaller topic's size.
+function overlap(a, b) {
+  const [sa, sb] = a.words.size <= b.words.size ? [a, b] : [b, a];
+  const shared = [];
+  for (const s of sa.words.keys()) if (sb.words.has(s)) shared.push(a.words.get(s));
+  let pairs = 0;
+  const [pa, pb] = a.pairs.size <= b.pairs.size ? [a.pairs, b.pairs] : [b.pairs, a.pairs];
+  for (const p of pa) if (pb.has(p)) pairs++;
+  const spans = [];
+  const [xa, xb] = a.spans.size <= b.spans.size ? [a.spans, b.spans] : [b.spans, a.spans];
+  for (const [n, written] of xa) if (xb.has(n)) spans.push(written);
+  const score = shared.length + 2 * pairs + 2 * spans.length;
+  const ratio = score / Math.sqrt(Math.max(1, a.words.size) * Math.max(1, b.words.size));
+  return {shared, pairs, spans, score, ratio};
+}
+const similar = (o) => o.score >= LEAD_SCORE && o.ratio >= LEAD_RATIO;
+// Shared words and spans as a message gives them.
+function sharedText(o) {
+  const words = o.shared.slice(0, MAX_SHARED);
+  const more = o.shared.length > MAX_SHARED ? ` and ${o.shared.length - MAX_SHARED} more` : '';
+  const spans = o.spans.slice(0, MAX_SHARED).map((s) => `\`${label(s)}\``);
+  return [...words, ...spans].join(', ') + more;
+}
+
+// The numbered steps of PLAYBOOK.md, outside code blocks and inside a section,
+// each with the indented lines that go on from it: {line, n, section, text}.
+function playbookSteps(log) {
+  const steps = [];
+  let last = null;
+  for (const r of log.rows) {
+    if (r.fence) {
+      last = null;
+      continue;
+    }
+    const m = r.text.match(/^(\d{1,9})\. (.*)$/s);
+    if (m && r.section) {
+      last = {line: r.n, n: m[1], section: r.section, parts: [m[2]]};
+      steps.push(last);
+    } else if (last && /^\s+\S/.test(r.text) && !IGNORE_START.test(r.text)) last.parts.push(r.text.trim());
+    else last = null;
+  }
+  return steps.map(({parts, ...s}) => ({...s, text: parts.join(' ')}));
+}
+
+// Pasted tool output in Evidence. Each pattern's repeats are bounded, so none
+// can backtrack past a line or cost more than linear time.
+const STACK_FRAME = /\bat [\w.$<>]{1,200} \([^\s()]{1,400}:\d{1,9}:\d{1,9}\)|\bFile "[^"\n]{1,400}", line \d{1,9}/;
+const TRACEBACK = /\bTraceback\b/;
+const ERROR_LINE = /^(?:[A-Z][A-Za-z]{0,40})?[Ee]rror:/;
+const LONG_CURLY = new RegExp(LDQUO + '[^' + RDQUO + '\\n]{201,}' + RDQUO);
+// Straight quotes pair left to right, as backticks do, so the text between
+// one quote's end and the next one's start is not taken for a quote.
+function longQuote(line) {
+  let open = -1;
+  for (let i = line.indexOf('"'); i >= 0; i = line.indexOf('"', i + 1)) {
+    if (open < 0) open = i;
+    else {
+      if (i - open - 1 > 200) return true;
+      open = -1;
+    }
+  }
+  return LONG_CURLY.test(line);
+}
+function pastedOutput(text) {
+  const line = text.length > MAX_LINT_LINE ? text.slice(0, MAX_LINT_LINE) : text;
+  if (STACK_FRAME.test(line)) return 'a stack frame';
+  if (TRACEBACK.test(line)) return 'a Traceback';
+  if (ERROR_LINE.test(line)) return 'a line that starts with an error';
+  if (longQuote(line)) return 'a quote over 200 characters';
+  for (const m of line.matchAll(SPAN)) if (m[1].length > 200) return 'a span in backticks over 200 characters';
+  return '';
+}
+// A Why that names a cause.
+const CAUSE = /\b(?:because|caused by|due to|the cause was|the reason was)\b/i;
+const ANY_LABEL = /\b(?:CONFIRMED|INFERRED|HYPOTHESIZED|RULED OUT)\b/;
+
+// The lead findings of a loaded log: {line, f, entry}, all in LESSONS.md.
+function leadFindings(log) {
+  const out = [];
+  const add = (line, rule, message, entry) => out.push({line, f: {rule, message}, entry});
+  const fieldLine = (e, field) => e.lines.find((l) => l.field === field)?.n ?? e.line;
+  const open = log.entries.filter((e) => e.status === 'open').slice(0, MAX_ITEMS);
+  const rules = open.map((e) => ({e, line: fieldLine(e, 'Rule going forward'), t: topicOf(e.fields['Rule going forward'] || '')}));
+  const steps = playbookSteps(log)
+    .slice(0, MAX_ITEMS)
+    .map((s) => ({...s, t: topicOf(s.text)}));
+
+  // dup-rule: the step closest to each open lesson's rule, if close enough.
+  for (const r of rules) {
+    let best = null;
+    for (const s of steps) {
+      const o = overlap(r.t, s.t);
+      if (similar(o) && (!best || o.ratio > best.o.ratio)) best = {s, o};
+    }
+    if (best)
+      add(r.line, 'dup-rule', `its rule shares ${sharedText(best.o)} with PLAYBOOK "${best.s.section.label}" step ${best.s.n}: if the step covers it, promote the lesson there (the lessons check, step 5). A lead, not a verdict`, r.e);
+  }
+
+  // second-sighting: two open lessons whose rules overlap, once per pair, on
+  // the newer one. The log is newest first, so of two on one date the newer
+  // is higher up.
+  for (let i = 0; i < rules.length; i++)
+    for (let j = i + 1; j < rules.length; j++) {
+      const o = overlap(rules[i].t, rules[j].t);
+      if (!similar(o)) continue;
+      const a = rules[i].e;
+      const b = rules[j].e;
+      const [newer, older] = a.date > b.date || (a.date === b.date && a.line < b.line) ? [rules[i], rules[j]] : [rules[j], rules[i]];
+      add(newer.line, 'second-sighting', `its rule overlaps the open lesson ${label(older.e.key)} (${sharedText(o)}): promote both into one step (the lessons check, step 5). A lead, not a verdict`, newer.e);
+    }
+
+  // promoted-drift. A promoted step is short, and its lessons keep the details
+  // (the lessons check, step 5), so a lesson's terms missing from its section
+  // are by design. What this finds instead is a promoted lesson whose title
+  // and rule share no topic word and no span with its section's heading and
+  // steps: it looks filed in the wrong section.
+  const bySection = new Map();
+  for (const s of steps) {
+    if (!bySection.has(s.section)) bySection.set(s.section, []);
+    bySection.get(s.section).push(s.t);
+  }
+  for (const e of log.entries) {
+    if (e.status !== 'promoted') continue;
+    const section = log.sections.get(e.section);
+    if (!section) continue; // from-mismatch reports it
+    const own = topicOf(`${e.title}. ${e.fields['Rule going forward'] || ''}`);
+    const topics = [topicOf(section.name), ...(bySection.get(section) || [])];
+    const apart = topics.every((t) => {
+      const o = overlap(own, t);
+      return o.shared.length === 0 && o.spans.length === 0;
+    });
+    if (apart)
+      add(e.line, 'promoted-drift', `promoted to "${section.label}", but its title and rule share no topic word or span with that section's heading and steps: check that it is filed in the right section. A lead, not a verdict`, e);
+  }
+
+  for (const e of log.entries) {
+    if (e.status === 'closed') continue;
+    // quoted-tool-output: Evidence, for open and promoted lessons.
+    for (const l of e.lines) {
+      if (l.field !== 'Evidence') continue;
+      const what = pastedOutput(l.text);
+      if (what) {
+        add(l.n, 'quoted-tool-output', `Evidence holds pasted tool output (${what}): name the file, the command or the log line that shows it instead. A lead, not a verdict`, e);
+        break;
+      }
+    }
+    // unlabeled-claim: a cause in an open lesson's Why, with no label and no
+    // word of what was tried.
+    if (e.status !== 'open') continue;
+    const why = e.fields.Why || '';
+    const cause = why.match(CAUSE);
+    if (cause && !ANY_LABEL.test(why) && !ATTEMPT.test(why))
+      add(fieldLine(e, 'Why'), 'unlabeled-claim', `its Why states a cause ("${cause[0].toLowerCase()}") with no label (CONFIRMED, INFERRED, HYPOTHESIZED or RULED OUT) and no word of what was tried. A lead, not a verdict`, e);
+  }
+  return out;
+}
+
+// --pairs: rule pairs that share a topic and may pull in opposite directions,
+// for a model to review. Items are open lessons' rules, PLAYBOOK steps, and
+// the lines of rule files that read as rules (a list item, or a line with
+// must, never, always, don't or do not). A pair is a candidate when the two
+// share two or more topic words or the same command in backticks, and a cue
+// says they pull apart. A pair's score is its overlap score plus 10 for each
+// point of its cue's weight (3, 2 or 1), so a strong cue ranks first.
+// Strongest first, and of two with one score, the one found first.
+// The overlap score (shared topic words, and 2 for each shared word pair or
+// span) two texts need before a weak cue (weight 1) makes them a pair.
+const WEAK_SHARED = 4;
+// The steps of this plugin's playbook template, each as the first 16 hex
+// characters of the sha256 of its text, without its number, with each run of
+// white space made one space. Its steps were written to agree, so two of them
+// left unchanged are not a pair. A test keeps this list the same as the
+// template's steps.
+export const SHIPPED_STEPS = new Set([
+  '571da1f9351a8b54', '382527a74578856c', '0aaef69d40705001', '74058ac1afb648eb', '5c01ab6599d2e5ae', '3e59ac7fbaa2e25f',
+  '593310ba476f9a3c', '1723d7cd773a3a79', '777077b20da876e2', 'bf077e03e5a79af5', '98fe0333a5b322b7',
+]);
+export const stepKey = (text) => createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 16);
+const RULE_LINE =/^\s*(?:[-*+]|\d{1,9}\.) |\b(?:must|never|always|don't|do not)\b/i;
+// The cue between two topics, strongest first, as {weight, text}, or null.
+function cueOf(a, b) {
+  for (const [verb, programs] of a.commands) {
+    const other = b.commands.get(verb);
+    if (other && ![...programs].some((p) => other.has(p))) return {weight: 3, text: `two commands for "${a.words.get(verb) || verb}": \`${label([...programs][0])}\` and \`${label([...other][0])}\``};
+  }
+  if (a.oneAtATime && b.atOnce) return {weight: 3, text: `"one at a time" against "${b.atOnce}"`};
+  if (b.oneAtATime && a.atOnce) return {weight: 3, text: `"${a.atOnce}" against "one at a time"`};
+  if ((a.never && !a.always && b.always && !b.never) || (b.never && !b.always && a.always && !a.never)) return {weight: 3, text: '"never" against "always"'};
+  // "must X" against "don't X", and "before X" against "after X".
+  for (const [s, w] of a.must) if (b.negated.has(s)) return {weight: 2, text: `"must ${w}" against "${b.negated.get(s)}"`};
+  for (const [s, w] of b.must) if (a.negated.has(s)) return {weight: 2, text: `"${a.negated.get(s)}" against "must ${w}"`};
+  for (const [s, w] of a.before) if (b.after.has(s)) return {weight: 2, text: `"before ${w}" against "after ${b.after.get(s)}"`};
+  for (const [s, w] of a.after) if (b.before.has(s)) return {weight: 2, text: `"after ${w}" against "before ${b.before.get(s)}"`};
+  // A word one says not to do, and the other says plainly. Common words make
+  // this cue fire often ("no tool" against "tool"), so it is a weak one: like
+  // the next, it needs more shared words to count (WEAK_SHARED).
+  for (const [s, said] of a.negated) if (b.words.has(s) && !b.negated.has(s)) return {weight: 1, text: `"${said}" against "${b.words.get(s)}"`};
+  for (const [s, said] of b.negated) if (a.words.has(s) && !a.negated.has(s)) return {weight: 1, text: `"${a.words.get(s)}" against "${said}"`};
+  // A clause with a negator that shares two topic words with a text that has none.
+  const negClause = (x, y) =>
+    !y.negator &&
+    x.negClauses.some((c) => {
+      let n = 0;
+      for (const s of c) if (y.words.has(s) && ++n >= 2) return true;
+      return false;
+    });
+  if (negClause(a, b) || negClause(b, a)) return {weight: 1, text: 'a "not" against a plain statement'};
+  return null;
+}
+// Returns {pairs, candidates, items, over, ruleFiles}.
+export function pairsReport(log) {
+  const look = finder(log.root);
+  const items = [];
+  let total = 0;
+  // `section` is a promoted lesson's section, or a step's own section: a
+  // promoted lesson is not paired with its own section's steps, since step 3 of
+  // "The lessons check" already says the step wins where they conflict.
+  // `shipped` is a step left as the playbook template wrote it (SHIPPED_STEPS).
+  const addItem = (file, line, text, section = null, shipped = false) => {
+    total++;
+    if (items.length < MAX_ITEMS) items.push({file, line, section, shipped, t: topicOf(text)});
+  };
+  // Open and promoted lessons: a promoted lesson's rule still gives its step's
+  // details, so it is followed too.
+  for (const e of log.entries)
+    if (e.status !== 'closed') addItem('LESSONS.md', e.lines.find((l) => l.field === 'Rule going forward')?.n ?? e.line, e.fields['Rule going forward'] || '', e.status === 'promoted' ? e.section : null);
+  for (const s of playbookSteps(log)) addItem('PLAYBOOK.md', s.line, s.text, s.section.name, SHIPPED_STEPS.has(stepKey(s.text)));
+  const rules = ruleFiles(log, look);
+  for (const file of rules.files) {
+    let fence = false;
+    file.lines.forEach((text, i) => {
+      if (text.startsWith('```')) {
+        fence = !fence;
+        return;
+      }
+      if (fence || text.startsWith('#') || IGNORE_START.test(text) || text.trim() === '') return;
+      if (RULE_LINE.test(text.length > MAX_LINT_LINE ? text.slice(0, MAX_LINT_LINE) : text)) addItem(file.name, i + 1, text);
+    });
+  }
+  // Each item is compared only with the items it shares a topic word or a
+  // command with, found through an index from each word to the items that
+  // hold it, so items with nothing in common cost nothing.
+  const words = new Map(); // stem -> indexes of the items before that hold it
+  const commands = new Map(); // a command span -> the same
+  const count = new Int32Array(items.length);
+  const sameCommand = new Uint8Array(items.length);
+  const touched = [];
+  let candidates = 0;
+  const best = []; // the strongest MAX_PAIRS, strongest first
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i].t;
+    for (const s of it.words.keys()) for (const j of words.get(s) || []) if (count[j]++ === 0 && !sameCommand[j]) touched.push(j);
+    for (const n of it.spans.keys()) {
+      if (!n.includes(' ')) continue;
+      for (const j of commands.get(n) || []) {
+        if (!sameCommand[j] && count[j] === 0) touched.push(j);
+        sameCommand[j] = 1;
+      }
+    }
+    for (const j of touched) {
+      if (count[j] >= 2 || sameCommand[j]) {
+        const a = items[j];
+        // A promoted lesson and a step of its own section (or two lessons of one
+        // section: both give that step's details, so neither is followed alone),
+        // or two template steps left unchanged.
+        // Not a `continue`: count[j] and sameCommand[j] are reset below.
+        const own = (a.shipped && items[i].shipped) || (a.section !== null && a.section === items[i].section && (a.file === 'LESSONS.md' || items[i].file === 'LESSONS.md'));
+        const cue = own ? null : cueOf(a.t, it);
+        const o = cue ? overlap(a.t, it) : null;
+        // A weak cue counts only for two texts that share more of their topic:
+        // shared words and word pairs, as the overlap score counts them.
+        if (cue && (cue.weight > 1 || sameCommand[j] || o.score >= WEAK_SHARED)) {
+          candidates++;
+          const pair = {score: o.score + 10 * cue.weight, a: {file: a.file, line: a.line}, b: {file: items[i].file, line: items[i].line}, shared: o.shared.slice(0, MAX_SHARED), spans: o.spans.slice(0, MAX_SHARED), cue: cue.text};
+          if (best.length < MAX_PAIRS || pair.score > best[best.length - 1].score) {
+            let at = best.length;
+            while (at > 0 && best[at - 1].score < pair.score) at--;
+            best.splice(at, 0, pair);
+            if (best.length > MAX_PAIRS) best.pop();
+          }
+        }
+      }
+      count[j] = 0;
+      sameCommand[j] = 0;
+    }
+    touched.length = 0;
+    for (const s of it.words.keys()) {
+      if (!words.has(s)) words.set(s, []);
+      words.get(s).push(i);
+    }
+    for (const n of it.spans.keys()) {
+      if (!n.includes(' ')) continue;
+      if (!commands.has(n)) commands.set(n, []);
+      commands.get(n).push(i);
+    }
+  }
+  return {pairs: best, candidates, items: items.length, over: total - items.length, ruleFiles: rules.files.map((f) => f.name)};
+}
+const pairWords = (p) => [...p.shared, ...p.spans.map((s) => `\`${label(s)}\``)].join(', ');
+// --pairs as lines, not yet made safe to print: the command line passes each
+// through show().
+export function pairsLines(report) {
+  const lines = report.pairs.map((p) => unkeyed(`PAIR ${p.score} ${label(p.a.file)}:${p.a.line} ${label(p.b.file)}:${p.b.line} ${pairWords(p)}; ${p.cue}`));
+  if (report.over) lines.push(`-- pairs: past the limit of ${MAX_ITEMS} rules and steps, ${report.over} not compared`);
+  lines.push(`-- pairs: ${report.candidates} candidate pair${report.candidates === 1 ? '' : 's'} among ${report.items} rules and steps, ${report.pairs.length} printed (at most ${MAX_PAIRS}); a lead for review, not a verdict`);
+  return lines;
+}
+// --pairs --json: one object, its text made safe to print.
+export function pairsJson(report) {
+  const where = (w) => ({file: show(w.file, MAX_NAME), line: w.line});
+  return JSON.stringify({
+    version: VERSION,
+    candidates: report.candidates,
+    items: report.items,
+    notCompared: report.over,
+    pairs: report.pairs.map((p) => ({score: p.score, a: where(p.a), b: where(p.b), shared: p.shared.map((w) => show(w, MAX_NAME)), spans: p.spans.map((s) => show(unkeyed(s), MAX_NAME)), cue: show(unkeyed(p.cue))})),
+    ruleFiles: report.ruleFiles.map((n) => show(n, MAX_NAME)),
+  });
+}
+
 // Runs every rule on a loaded log. Returns {findings, silenced, errors,
 // warnings, notes, sizes}. Findings are {file, line, rule, severity, message},
-// in file and line order; a silenced one also has its reason.
-export function lintReport(log) {
+// in file and line order; a silenced one also has its reason. `leads` adds the
+// lead rules (--leads).
+export function lintReport(log, {leads = false} = {}) {
   const look = finder(log.root);
   const ctx = {look, texts: new Map(), refs: 0, unchecked: 0};
   // At most MAX_KEEP findings are kept; past that only the errors are counted.
@@ -970,6 +1478,8 @@ export function lintReport(log) {
     ignores.push(...lineIgnores(rows).map((ig) => ({...ig, file: file.name})));
   }
 
+  if (leads) for (const l of leadFindings(log)) push('LESSONS.md', l.line, l.f, l.entry);
+
   // Sizes.
   const {budget} = log.settings;
   const allTokens = tokens(allReport(log).join('\n'));
@@ -1016,7 +1526,8 @@ export function lintReport(log) {
       silenced.push({...f, reason: unkeyed(ig.reason)});
     } else kept.push(f);
   }
-  for (const v of valid) if (!v.used) kept.push({file: v.file, line: v.n, rule: 'unused-ignore', severity: 'warning', message: `this lint-ignore for ${v.rule} matches no finding: remove it`});
+  // A silence for a lead rule is unused only when the leads ran.
+  for (const v of valid) if (!v.used && (leads || !LEADS.has(v.rule))) kept.push({file: v.file, line: v.n, rule: 'unused-ignore', severity: 'warning', message: `this lint-ignore for ${v.rule} matches no finding: remove it`});
 
   const order = new Map([['LESSONS.md', 0], ['PLAYBOOK.md', 1], ...rules.files.map((f, i) => [f.name, i + 2])]);
   const sort = (a, b) => (order.get(a.file) ?? 99) - (order.get(b.file) ?? 99) || a.line - b.line;
@@ -1096,10 +1607,17 @@ function parseArgs(args) {
   let mode = 'counts';
   let all = false; // --all after --lint or --doctor
   let json = false;
+  let leads = false;
   const words = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--dir') {
+    if (a === '--leads') {
+      if (leads) return null;
+      leads = true;
+    } else if (a === '--pairs') {
+      if (mode !== 'counts' || words.length) return null;
+      mode = 'pairs';
+    } else if (a === '--dir') {
       if (!args[i + 1] || args[i + 1].startsWith('-')) return null;
       dir = resolve(args[++i]);
     } else if (a === '--all' && (mode === 'lint' || mode === 'doctor')) {
@@ -1123,8 +1641,15 @@ function parseArgs(args) {
       words.push(a.toLowerCase());
     }
   }
-  if (json && mode !== 'lint' && mode !== 'doctor') return null;
-  return {dir, mode, words, all, json};
+  // --leads alone is --lint --leads, and so is --all --leads.
+  if (leads && mode === 'counts') mode = 'lint';
+  else if (leads && mode === 'all') {
+    mode = 'lint';
+    all = true;
+  }
+  if (leads && mode !== 'lint' && mode !== 'doctor') return null;
+  if (json && mode !== 'lint' && mode !== 'doctor' && mode !== 'pairs') return null;
+  return {dir, mode, words, all, json, leads};
 }
 
 function main() {
@@ -1134,7 +1659,7 @@ function main() {
     process.exitCode = 2;
     return;
   }
-  const {dir, mode, words, all, json} = parsed;
+  const {dir, mode, words, all, json, leads} = parsed;
   const log = loadLog(dir);
   if (log.error) {
     if (json) console.log(JSON.stringify({version: VERSION, error: show(log.error)}));
@@ -1143,10 +1668,16 @@ function main() {
     return;
   }
   if (mode === 'lint' || mode === 'doctor') {
-    const report = lintReport(log);
+    const report = lintReport(log, {leads});
     if (json) console.log(lintJson(log, report));
     else lintLines(log, report, {all, doctor: mode === 'doctor'}).forEach((l) => say(l));
     process.exitCode = report.errors ? 1 : 0;
+    return;
+  }
+  if (mode === 'pairs') {
+    const report = pairsReport(log);
+    if (json) console.log(pairsJson(report));
+    else pairsLines(report).forEach((l) => say(l));
     return;
   }
   if (mode === 'check') {

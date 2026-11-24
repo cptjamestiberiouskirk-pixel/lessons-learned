@@ -22,6 +22,7 @@ Before a commit, run the `verify` skill (`.claude/skills/verify/SKILL.md`). Why 
 
 <!-- lint-ignore stale-path: relative to plugins/<copy>/, in both copies -->
 - `templates/lessons.mjs` in both copies and `dev/lessons.mjs` stay the same text. After a change to the template, copy it to the other two places and update the value under "The script's fingerprint" in both `SKILL.md` files and `FINGERPRINT` in `plugins/lessons-learned/hooks/lessons-gate.mjs`, then copy the hook to `plugins/lessons-learned-codex/hooks/`; the tests fail until all are done. A change to the hook is copied the same way.
+- A change to a step of `plugins/lessons-learned/templates/PLAYBOOK.md` also changes `SHIPPED_STEPS` in the script, so `--pairs` keeps the template's steps apart. The test that checks it prints the new list. That is a change to the script, copied as above.
 - A change to one setup skill gets the same change in the other, unless it is about how the two tools differ.
 <!-- lint-ignore stale-path: relative to each plugin's own folder: .claude-plugin/ in plugins/lessons-learned/, .codex-plugin/ in plugins/lessons-learned-codex/ -->
 - A change a user would notice gets a line in `CHANGELOG.md` and, at release, a version bump in both plugins' manifests (`.claude-plugin/plugin.json`, and the Codex pair `plugin.json` and `.codex-plugin/plugin.json`) and in the script's header.
