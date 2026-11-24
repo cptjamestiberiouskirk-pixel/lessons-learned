@@ -264,7 +264,7 @@ test('a lookup prints each section\'s number, --section takes it, and step 3 nev
   assert.match(gone.out, /^PLAYBOOK "Gone": follow its steps \(1 matching lesson\), not a section of PLAYBOOK\.md: run node dev\/lessons\.mjs --check$/m);
   const many = Array.from({length: 51}, (_, i) => entry(`2025-10-${String(28 - Math.floor(i / 3)).padStart(2, '0')}`, `Many ${i}`, {rule: `rule ${i}`, status: 'promoted to PLAYBOOK "Deploying"'})).join('');
   const long = run(['--section', '4'], {lessons: lessons + many, playbook: book});
-  assert.match(long.out, /^\.\.\. and 2 more lessons, not printed: close the lessons whose rules no longer hold \(The lessons check, step 6\)$/m);
+  assert.match(long.out, /^\.\.\. and 2 more lessons, not printed: close the lessons a test or tool now enforces in full \(The lessons check, step 6\)$/m);
   assert.doesNotMatch(long.out, /search LESSONS\.md/);
   for (const copy of [TEMPLATES, resolve(TEMPLATES, '../../lessons-learned-codex/templates'), resolve(TEMPLATES, '../../..')]) {
     const text = readFileSync(join(copy, 'PLAYBOOK.md'), 'utf8');

@@ -616,7 +616,7 @@ export function staleReport(log) {
   if (leads.length > MAX_SHOWN) lines.push(`... and ${leads.length - MAX_SHOWN} more lessons, not printed`);
   const past = over ? `, and ${over} more not checked (the limit is ${MAX_REFS})` : '';
   lines.push(`-- ${leads.length} of ${reviewed} open or promoted lessons have evidence to review; ${refs} file names checked${past}; ${unnamed} name no file`);
-  lines.push('-- a lead, not a verdict: read the lesson, and close it only if its rule no longer holds');
+  lines.push('-- a lead, not a verdict: read the lesson and fix its Evidence. Close it only when a test or tool enforces its whole rule (The lessons check, step 6)');
   return lines;
 }
 
@@ -697,13 +697,13 @@ export function sectionReport(log, name) {
   if (lessons.length) {
     lines.push(`-- ${lessons.length} lesson${lessons.length > 1 ? 's' : ''} promoted to this section (their Status names it): their rules' details apply too, where they fit; where one conflicts with a step, the step wins`);
     for (const e of lessons.slice(0, MAX_SHOWN)) lines.push(`${e.key}\n    ${e.fields['Rule going forward'] || ''}`);
-    if (lessons.length > MAX_SHOWN) lines.push(`... and ${lessons.length - MAX_SHOWN} more lessons, not printed: close the lessons whose rules no longer hold (The lessons check, step 6)`);
+    if (lessons.length > MAX_SHOWN) lines.push(`... and ${lessons.length - MAX_SHOWN} more lessons, not printed: close the lessons a test or tool now enforces in full (The lessons check, step 6)`);
   } else lines.push('-- no lesson is promoted to this section');
   // Every session that runs step 3 pays to read this, so one past its budget
   // says so.
   const size = tokens(lines.join('\n'));
   const budget = log.settings.budget.section;
-  if (size > budget) lines.push(`-- size-budget: this section and its lessons' rules are about ${size} tokens, over the section budget of ${budget}: split the section, or close lessons whose rules no longer hold`);
+  if (size > budget) lines.push(`-- size-budget: this section and its lessons' rules are about ${size} tokens, over the section budget of ${budget}: split the section, or close lessons a test or tool now enforces in full`);
   return {ok: true, lines};
 }
 
@@ -1355,7 +1355,7 @@ const WEAK_SHARED = 4;
 // left unchanged are not a pair. A test keeps this list the same as the
 // template's steps.
 export const SHIPPED_STEPS = new Set([
-  '571da1f9351a8b54', '382527a74578856c', 'eb67b4a4326bbfbc', '74058ac1afb648eb', '38dd8e6d512dcef7', 'af4f0835bda00e59',
+  '571da1f9351a8b54', '382527a74578856c', 'eb67b4a4326bbfbc', '74058ac1afb648eb', '38dd8e6d512dcef7', '6762c6796d9085c1',
   '593310ba476f9a3c', '1723d7cd773a3a79', '777077b20da876e2', 'bf077e03e5a79af5', '98fe0333a5b322b7',
 ]);
 export const stepKey = (text) => createHash('sha256').update(text.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 16);
