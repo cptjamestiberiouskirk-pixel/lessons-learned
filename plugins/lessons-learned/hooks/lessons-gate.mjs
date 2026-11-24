@@ -20,7 +20,7 @@ import {createHash} from 'node:crypto';
 
 // The fingerprint of this release's templates/lessons.mjs, as the setup skill
 // computes it (sha256 of the text with CRLF made LF). A test keeps it equal.
-const FINGERPRINT = '8360552c9e0ef5e71f92ee80889ecae1c89e85103a10379466b8a3c067eceec9';
+const FINGERPRINT = '909da94a2c53a0b0e46aa7d34e4d3e483bb080d4a822a37a94248400cf39881a';
 // The fingerprints of the released scripts, from each release tag's
 // templates/lessons.mjs. Each takes `node dev/lessons.mjs <word>...` as a
 // lookup, so a repo set up by an older release still needs one. Any other

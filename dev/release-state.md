@@ -4,7 +4,7 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
-## Unreleased: --lint and --doctor (phase 1a), ESLint (phase 2), the setup offers (phase 1b)
+## 0.4.0: --lint and --doctor (phase 1a), ESLint (phase 2), the setup offers (phase 1b)
 
 Base: 3076665. One review round run on 1a (below), with two reviewers: one on the script and tests, one on the docs.
 
@@ -12,6 +12,7 @@ Base: 3076665. One review round run on 1a (below), with two reviewers: one on th
 
 - **RS-A-releasefingerprint** (at each release). The gate's `RELEASED` set and both skills' "Earlier releases of this plugin print these" list the fingerprints of the released scripts. When a release is tagged, add its `FINGERPRINT` to `RELEASED` with the tag in its comment, add it to both skills' list, and rename the "to this release" line in both skills' "What changed since earlier releases" to that version, with a new line above it for the next one. The test "the released fingerprints are those of the release tags' scripts" checks the gate's list against the tags where the clone has them, and "both skills name the earlier releases the gate accepts" checks the skills' lists against the gate's.
 - **RS-A-codexoffers** (CONFIRMED in 1b's Codex `node-app` run; minor). Codex's turn-1 plan named the two offers in one closing sentence ("A CI check or pre-commit hook is optional and requires a separate request"), not each with the file it would change, as step 3 asks. It still took only the offer named in turn 2. Claude Code's plan listed both with their files. A firmer step 3 wording, such as a fixed "Offers" heading in the plan, would settle whether the skill or the model is the cause.
+- **RS-A-codexescalate** (CONFIRMED in the 0.4.0 Codex `node-app` run; minor). To check the new pre-commit hook, Codex ran `git -c core.hooksPath=.githooks hook run pre-commit` in its sandbox, which exited 1 with no output, then asked to run it once outside the sandbox (`sandbox_permissions: "require_escalated"`, with a reason), where it passed. The command runs only `--doctor` and makes no commit. Why it failed in the sandbox was not found. The skill could say to check the hook with `node dev/lessons.mjs --doctor` alone, so setup never asks to leave the sandbox.
 - **RS-A-lintrealpath** (INFERRED). If `realpathSync.native` throws on the script's path, the start check now compares the resolved paths, so the script runs instead of exiting 0 with nothing done. Not tried: no drive here where the real path fails (RAM disk, some FUSE and virtual drives).
 - **RS-T-fixturelines** (INFERRED). Fixtures check a finding's line only where `fires` gives one (the round 1 fixtures do). The older fixtures check rule, severity and file.
 
@@ -28,6 +29,17 @@ The installed `lessons-learned-codex` was backed up, reinstalled from this check
 
 - `node-app`, turn 1, "Set up lessons-learned in this repo.": showed the plan and stopped, with the repo unchanged. See RS-A-codexoffers. Turn 2, resumed with "Proceed, and add the pre-commit hook. The topic words are fine.": built all parts, with the line in both `AGENTS.md` and `CLAUDE.md`, and wrote `.githooks/pre-commit` as the skill gives it. It did not touch `package.json` and did not set `core.hooksPath`: it ran the hook with `git -c core.hooksPath=.githooks hook run pre-commit`, and tried it on a broken log in a throwaway repo under its temp folder, which it removed. It gave the user the `git config` command. Checked afterwards: fingerprint 8360552c, `--check` 0 bad, `--doctor` exit 0, `git config core.hooksPath` empty.
 - Turn 3, a new session: with `core.hooksPath` set by hand and an entry missing `Why` added, Codex was asked to commit. It looked up lessons first (the `AGENTS.md` line at work), and its `git commit` was refused by the hook with the `--doctor` error. It stopped without editing or skipping hooks. See RS-H-codexgithook.
+
+### 0.4.0 release end-to-end runs (2026-11-23, from 2ef0977 with the version bump, fingerprint 909da94a)
+
+- Claude Code (`run-setup.ps1`), on fresh test repos:
+  - `node-app` turn 1: all parts missing but the exclusion, both offers listed with their files, and it waited. Turn 2, "Go ahead, and add the pre-commit hook. Only CLAUDE.md, and the topic words are fine.": built all parts and wrote `.githooks/pre-commit`. Checked in the repo: fingerprint 909da94a, `--check` 0 bad, `--doctor` exit 0, `package.json` unchanged, `core.hooksPath` empty. USD 0.28 and 2.14.
+  - `full-app`: "present, this release", fingerprint 909da94a, changed nothing (`git status` clean). USD 0.39.
+  - Refused calls were commands chained with `;`, and one run of the hook by `sh`, all outside the allow list.
+- Codex, installed from this checkout with the `-c` marketplace override:
+  - First try (not counted): `codex exec` refreshed the GitHub marketplace when it started and put main's copy back over the install. The rollout read the skill from the `0.3.1` cache folder, and the repo got the old script (8360552c), though Codex reported a matching fingerprint. Logged in `LESSONS.md`. `run-live.ps1` now takes `-Marketplace` and `-Resume`.
+  - With the override on `codex exec` too: the cache stayed `0.4.0`, and the log read the skill and templates only from it. Turn 1 showed the plan with both offers and their files, and changed nothing. Turn 2, "Proceed, and add the pre-commit hook. The topic words are fine.": built all parts, with the line in `AGENTS.md` and `CLAUDE.md`, and wrote `.githooks/pre-commit`. Checked in the repo: fingerprint 909da94a, `--check` 0 bad, `--doctor` exit 0, `package.json` unchanged, `core.hooksPath` empty. See RS-A-codexescalate.
+  - Afterwards the plugin was reinstalled from GitHub: the cache matches `main` 2ef0977. `hooks/list` gives the lessons hook `trustStatus: modified`, though `hooks.json` and `lessons-gate.mjs` match the copy the user trusted; only `README.md` differs, changed in 2ef0977. Codex's content hash seems to cover more than the hook's files (INFERRED, not settled: the saved hash matches no single file, and Codex's source was not read). Either way the user trusts the hook again after updating.
 
 ### Answered
 
@@ -63,7 +75,7 @@ Fail before: on 0.3.1, 55 of the first 58 lint tests failed. The 2 that passed t
 
 Output: the 0.3.1 script and this one, run on 97 folder and argument pairs (this repo, the templates, four other repos, a missing folder, the fixtures), differ only in the 24 usage lines.
 
-## Unreleased: the lessons gate
+## 0.4.0: the lessons gate
 
 Base: a5c9e5b (0.3.1 and the promotions after it). Five review rounds run (below); the fifth is on the Codex copy.
 

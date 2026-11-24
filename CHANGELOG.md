@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-11-23)
+
+The lessons gate, a hook in Claude Code and Codex that holds an edit or a commit until the lessons check is done, and `--lint` and `--doctor`, which find rules a session may not be able to follow.
 
 - `dev/lessons.mjs --lint` finds rules a session may not be able to follow. It reports a file, command or flag that isn't in the repo, and evidence only one machine has. It reports an unsettled `INFERRED` or `HYPOTHESIZED` label and text that reads like an injected instruction. It reports the playbook's headings and steps out of order, and a lookup or section over its size budget.
 - Each `--lint` finding has a rule ID and is an error or a warning. An error exits 1. A finding is silenced in place with `<!-- lint-ignore <rule>: <reason> -->`. `--doctor` adds a summary, `--all` lists the silenced findings, and `--json` prints one object for CI.
