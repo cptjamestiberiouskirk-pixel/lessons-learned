@@ -21,6 +21,7 @@ const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
 const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry." + OFF;
 const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry." + OFF;
+const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
 const WIN = process.platform === 'win32';
@@ -851,6 +852,255 @@ test('a git push that one reading of $( ) misses is found by the other', () => {
   assert.equal(command(root, "$m = \"$('(')\" + @'\nit's\n'@\ngit push", () => {}, {tool: 'PowerShell'}).deny, true, 'legacy here-string check');
 });
 
+// Q82: an escape before a newline. bash on Linux reads \ CR LF as an escaped
+// CR, so the LF ends the command, and Git Bash joins the lines. pwsh reads `
+// and a newline as a space where a token starts, after a quoted string or a
+// $( ) too, and inside a word as an escaped CR (the LF ends the command) or
+// LF (part of the word). The hook joined the lines everywhere, gluing the
+// next line to the word before, so a git push there was read as the words of
+// another command. Each push input ran its push in WSL bash 5.2 or Git Bash
+// 5.3, or in pwsh 7.7, whose parser showed a NewLine or a LineContinuation
+// there (scratch q82/probe*.mjs).
+test('an escape before a newline is read as each shell reads it', () => {
+  const root = makeRepo();
+  const sh = [
+    'echo \\\r\ngit push',
+    'echo a\\\r\ngit push',
+    "echo 'a'\\\r\ngit push",
+    'x=$(echo a \\\r\ngit push)',
+    'x="$(echo a \\\r\ngit push)"',
+    "bash -c 'echo a\\\r\ngit push'",
+    // The # after it starts a comment, so the quote in that is text (Bugbot
+    // on PR 21).
+    "echo a\\\r\n#b'\ngit push\n# '",
+    // Git Bash joins: a#b is one word, and the push runs.
+    'echo a\\\r\n#b; git push',
+  ];
+  for (const cmd of sh) assert.equal(command(root, cmd, () => {}).deny, true, JSON.stringify(cmd));
+  const ps = [
+    // Inside a word, an ${ } that ends in }, a <# #> inside a word, and
+    // after U+FEFF, which pwsh reads as no space.
+    'echo a`\r\ngit push',
+    'echo $x`\r\ngit push',
+    "echo a'b'`\r\ngit push",
+    'echo ${a}`\r\ngit push',
+    'echo a<#c#>`\r\ngit push',
+    'echo a﻿`\r\ngit push',
+    "echo a`\r\n#b'\ngit push\n# '",
+    // Where a token starts pwsh joins, so git and push are one command; the
+    // second line here joins and the first doesn't.
+    'git `\r\npush',
+    "echo a`\r\n#b'\ngit `\r\npush\n# '",
+    // After a quoted string or a $( ) a token starts too, with LF or CR LF:
+    // the word ends there, so git and push are one command, and the # after
+    // it starts a comment.
+    "& 'git'`\r\npush",
+    "& 'git'`\npush",
+    '& "git"`\npush',
+    "git 'push'`\norigin",
+    "echo 'a'`\n#b'\ngit push\n# '",
+    "echo $(1)`\n#b'\ngit push\n# '",
+    "pwsh -c 'echo a`\r\ngit push'",
+    // After an index or a member, too, which this hook can't tell from a
+    // word: the reading that ends each such word finds these.
+    "echo $x[0]`\n#'\ngit push\n#'",
+    "echo $x.y`\n#'\ngit push\n#'",
+  ];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  // pwsh joins these, so git and push are echo's words, and inside a word
+  // ` LF is part of it: it ran no git.
+  assert.equal(command(root, 'echo `\r\ngit push', () => {}, {tool: 'PowerShell'}).deny, false, 'pwsh: after a space');
+  assert.equal(command(root, 'echo a`\ngit push', () => {}, {tool: 'PowerShell'}).deny, false, 'pwsh: LF inside a word');
+  // Earlier calls are read those ways too, though the current call holds no
+  // CR and no newline.
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'Bash', {command: 'echo \\\r\ngit push'})).deny, true, 'an earlier Bash call');
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'PowerShell', {command: 'echo a`\r\ngit push'})).deny, true, 'an earlier PowerShell call');
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'PowerShell', {command: "& 'git'`\npush"})).deny, true, 'an earlier PowerShell call with LF');
+  // And so is the current call. The turn has the line and no lookup. Joined,
+  // this command is a lookup alone, which counts; split, its push comes
+  // first, and a lookup after the push doesn't count.
+  assert.equal(command(root, `echo \\\r\ngit push; ${LOOKUP}`, (t) => t.newMessage().text(LINE)).reason, REASON_LOOKUP, 'the current call');
+});
+
+// Q82: a CR anywhere. pwsh reads one with no LF after it as a newline in
+// code, but not in a string or a <# #>; Git Bash and cmd drop each one, in
+// quotes too; bash on Linux reads it as part of a word. The hook read it as a
+// space everywhere, and skipped a command whose text held no "git". Each push
+// input ran its push in pwsh 7.7, Git Bash 5.3 or cmd (scratch
+// q82/probe7.mjs to probe12.mjs), and each other input ran none.
+test('a CR is read as each shell reads it', () => {
+  const root = makeRepo();
+  const GB = 'C:/Program Files/Git/bin/bash.exe';
+  const ps = [
+    'echo a\rgit push',
+    'echo a \rgit push',
+    // It ends a comment, and after a quoted string an escape before it is
+    // a space; after an escaped ` it is a newline.
+    'echo a # c\rgit push',
+    "& 'git'`\rpush",
+    'echo a``\rgit push',
+    'echo a |\rgit push',
+    "$x = @'\rgit push\r'@\rgit push",
+    "$x = @'\r'\r'@\rgit push",
+    '& { echo a\rgit push }',
+    'echo $(echo a\rgit push)',
+    // It ends a comment inside a $( ) too: at the depth limit the $( ) isn't
+    // read, so where it ends matters.
+    '$($($($(echo $(echo a # c\r)\rgit push))))',
+    // A CR in a string is the inner shell's: Git Bash and cmd drop it.
+    `echo a\`\r\n& '${GB}' -c "git pu\rsh"`,
+    'cmd /d /c "git pu\rsh"',
+    // A quoted string's or a $( )'s escape before a LF ends the word, so the
+    // # after it starts a comment, while the next line's escape is inside a
+    // word, so its LF ends the command. One reading of each is not enough.
+    // Inside a $( ) it is the same, and so for a word the hook can't place.
+    "echo 'x'`\n#'\necho a`\r\ngit push\n#'",
+    "echo \"x\"`\n#'\necho a`\r\ngit push\n#'",
+    "echo $(1)`\n#'\necho a`\r\ngit push\n#'",
+    "$x = $(echo $x[0]`\n#)'\ngit push\n#'\n)",
+    "$x = $(echo 'a'`\n#)'\ngit push\n#'\n)",
+    "$x = $(echo 'a'`\n#)'\necho b`\r\ngit push\n#'\n)",
+  ];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  const psNone = ['echo a`\rgit push', 'echo "a\rgit push"', "echo 'a\rgit push'", 'echo a <# c\rgit push #>', "$x = @'\r\ngit push\r\n'@\r\necho b"];
+  for (const cmd of psNone) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, false, JSON.stringify(cmd));
+  // Git Bash drops the CR, in pwsh's path too, and pwsh reads ` LF after
+  // "git" as a space (run with pwsh's full path).
+  const sh = ['git pu\rsh', 'g\rit push', 'x=$(git pu\rsh)', "'/c/Program Files/PowerShell/7/pw\rsh.exe' -NoProfile -Command '& \"git\"`\npush'"];
+  for (const cmd of sh) assert.equal(command(root, cmd, () => {}).deny, true, JSON.stringify(cmd));
+  // bash on Linux reads a\rgit as one word, and Git Bash echo agit.
+  assert.equal(command(root, 'echo a\rgit push', () => {}).deny, false, 'sh: a CR inside a word');
+  // An earlier call whose text holds no "git" but for a CR is read too.
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'Bash', {command: 'g\rit push'})).deny, true, 'an earlier Bash call');
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'PowerShell', {command: 'echo a\rgit push'})).deny, true, 'an earlier PowerShell call');
+});
+
+// Q82: a shell inside a shell is read each sh way with each PowerShell way.
+// bash on Linux ends the command at \ CR LF and runs pwsh, which ends it at
+// ` CR LF inside a word, or reads ` LF after $x[0] as a space; Git Bash drops
+// the CR in pwsh's name. WSL bash ran pwsh (a stub) with the inner script,
+// and pwsh 7.7 ran each inner script's push; Git Bash ran pwsh, which ran it
+// (scratch q82/probe13.mjs).
+test('each sh way is read with each PowerShell way', () => {
+  const root = makeRepo();
+  const inner = "echo $x[0]`\n#\"\ngit push\n#\"";
+  const cases = [
+    ["echo a\\\r\npwsh -c 'echo a`\r\ngit push'", 'linux, in'],
+    [`echo a\\\r\npwsh -c '${inner}'`, 'linux, start'],
+    [`'/c/Program Files/PowerShell/7/pw\rsh.exe' -NoProfile -Command '${inner}'`, 'git, start'],
+  ];
+  for (const [cmd, name] of cases) assert.equal(command(root, cmd, () => {}).deny, true, name);
+});
+
+// Q82: a split reading the current call doesn't need is the one that stands
+// for it, not the plain one. The earlier Bash call is a lookup only in bash on
+// Linux (Git Bash drops the CR and joins the lines), and the current call
+// pushes before its own lookup only as pwsh reads a quoted string's escape. As
+// Git Bash and pwsh read the two, no lookup comes before the push.
+test('a split reading the current call needs no other way is its partner', () => {
+  const root = makeRepo();
+  const early = `echo a\\\r\n${LOOKUP}`;
+  const cmd = `echo 'x'\`\n#'\ngit push\n#'\n${LOOKUP}`;
+  const r = command(root, cmd, (t) => t.newMessage().text(LINE).call('toolu_e', 'Bash', {command: early}, '-- 0 shown; 0 lessons'), {tool: 'PowerShell'});
+  assert.equal(r.deny, true, 'git, in: its linux partner');
+  assert.equal(r.reason, REASON_LOOKUP);
+  // The other way: the earlier PowerShell call is a lookup only where $x[0]
+  // is read as one the escape is inside, and the current call, with no `,
+  // pushes before its lookup only in bash on Linux. Where $x[0] ends at the
+  // escape, as pwsh reads it, no lookup comes before the push.
+  const earlyPs = `echo $x[0]\`\n#'\n'\n${LOOKUP}`;
+  const sh = `echo a\\\r\ngit push; ${LOOKUP}`;
+  const s = command(root, sh, (t) => t.newMessage().text(LINE).call('toolu_e', 'PowerShell', {command: earlyPs}, '-- 0 shown; 0 lessons'));
+  assert.equal(s.deny, true, 'linux, start: its in partner');
+  assert.equal(s.reason, REASON_LOOKUP);
+});
+
+// Q82: each command of the turn is walked once for each way it reads, and
+// that reading is its own: the same text as another call's in another tool,
+// or another folder, is read again. pwsh reads a lone CR as a newline, and no
+// bash does, and a push in a folder with no gated repo uses nothing up.
+test('a command read once is read in its own tool and folder', () => {
+  const root = makeRepo();
+  const other = scratch();
+  const cr = 'echo a\rgit push';
+  assert.equal(edit(root, (t) => ready(t).call('toolu_b', 'Bash', {command: cr})).deny, false, 'in Bash, no push');
+  assert.equal(edit(root, (t) => ready(t).call('toolu_b', 'Bash', {command: cr}).call('toolu_p', 'PowerShell', {command: cr})).deny, true, 'then in PowerShell, a push');
+  const away = (t) => {
+    ready(t);
+    t.cwd = other;
+    t.call('toolu_o', 'Bash', {command: 'git push'});
+    t.cwd = root;
+    return t;
+  };
+  assert.equal(edit(root, away).deny, false, 'a push with no gated repo');
+  assert.equal(edit(root, (t) => away(t).call('toolu_r', 'Bash', {command: 'git push'})).deny, true, 'then one in the repo');
+});
+
+// Each command is read in its own stand-in, so a pair of ways no one command
+// needs still pairs two commands' partners: on Windows, a Bash call read the
+// Git Bash way and a PowerShell call read the `start` way (Bugbot on PR 22).
+// Git Bash 5.3 drops A's CR and joins the lines, so its lookup is quoted text
+// (WSL bash runs it). pwsh 7.7 reads B's backtick after $x[0] as a space, so
+// the push runs and the lookup after it is a comment (read `in`, the lookup
+// runs and the push is quoted).
+test('a turn is read with each pair of ways, though no one command needs that pair', () => {
+  const root = makeRepo();
+  const a = `echo a\\\r\n#b'\n${LOOKUP}\n# '`;
+  const b = `echo $x[0]\`\n#'\ngit push\n#'; ${LOOKUP}`;
+  const r = command(root, b, (t) => t.newMessage().text(LINE).call('toolu_a', 'Bash', {command: a}), {tool: 'PowerShell'});
+  assert.equal(r.reason, REASON_LOOKUP);
+  assert.equal(command(root, b, (t) => ready(t).call('toolu_a', 'Bash', {command: a}), {tool: 'PowerShell'}).deny, false, 'with a lookup before it');
+});
+
+// Claude Code ends a hook at its timeout and then runs the call: in 2.1.332 a
+// gate that took past 10 s left a `hook_cancelled` record with timedOut, and
+// the `git push` it would have denied ran (dev/release-state.md, Q82). So the
+// gate stops reading at its own deadline, well inside that timeout, and
+// denies. LESSONS_GATE_DEADLINE_MS lowers the deadline; at 1 ms it has passed
+// before the gate reads its first command.
+test('a gate out of time denies the call, and a call it never reads still passes', () => {
+  const root = makeRepo();
+  const late = {LESSONS_GATE_DEADLINE_MS: '1'};
+  const turn = (t) => ready(t).call('toolu_s', 'Bash', {command: `git -C "${root}" status`});
+  assert.equal(edit(root, turn).deny, false, 'an edit in time');
+  assert.equal(edit(root, turn, {env: late}).reason, REASON_LATE, 'an edit out of time');
+  assert.equal(command(root, 'git push', ready).deny, false, 'a push in time');
+  assert.equal(command(root, 'git push', ready, {env: late}).reason, REASON_LATE, 'a push out of time');
+  assert.equal(command(root, 'ls -la', () => {}, {env: late}).deny, false, 'no git: not read');
+  assert.equal(edit(makeRepo({check: false}), () => {}, {env: late}).deny, false, 'an edit in a repo without the check');
+  // It only lowers the deadline: a value past it, or not a number, is the deadline.
+  for (const v of ['', 'x', '-1', '600000']) assert.equal(edit(root, turn, {env: {LESSONS_GATE_DEADLINE_MS: v}}).deny, false, JSON.stringify(v));
+});
+
+test('a call the gate denied for lack of time never ran', () => {
+  const root = makeRepo();
+  const denied = (t) => ready(t).newMessage().use('toolu_p', 'Bash', {command: 'git push'}).result('toolu_p', `PreToolUse:Bash hook error: ${REASON_LATE}`, true);
+  assert.equal(edit(root, denied).deny, false);
+});
+
+// Claude Code ends the hook at hooks.json's timeout, and so may Codex. The
+// deadline leaves 3 seconds of it for Node's start (behind a shell, in Codex)
+// and for the last piece of work before the gate looks at the clock.
+test('the gate\'s deadline is well inside the timeout hooks.json gives it, in both copies', () => {
+  const m = /^const DEADLINE = (\d+);/m.exec(readFileSync(GATE, 'utf8'));
+  assert.ok(m, 'const DEADLINE = <ms>; in the gate');
+  for (const dir of [PLUGIN, join(ROOT, 'plugins/lessons-learned-codex')]) {
+    const hooks = JSON.parse(readFileSync(join(dir, 'hooks/hooks.json'), 'utf8'));
+    const gates = hooks.hooks.PreToolUse.flatMap((x) => x.hooks);
+    assert.ok(gates.length > 0, dir);
+    for (const h of gates) assert.ok(h.timeout * 1000 - Number(m[1]) >= 3000, `${dir}: timeout ${h.timeout} s, deadline ${m[1]} ms`);
+  }
+});
+
+// bash on Linux reads a CR inside a word as part of it, so `a<CR>b` is one
+// folder, which Windows can't name. The push ran in WSL bash 5.2.
+test('a CR inside a folder name is part of it', {skip: process.platform === 'win32' && 'no CR in a Windows file name'}, () => {
+  const root = makeRepo();
+  mkdirSync(join(root, 'a\rb'));
+  assert.equal(command(root, 'git -C a\rb push', () => {}).deny, true, 'git -C');
+  assert.equal(command(root, 'cd a\rb && git push', () => {}).deny, true, 'cd');
+});
+
 // A random PowerShell expression from `byte`: quotes, ( ), $( ) inside double
 // quotes, and comments in a $( ) outside them, nested. A <# #> is on one line,
 // as the check for an @' opener reads one line at a time (SECURITY.md, known
@@ -928,6 +1178,31 @@ test('property: a git push after any balanced sh word with nested quotes is read
   for (let i = 0; i < 10; i++) {
     const cmd = `x=${shWord(byte)}\ngit push`;
     assert.equal(command(root, cmd, () => {}).deny, true, `${JSON.stringify(cmd)}, GATE_SEED=${seed}`);
+  }
+});
+
+// A random PowerShell word from `byte` that pwsh reads as one word up to its
+// end: it starts with a letter, and each piece after it stays inside the
+// word, an ${ }, a $( ) and a quoted string included. Not a <# #>: pwsh
+// reads one inside a word as part of it, and the gate as a comment, a known
+// limit (SECURITY.md).
+function psWord(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  return `a${Array.from({length: byte() % 4}, () => pick(['a', '-', '.', '$x', "'b'", '"b"', '$(1)', '${a}', '#'])).join('')}`;
+}
+
+// Random words before an escape and CR LF, then a git push on the next line.
+// bash on Linux, and pwsh at the end of a word, read an escaped CR there, so
+// the LF ends the command (Q82). Each input from seeds 1 to 10 ran its git
+// push in WSL bash, or in pwsh 7, twice.
+test('property: a git push after a word that ends in an escape and CR LF is read', (t) => {
+  const root = makeRepo();
+  const {seed, byte} = seeded(t);
+  for (let i = 0; i < 10; i++) {
+    const sh = `x=${shWord(byte)}\\\r\ngit push`;
+    assert.equal(command(root, sh, () => {}).deny, true, `${JSON.stringify(sh)}, GATE_SEED=${seed}`);
+    const ps = `echo ${psWord(byte)}\`\r\ngit push`;
+    assert.equal(command(root, ps, () => {}, {tool: 'PowerShell'}).deny, true, `${JSON.stringify(ps)}, GATE_SEED=${seed}`);
   }
 });
 
