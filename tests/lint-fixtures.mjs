@@ -430,12 +430,18 @@ export const FIXTURES = [
   TEST_ONLY('unreached: a plain line after a heading in step 1 ends it', '1. Run a lookup (`test`).\n   ### Notes\nand `deploy` too.'),
   // A list number has at most 9 digits (round 2, zeros10).
   {name: 'unreached: ten digits are not step 1', source: 'hand', files: repo(UNREACHED, CHECK_BOOK('0000000001. Run a lookup (`test`).')), quiet: ['unreached']},
-  // A placeholder in backticks is no topic word (round 2, filename). A path
-  // still is: RS-A-unreached-paths.
   // A word with "/" that a lookup takes stays a topic word: the lookup with
   // `ci/cd` prints this lesson (review round 3, slash.mjs, RS-A-unreached-slash).
   {name: 'unreached: a word with / that a lookup takes is a topic word', source: 'hand', files: repo(lesson({title: 'The ci/cd job ran on a stale cache', what: 'the pipeline shipped old files', rule: 'clear the ci/cd cache before a release build', evidence: 'run 42'}), CHECK_BOOK('1. Run a lookup with words for the topics (`test`, `ci/cd`).')), quiet: ['unreached']},
-  TEST_ONLY('unreached: a placeholder in backticks is no topic word','1. Run a lookup (`<words>`, `test`).', lesson({title: 'The script hung', rule: 'give the lookup its <words> first', evidence: 'run 42'})),
+  // A placeholder in backticks is no topic word (round 2, filename). A path
+  // still is: RS-A-unreached-paths.
+  TEST_ONLY('unreached: a placeholder in backticks is no topic word', '1. Run a lookup (`<words>`, `test`).', lesson({title: 'The script hung', rule: 'give the lookup its <words> first', evidence: 'run 42'})),
+  // Only a span that starts with "<" and ends with ">" is a placeholder. A
+  // heredoc marker and a generic type are topic words, and a lookup with each
+  // prints its lesson (review round 4: mutants that drop a span with "<"
+  // anywhere, with "<" first, or with ">" last passed every test).
+  {name: 'unreached: a span that starts with < but does not end with > is a topic word', source: 'hand', files: repo(lesson({title: 'A <<EOF heredoc lost the script tabs', what: 'the script would not parse', rule: 'write a script with the Write tool, not a <<EOF heredoc', evidence: 'run 42'}), CHECK_BOOK('1. Run a lookup with words for the topics (`test`, `<<eof`).')), quiet: ['unreached']},
+  {name: 'unreached: a span that ends with > but does not start with < is a topic word', source: 'hand', files: repo(lesson({title: 'A list<int> field was read as a string', what: 'the sum was wrong', rule: 'parse each list<int> field before it is stored', evidence: 'run 42'}), CHECK_BOOK('1. Run a lookup with words for the topics (`test`, `list<int>`).')), quiet: ['unreached']},
   // Every topic word too long: the check didn't run, so its silence is not
   // unused (round 2, the mutant long-ran).
   {name: 'unreached: a silence is not unused when every topic word is too long', source: 'hand', files: repo(silenced(UNREACHED), CHECK_BOOK(`1. Run a lookup with words for the topics (\`${'q'.repeat(41)}\`).`)), quiet: ['unreached', 'unused-ignore']},
