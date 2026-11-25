@@ -15,6 +15,34 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-25: A mutant script read every mutant as passing, as Node 26 prints spec into a pipe
+- What went wrong: in Q83, `mut2.mjs --tests` ran the gate tests on six mutants of the new `psKind` and reported that each passed them all. The script counted TAP's `not ok` lines, and Node 26 prints the spec reporter even into a pipe, so it found none. One of those mutants, run alone through its nearest test, failed it.
+- Why: CONFIRMED: `node --test` in Node 26.13.1, piped, printed the spec reporter's lines and no `not ok` line. The script had no check that it found a result at all.
+- Rule going forward: a script that reads `node --test` output names the reporter it parses (`--test-reporter=tap`), and reports no result when it finds no count line (`# pass N`). Before a mutant is called a survivor, run its nearest test alone against it and read the result.
+- Evidence: `dev/release-state.md`, search "prints the spec reporter into a pipe"
+- Status: open
+
+## 2026-11-25: Q83's first psKind read a long expression again at each escape
+- What went wrong: the first `psKind` kept a cache per word, but when it had stopped at a `.`, a `[` or a `:`, it read the last expression again from its start at each later escape. One 144 KB PowerShell call kept the gate reading for 20 seconds, past the hooks' 10 second timeout, so the tool would have run it. A timing script found it after the fix was written, before any commit.
+- Why: CONFIRMED: the cache kept where the expression started, not how far it had read. The gate's 6 second deadline looks at the clock between steps of `tokenize`, and this cost was inside one step.
+- Rule going forward: a parse that goes on across calls is timed before the commit, with one long input for each place it can stop (here a `.`, a `[`, a `:`, a quoted string, a `$( )`, a variable name), each followed by thousands of the calls that resume it. A cost inside one step of `tokenize` gets its own timing test, since the deadline doesn't bound it.
+- Evidence: `tests/gate.test.mjs`, search "a PowerShell word with many escapes after an expression is read in linear time"
+- Status: open
+
+## 2026-11-25: A check chain ran none of its steps and exited 0
+- What went wrong: after the desktop app restart, Q83's heavy checks were rerun with `pwsh -File chain.ps1 -Only mut2-tests,mut-final,...`, the command the hand-over note gave. It finished in a second with exit code 0 and ran no step. Read as a result, it would have looked like every check passed.
+- Why: CONFIRMED: `pwsh -File` passes `-Only a,b` as one string, `"a,b"`, so no step name matched it, and the script didn't check that a chosen name matched a step.
+- Rule going forward: a script that runs a chosen subset of its steps fails when a chosen name matches no step. After it ends, its log is read for each chosen step's start and end before any result is used.
+- Evidence: `dev/release-state.md`, search "passes `-Only a,b` as one string"
+- Status: open
+
+## 2026-11-25: The Codex timeout run's planned proof, a ref on a local remote, never came
+- What went wrong: Q83's one billed Codex run was to show a push the timed-out hook would have denied landing on a bare remote. Codex ran the push, but git couldn't reach the remote from Codex's `workspace-write` sandbox, though the run named it with `--add-dir`, so no ref was written. The run's command item, which holds git's own output, settled the question instead.
+- Why: INFERRED: the sandbox. Checked outside Codex: `git ls-remote origin` worked from the same repo. Inside the sandbox it was not run again, as that takes another billed run.
+- Rule going forward: before a billed run whose proof is a side effect outside the run's workspace, pick a proof the tool's own log records too (its command item, the hook's own log), and say in the script which one counts if the side effect doesn't happen.
+- Evidence: `dev/release-state.md`, search "which the run had planned as its proof"
+- Status: open
+
 ## 2026-11-25: The WSL release check failed a growth test once, and kept only its name
 - What went wrong: in Q79's release check after review round 2, `node --test` under WSL failed "time: reading a commit-heavy turn grows linearly", which had passed in the check before it. The check prints only a failing test's name, so the failed run's times were lost. Ten reruns under WSL, five on the new gate and five on main's, all passed, with ratios of 3.5 at most against the limit of 8.
 - Why: HYPOTHESIZED, and it can't be checked without the lost times: the test takes its ratio past a fixed cost of about 110 ms, and the quarter run is only about 85 ms past it, so one slow run of either lifts the ratio past 8.
