@@ -251,18 +251,19 @@ function exempt(given, target, root) {
 
 // Here-doc and here-string bodies are text, not commands. Both are found line
 // by line, so the work grows linearly with the command.
-function dropBodies(command, dialect, legacy, cr = false) {
+function dropBodies(command, dialect, legacy, cr = false, linux = false) {
   if (dialect === 'ps') return dropHereStrings(command, legacy, cr);
   if (dialect !== 'sh' || !command.includes('<<')) return command;
   const out = [];
   // Here-docs opened and not yet closed, in order; `next` is the one whose
-  // closing line comes first.
+  // closing line comes first. bash on Linux keeps a CR in the tag and in
+  // the closing line; the other readings take a CR at the line's end off.
   const waiting = [];
   let next = 0;
-  const state = {stack: []};
+  const state = {stack: [], legacy, linux};
   for (const raw of command.split('\n')) {
     if (next < waiting.length) {
-      const line = raw.replace(/\r$/, '');
+      const line = linux ? raw : raw.replace(/\r$/, '');
       if ((waiting[next].tabs ? line.replace(/^\t+/, '') : line) === waiting[next].tag) next++;
       out.push('');
       continue;
@@ -277,8 +278,65 @@ function dropBodies(command, dialect, legacy, cr = false) {
 // quotes, `$(( ))`, `$[ ]` or a comment, and not `<<<` (a here-string).
 // `state.stack` holds the open contexts, carried to the next line: a quote,
 // or `(` for a `$(` inside double quotes, which is command context again
-// until its `)`.
+// until its `)`. With `state.legacy`, a tag is read as main read it.
 const HERE_DOC = /<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|\\?([A-Za-z0-9_.-]+))/y;
+
+// The tag of a here-doc whose `<<` is at `at`, as bash reads the word after it
+// (scratch q83/probe-sh.mjs): quotes and backslashes come off, $'...' is
+// decoded, and every other character up to a space, a tab or one of ;&|()<>
+// is kept, $ ` { } and + included; a $( ), ${ } or backticks are kept whole.
+// A CR ends it, but bash on Linux (`linux`) keeps one. Null where no word
+// follows, or a quote or a $( ) isn't closed on the line.
+function hereTag(line, at, linux) {
+  let i = at + 2;
+  const tabs = line[i] === '-';
+  if (tabs) i++;
+  while (line[i] === ' ' || line[i] === '\t') i++;
+  let tag = '';
+  const start = i;
+  while (i < line.length) {
+    const c = line[i];
+    if (' \t;&|()<>'.includes(c) || (c === '\r' && !linux)) break;
+    if (c === "'") {
+      const k = line.indexOf("'", i + 1);
+      if (k < 0) return null;
+      tag += line.slice(i + 1, k);
+      i = k + 1;
+    } else if (c === '$' && line[i + 1] === "'") {
+      let k = i + 2;
+      while (k < line.length && line[k] !== "'") k += line[k] === '\\' ? 2 : 1;
+      if (k >= line.length) return null;
+      tag += ansiC(line.slice(i + 2, k));
+      i = k + 1;
+    } else if (c === '"' || (c === '$' && line[i + 1] === '"')) {
+      let k = c === '$' ? i + 2 : i + 1;
+      for (; k < line.length && line[k] !== '"'; k++) {
+        if (line[k] === '\\' && '$`"\\'.includes(line[k + 1] ?? '')) k++;
+        tag += line[k];
+      }
+      if (k >= line.length) return null;
+      i = k + 1;
+    } else if (c === '\\') {
+      if (i + 1 < line.length) tag += line[i + 1];
+      i += 2;
+    } else if (c === '$' && (line[i + 1] === '(' || line[i + 1] === '{')) {
+      const k = line[i + 1] === '(' ? parens(line, i + 2) : line.indexOf('}', i + 2);
+      if (k < 0 || k >= line.length) return null;
+      tag += line.slice(i, k + 1);
+      i = k + 1;
+    } else if (c === '`') {
+      const k = line.indexOf('`', i + 1);
+      if (k < 0) return null;
+      tag += line.slice(i, k + 1);
+      i = k + 1;
+    } else {
+      tag += c;
+      i++;
+    }
+  }
+  return i > start ? {tag, tabs, end: i} : null;
+}
+
 function hereDocs(line, state) {
   const found = [];
   const st = state.stack;
@@ -312,10 +370,20 @@ function hereDocs(line, state) {
       i++;
     } else if (top === '(' && c === '(') st.push('(');
     else if (top === '(' && c === ')') st.pop();
-    else if (c === '#' && (i === 0 || /[\s;&|()]/.test(line[i - 1]))) break;
+    else if (c === '#' && (i === 0 || (state.legacy ? /[\s;&|()]/ : state.linux ? /[ \t;&|()]/ : /[ \t\r;&|()]/).test(line[i - 1]))) break;
     else if (c === '<' && line[i + 1] === '<') {
       if (line[i + 2] === '<') {
         i += 2;
+        continue;
+      }
+      if (!state.legacy) {
+        const t = hereTag(line, i, state.linux);
+        if (!t) {
+          i++;
+          continue;
+        }
+        found.push({tag: t.tag, tabs: t.tabs});
+        i = t.end - 1;
         continue;
       }
       HERE_DOC.lastIndex = i;
@@ -341,6 +409,214 @@ function parens(text, from) {
     else if (text[j] === ')' && --depth === 0) return j;
   }
   return text.length;
+}
+
+// The characters pwsh reads as a space between words, as its tokenizer's
+// IsWhitespace: a space, a tab, a vertical tab, a form feed, U+0085, U+00A0
+// and Unicode's other spaces and line and paragraph separators, but not
+// U+FEFF, U+180E or U+200B (scratch q83/probe-ps.mjs). bash reads only a space
+// or a tab. JavaScript's \s, which this hook read before, holds U+FEFF and not
+// U+0085; the legacy reading still reads it.
+const PS_SPACES = new Set([0x09, 0x0b, 0x0c, 0x20, 0x85, 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000]);
+const psSpace = (c) => {
+  const k = c === undefined ? -1 : c.charCodeAt(0);
+  return PS_SPACES.has(k) || (k >= 0x2000 && k <= 0x200a);
+};
+
+// bash's $'...' body as bash 5 reads it: \a \b \e \E \f \n \r \t \v \\ \' \"
+// \?, up to three octal digits, \x and up to two hex digits, \u up to four,
+// \U up to eight, and \c and a character, its control character. Any other
+// escape keeps its backslash, and a NUL ends the text.
+const C_ESC = {a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?'};
+const HEX = {x: /[0-9A-Fa-f]{1,2}/y, u: /[0-9A-Fa-f]{1,4}/y, U: /[0-9A-Fa-f]{1,8}/y};
+function ansiC(body) {
+  let out = '';
+  for (let j = 0; j < body.length; j++) {
+    const c = body[j];
+    const d = body[j + 1];
+    if (c !== '\\' || d === undefined) {
+      out += c;
+      continue;
+    }
+    const oct = /^[0-7]{1,3}/.exec(body.slice(j + 1, j + 4));
+    const hex = Object.hasOwn(HEX, d) ? HEX[d] : null;
+    if (hex) hex.lastIndex = j + 2;
+    const digits = hex && hex.exec(body);
+    if (Object.hasOwn(C_ESC, d)) {
+      out += C_ESC[d];
+      j++;
+    } else if (oct) {
+      out += String.fromCharCode(parseInt(oct[0], 8) & 0xff);
+      j += oct[0].length;
+    } else if (digits) {
+      const v = parseInt(digits[0], 16);
+      out += d === 'x' ? String.fromCharCode(v) : v <= 0x10ffff ? String.fromCodePoint(v) : '';
+      j += 1 + digits[0].length;
+    } else if (d === 'c' && j + 2 < body.length) {
+      const x = body[j + 2];
+      out += x === '?' ? '\x7f' : String.fromCharCode(x.toUpperCase().charCodeAt(0) & 0x1f);
+      j += 2;
+    } else out += c;
+  }
+  const nul = out.indexOf('\0');
+  return nul < 0 ? out : out.slice(0, nul);
+}
+
+// pwsh's escape at k, after a `, in a bareword or in double quotes: `0 `a
+// `b `e `f `n `r `t `v, and `u{ } with one to six hex digits; any other
+// character, or a capital (`N), stands for itself. The text it makes, and how
+// many characters it takes.
+const PS_ESC = {0: '\0', a: '\x07', b: '\b', e: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v'};
+const PS_U = /u\{([0-9A-Fa-f]{1,6})\}/y;
+function psEscape(s, k) {
+  PS_U.lastIndex = k;
+  const m = PS_U.exec(s);
+  if (m && parseInt(m[1], 16) <= 0x10ffff) return [String.fromCodePoint(parseInt(m[1], 16)), m[0].length];
+  return [Object.hasOwn(PS_ESC, s[k]) ? PS_ESC[s[k]] : s[k], 1];
+}
+
+// Where the head a pwsh argument starts with at k ends, and whether it is an
+// expression by itself: a quoted string or a $( ) is, and a variable is with
+// a member or an index after it ($x[0], $x.y.z, $env:x.y, $x::y). null with
+// none. It reads as far as the text goes, so a word's head is found once; an
+// escape that cuts the word before the head's end leaves it no expression
+// yet. $?, $$ and $^ take none in an argument.
+const PS_VAR = /\$(?:\{[^}]*\}|(?:[\p{L}_][\p{L}\p{N}_]*:(?!:))?[\p{L}\p{N}_][\p{L}\p{N}_?]*)/uy;
+const PS_NAME = /[\p{L}\p{N}_]+/uy;
+function psHead(s, k) {
+  let e;
+  if (s[k] === "'") {
+    for (e = k + 1; ; e += 2) {
+      e = s.indexOf("'", e);
+      if (e < 0) return null;
+      if (s[e + 1] !== "'") return [e + 1, true];
+    }
+  }
+  if (s[k] === '"') {
+    for (e = k + 1; e < s.length; ) {
+      if (s[e] === '`') e += 2;
+      else if (s[e] === '$' && s[e + 1] === '(') e = parens(s, e + 2) + 1;
+      else if (s[e] === '"' && s[e + 1] === '"') e += 2;
+      else if (s[e] === '"') return [e + 1, true];
+      else e++;
+    }
+    return null;
+  }
+  if (s[k] === '$' && s[k + 1] === '(') return [parens(s, k + 2) + 1, true];
+  PS_VAR.lastIndex = k;
+  return PS_VAR.exec(s) ? [PS_VAR.lastIndex, false] : null;
+}
+
+// The member or index at e after an expression ([0], .y, ."y", ::y): where it
+// ends, e if none is there, or -1 if one may go on past `to`, the escape
+// that cuts the word: a [ with no ] before it (`st` keeps where its scan got
+// to, so the next `to` goes on from there), a quoted member not closed before
+// it, or a . or :: right at it. A call's ( ) is never inside a word here, as
+// a ( or ) ends one; the word after its ) goes on (psKind's `lead`).
+function psStep(s, e, to, st) {
+  if (s[e] === '[') {
+    let j = e + 1;
+    let depth = 1;
+    if (st.j > e) ({j, depth} = st);
+    for (; j < to; j++) {
+      if (s[j] === '[') depth++;
+      else if (s[j] === ']' && --depth === 0) return j + 1;
+    }
+    st.j = j;
+    st.depth = depth;
+    return -1;
+  }
+  if (s[e] !== '.' && !(s[e] === ':' && s[e + 1] === ':')) return e;
+  if (e + 1 >= to) return -1;
+  const n0 = s[e] === '.' ? e + 1 : e + 2;
+  const q = s[n0];
+  if (q === "'" || q === '"') {
+    const c = s.indexOf(q, n0 + 1);
+    if (c < 0) return e;
+    return c < to ? c + 1 : -1;
+  }
+  PS_NAME.lastIndex = n0;
+  if (!PS_NAME.exec(s)) return e;
+  return PS_NAME.lastIndex > to ? -1 : PS_NAME.lastIndex;
+}
+
+// How pwsh reads a ` and a newline right after s[from..to), an argument so far
+// (scratch q83/probe-ps.mjs, probe-ps2.mjs): 'start' after an index or a
+// member, where they are a space; 'param' after a parameter (-a, -a$x, a
+// letter past ASCII) or
+// a word like :a, where the ` is part of it and the newline ends the command;
+// 'in' inside any other word, where the newline is part of it; null with no
+// argument. An expression it starts with ends it, and what follows is read as
+// a new one: $x.y-z ends in the parameter -z. Where a word could be a
+// parameter or a plain one, it is read as a parameter: that reading can only
+// deny more. `lead` is whether the word starts right after a ), so its
+// members and indexes are the value's before it: $x.y(1).z, (1)[0] and
+// a(1).z end in an expression, where a(1) is a and (1) (scratch
+// q83/probe-paren.mjs). `cache` keeps the word's place between its escapes,
+// each read with a later `to`, so a word with many escapes is read once:
+// k, where the expression being read starts or, once `rest`, where the
+// words after the last one start (pe and colon: where PS_PARAM ends there
+// and whether in a :, found once); h, k's head; e, where the expression is
+// read to, -1 before its head; at and head, its head's end and whether that
+// alone makes an expression. A . or [ where `to` cut it is read again from
+// there, and a [ from where its scan got to.
+const PS_PARAM = /(?:-[\p{L}_?]|:[\p{L}\p{N}_?])[\p{L}\p{N}_?$-]*:?/uy;
+function psKind(s, from, to, c, lead = false) {
+  if (from >= to) return null;
+  if (c.from !== from || to < c.to) {
+    c.from = from;
+    c.k = from;
+    c.h = undefined;
+    c.e = lead ? from : -1;
+    c.at = from;
+    c.head = true;
+    c.j = -1;
+    c.rest = false;
+    c.pe = -1;
+  }
+  c.to = to;
+  let cut = false;
+  while (!c.rest) {
+    if (c.e < 0) {
+      if (c.h === undefined) c.h = psHead(s, c.k);
+      if (!c.h) {
+        c.rest = true;
+        break;
+      }
+      if (c.h[0] > to) {
+        break;
+      }
+      [c.e, c.head] = c.h;
+      c.at = c.e;
+    }
+    for (;;) {
+      const f = psStep(s, c.e, to, c);
+      if (f < 0) cut = true;
+      if (f <= c.e) break;
+      c.e = f;
+    }
+    const whole = c.head || c.e > c.at;
+    if (c.e === to && whole) return 'start';
+    if (cut) break;
+    if (!whole) {
+      c.rest = true;
+      break;
+    }
+    c.k = c.e;
+    c.h = undefined;
+    c.e = -1;
+  }
+  if (c.rest && c.pe === -1) {
+    PS_PARAM.lastIndex = c.k;
+    const m = PS_PARAM.exec(s);
+    c.pe = m ? PS_PARAM.lastIndex : -2;
+    c.colon = Boolean(m) && s[c.k] === '-' && m[0].endsWith(':');
+  }
+  // Cut, the words after the expression start at its . or [ (or its $, if it
+  // is a variable with no member yet), where no parameter does.
+  if (!c.rest) return 'in';
+  if (c.pe !== to) return 'in';
+  return c.colon ? 'start' : 'param';
 }
 
 // The code pwsh reads from the text of a $( ) inside double quotes: a ` or
@@ -386,7 +662,7 @@ function codeAt(line, at, legacy) {
       const k = line.indexOf('#>', i + 2);
       if (k < 0 || k + 2 > at) return false;
       i = k + 1;
-    } else if (c === '#' && (i === 0 || /[\s;|&(){}]/.test(line[i - 1]))) return false;
+    } else if (c === '#' && (i === 0 || (legacy ? /\s/.test(line[i - 1]) : psSpace(line[i - 1]) || /[\r\n]/.test(line[i - 1])) || /[;|&(){}]/.test(line[i - 1]))) return false;
   }
   return st.length === 0;
 }
@@ -431,8 +707,13 @@ function tokenize(input, dialect, legacy = false, split = null) {
   // newline in code (`cr`). Without `split`, it is a space.
   const drop = split && (dialect === 'cmd' || (dialect === 'sh' && split.sh === 'git'));
   const cr = Boolean(split) && dialect === 'ps';
-  const s = dropBodies(drop ? input.replace(/\r/g, '') : input, dialect, legacy, cr);
+  const linux = Boolean(split) && dialect === 'sh' && split.sh === 'linux';
+  const s = dropBodies(drop ? input.replace(/\r/g, '') : input, dialect, legacy, cr, linux);
   const isNl = (k) => s[k] === '\n' || (cr && s[k] === '\r' && s[k + 1] !== '\n');
+  // A space between words, as the shell reads one (see psSpace). A CR is
+  // one but in bash on Linux. The legacy reading and cmd read \s.
+  const space =
+    legacy || dialect === 'cmd' ? (c) => /\s/.test(c) : dialect === 'ps' ? (c) => c === '\r' || psSpace(c) : (c) => c === ' ' || c === '\t' || (c === '\r' && !linux);
   // The end of the line `from` is on.
   const eol = (from) => {
     let k = from;
@@ -484,8 +765,16 @@ function tokenize(input, dialect, legacy = false, split = null) {
     if (words.length) cmds.push(words);
     words = [];
   };
+  // Where the main loop is, where the word being built began, and psKind's
+  // cache for that word.
+  let i = 0;
+  let wAt = 0;
+  const kinds = {from: -1};
   const add = (c, dyn = false) => {
-    w ??= {text: '', dyn: false};
+    if (!w) {
+      w = {text: '', dyn: false};
+      wAt = i;
+    }
     w.text += c;
     if (dyn) w.dyn = true;
   };
@@ -504,10 +793,21 @@ function tokenize(input, dialect, legacy = false, split = null) {
   const close = (from) => {
     const st = [dialect === 'sh' && s[from] === '(' ? 'A' : '('];
     let start = true;
-    // Whether the quote open now started a word, and where the last quoted
-    // string that started one ended.
+    // Whether the quote open now started a word, where the last quoted
+    // string or $( ) that started one ended, and where the last ) of a ( that
+    // is no $( did.
     let fresh = false;
     let whole = -1;
+    let after = -1;
+    // Where the word now open in code began, psKind's cache for it, and for
+    // each ( open, the word it is in and whether its $ started that word.
+    let wordAt = from;
+    const kc = {from: -1};
+    const outer = [];
+    // In PowerShell a quoted string or a $( ) that starts a word ends it,
+    // unless a member or an index follows (scratch q83/probe-after*.ps1):
+    // "a"x is two words, and in "a"#b the # starts a comment.
+    const ends = (j) => dialect === 'ps' && whole === j && s[j] !== '.' && s[j] !== '[' && !(s[j] === ':' && s[j + 1] === ':');
     for (let j = from; j < n; j++) {
       const c = s[j];
       const top = st[st.length - 1];
@@ -522,34 +822,55 @@ function tokenize(input, dialect, legacy = false, split = null) {
           if (dialect === 'ps') j = parens(s, j + 2);
           else {
             st.push(s[j + 2] === '(' ? 'A' : '(');
+            outer.push(null);
             start = true;
             j++;
           }
         }
       } else if (c === "'" || c === '"' || (dialect === 'sh' && c === '$' && s[j + 1] === "'")) {
-        fresh = start;
+        fresh = start || ends(j);
+        if (fresh) wordAt = j;
         st.push(c === '$' ? "$'" : c);
         if (c === '$') j++;
       } else if (c === esc) {
-        // An escape before a LF joins the lines, but where pwsh reads it as
-        // a space (see the loop below), a # after it starts a comment.
-        if (isNl(j + 1) && cr && (split.ps === 'start' || whole === j)) start = true;
-        else if (!isNl(j + 1)) start = false;
+        // An escape before a LF joins the lines, but where pwsh reads them
+        // as a space, or as a parameter's end and a newline (see psKind), a
+        // # after it starts a comment.
+        if (isNl(j + 1) && cr) {
+          if ((start || whole === j ? 'start' : (psKind(s, wordAt, j, kc, wordAt === after) ?? split.ps)) !== 'in') start = true;
+        } else if (!isNl(j + 1)) {
+          if (start || ends(j)) wordAt = j;
+          start = false;
+        }
         j++;
       } else if (c === '(') {
         st.push(top === 'A' || (dialect === 'sh' && s[j + 1] === '(') ? 'A' : '(');
+        outer.push(dialect === 'ps' && s[j - 1] === '$' && j - 1 >= from ? {wordAt, fresh: wordAt === j - 1} : null);
         start = true;
       } else if (c === ')') {
         st.pop();
         if (!st.length) return j;
-        start = true;
+        // After a PowerShell $( ), the word it is in goes on.
+        const o = outer.pop();
+        if (o) {
+          wordAt = o.wordAt;
+          if (o.fresh) whole = j + 1;
+          start = false;
+        } else {
+          start = true;
+          after = j + 1;
+        }
       } else if (top === '(' && dialect === 'ps' && c === '<' && s[j + 1] === '#') {
         const k = s.indexOf('#>', j + 2);
         j = k < 0 ? n : k + 1;
         start = true;
-      } else if (top === '(' && c === '#' && start) {
+      } else if (top === '(' && c === '#' && (start || ends(j))) {
         j = eol(j) - 1;
-      } else start = (dialect === 'ps' ? /[\s;&|{}<>]/ : /[ \t\n;&|<>]/).test(c);
+      } else {
+        const sep = dialect === 'ps' ? psSpace(c) || /[\r\n;&|{}<>]/.test(c) : /[ \t\n;&|<>]/.test(c);
+        if ((start || ends(j)) && !sep) wordAt = j;
+        start = sep;
+      }
     }
     return n;
   };
@@ -588,28 +909,42 @@ function tokenize(input, dialect, legacy = false, split = null) {
   // A token surely starts at `i` in pwsh where no word is open here and the
   // character before is a space, a tab, a newline or one of ;|&(){}.
   const tokenStart = (i) => w === null && (i === 0 || /[ \t\r\n;|&(){}]/.test(s[i - 1]));
-  // Where the last quoted string or $( ) that started a word ended.
+  // Where the last quoted string or $( ) that started a word ended, and
+  // where the last ) did.
   let whole = -1;
-  let i = 0;
+  let after = -1;
   let steps = 0;
   while (i < n) {
     if ((++steps & 0xffff) === 0) inTime();
     const c = s[i];
+    // In PowerShell a quoted string or a $( ) that starts a word ends it,
+    // unless a member or an index follows: git "push"x is git, push and x
+    // (scratch q83/probe-after*.ps1). The legacy reading joins them.
+    if (whole === i && w && dialect === 'ps' && !legacy && c !== '.' && c !== '[' && !(c === ':' && s[i + 1] === ':')) end();
     // An escape before a newline. bash joins the lines at \ LF. At \ CR LF
     // Git Bash joins them too, as it drops the CR, and bash on Linux reads an
     // escaped CR, so the LF ends the command. pwsh reads ` and a newline as a
     // space where a token starts, and after a quoted string or a $( ) that
-    // started a word. Inside another word it reads an escaped LF, part of the
-    // word, or an escaped CR, and the LF ends the command. Without `split`
-    // the lines join, as main's reading joined them. With it, in PowerShell,
-    // a word this hook can't place is read as one the escape is inside ('in')
-    // or ends ('start').
+    // started a word. Inside another word it reads by that word (psKind): a
+    // space after an expression, the parameter's last character before a
+    // newline that ends the command, or else an escaped LF, part of the word,
+    // or an escaped CR, and the LF ends the command. Without `split` the
+    // lines join, as main's reading joined them. With it, in PowerShell, a
+    // word this hook can't place is read as one the escape is inside ('in')
+    // or ends ('start'). Any other escape is the character it makes: in
+    // PowerShell `n is a LF (psEscape), but not in the legacy reading.
     if (c === esc && dialect !== 'cmd') {
       const nl = isNl(i + 1) ? 1 : s[i + 1] === '\r' && s[i + 2] === '\n' ? 2 : 0;
       if (nl && cr) {
-        if (tokenStart(i) || whole === i || split.ps === 'start') {
+        const kind = tokenStart(i) || whole === i ? 'start' : ((w ? psKind(s, wAt, i, kinds, wAt === after) : null) ?? split.ps);
+        if (kind === 'start') {
           end();
           i += nl + 1;
+          continue;
+        }
+        if (kind === 'param') {
+          end();
+          i++;
           continue;
         }
         if (nl === 1) {
@@ -618,6 +953,12 @@ function tokenize(input, dialect, legacy = false, split = null) {
         }
       } else if (nl === 1 || (nl === 2 && !(split && dialect === 'sh'))) {
         i += nl + 1;
+        continue;
+      }
+      if (i + 1 < n && dialect === 'ps' && !legacy) {
+        const [text, len] = psEscape(s, i + 1);
+        add(text);
+        i += 1 + len;
         continue;
       }
       if (i + 1 < n) add(s[i + 1]);
@@ -629,7 +970,9 @@ function tokenize(input, dialect, legacy = false, split = null) {
       i += 2;
       continue;
     }
-    // bash's $'...': a backslash escapes the next character, a quote included.
+    // bash's $'...': a backslash escapes the next character, a quote
+    // included, and is decoded as bash decodes it (ansiC). The legacy reading
+    // keeps the character after it.
     if (dialect === 'sh' && c === '$' && s[i + 1] === "'") {
       let j = i + 2;
       let text = '';
@@ -639,7 +982,7 @@ function tokenize(input, dialect, legacy = false, split = null) {
           j += 2;
         } else text += s[j++];
       }
-      add(text);
+      add(legacy ? text : ansiC(s.slice(i + 2, Math.min(j, n))));
       i = j + 1;
       continue;
     }
@@ -673,7 +1016,12 @@ function tokenize(input, dialect, legacy = false, split = null) {
       add('');
       let j = i + 1;
       while (j < n && s[j] !== '"') {
-        if (s[j] === esc && dialect !== 'cmd') {
+        if (s[j] === esc && dialect === 'ps' && !legacy && j + 1 < n) {
+          // pwsh's escapes, `n and ` and a LF included, as psEscape reads them.
+          const [text, len] = psEscape(s, j + 1);
+          add(text);
+          j += 1 + len;
+        } else if (s[j] === esc && dialect !== 'cmd') {
           const next = s[j + 1];
           if (dialect === 'ps' || '$`"\\\n'.includes(next ?? '')) {
             if (next !== '\n' && next !== undefined) add(next);
@@ -722,6 +1070,12 @@ function tokenize(input, dialect, legacy = false, split = null) {
       i = k < 0 ? n : k + 1;
       continue;
     }
+    // bash's $"..." is a double-quoted string, translated where a translation
+    // exists: $"git" push runs git push. The legacy reading keeps the $.
+    if (dialect === 'sh' && !legacy && c === '$' && s[i + 1] === '"') {
+      i++;
+      continue;
+    }
     if (c === '$' && dialect !== 'cmd') {
       add(c, isVar(i));
       i++;
@@ -759,6 +1113,7 @@ function tokenize(input, dialect, legacy = false, split = null) {
     // try { git push } catch { }, ForEach-Object { git ... }.
     if (isNl(i) || c === ';' || c === '(' || c === ')' || (dialect === 'ps' && (c === '{' || c === '}'))) {
       brk();
+      if (c === ')') after = i + 1;
       // In sh, ( ) is a subshell: a cd inside it ends with it.
       if (dialect === 'sh' && (c === '(' || c === ')')) cmds.push(c === '(' ? SUB_OPEN : SUB_CLOSE);
       i++;
@@ -807,8 +1162,8 @@ function tokenize(input, dialect, legacy = false, split = null) {
       i = eol(i);
       continue;
     }
-    // A CR left in sh with `split` is bash on Linux's: part of the word.
-    if (/\s/.test(c) && !(c === '\r' && split && dialect === 'sh')) {
+    // A space as the shell reads one (see `space`).
+    if (space(c)) {
       end();
       i++;
       continue;
@@ -1146,11 +1501,25 @@ function wakeUp(r) {
   return typeof text === 'string' && /^\s*<task-notification>/.test(text);
 }
 
-// Whether a transcript line may hold a lookup or a git command: it names
-// lessons.mjs or git, or holds a CR (JSON's \r after an even run of
-// backslashes), which Git Bash and cmd drop, so `g<CR>it` is git there.
-const JSON_CR = /(?:^|[^\\])(?:\\\\)*\\r/;
-const mayRunGit = (line) => line.includes('lessons.mjs') || line.includes('git') || JSON_CR.test(line);
+// Whether a command, or a transcript line holding one, may name git. A shell
+// reads git from g, i and t with only quotes, escapes, a line join or a CR
+// between them (g'i't, gi\ and a LF, g<CR>it in Git Bash and cmd), in any
+// case (GIT runs git on Windows and macOS), or from an escape that makes a
+// letter (bash's $'\x67it', pwsh's `u{67}). So the text, lowercased, is taken
+// if it holds $' or `u{, or if its letters and digits hold git once all
+// else is dropped, or once JSON's escapes (\n, \r, and \u with four hex
+// digits) are dropped too.
+// Other characters between them never make git. It may take more than it
+// needs: that only costs a read. A transcript line is a Buffer.
+const NOT_ALNUM = /[^a-z0-9]+/g;
+const JSON_ESC = /\\(?:u[0-9a-f]{4}|[a-z])/g;
+function mayNameGit(text) {
+  if (text.includes('git') || text.includes("$'")) return true;
+  const t = String(text).toLowerCase();
+  if (t.includes('git') || t.includes('`u{')) return true;
+  return t.replace(NOT_ALNUM, '').includes('git') || t.replace(JSON_ESC, '').replace(NOT_ALNUM, '').includes('git');
+}
+const mayRunGit = (line) => line.includes('lessons.mjs') || mayNameGit(line);
 
 // The records of this turn, oldest first, read backwards from `size` in
 // chunks until the turn's start (past any wake-up starts), at most
@@ -1488,7 +1857,9 @@ async function main() {
   // one holding no ` the same with either `ps` way, and one holding neither
   // a CR nor a ` and a LF the same as without `split`. Inner commands are cut
   // from the command's text, and no reading makes a CR or a ` of other
-  // characters, or a LF of anything but a CR, so the text tells.
+  // characters, or a LF of anything but a CR, but for an escape a reading
+  // decodes: bash's $'...' or pwsh's `r, `n or `u{ }. A text with one is
+  // taken to hold all three, so the text tells.
   const SPLITS = [
     {sh: 'linux', ps: 'in'},
     {sh: 'linux', ps: 'start'},
@@ -1496,9 +1867,10 @@ async function main() {
     {sh: 'git', ps: 'start'},
   ];
   const needs = (text) => {
-    const cr = text.includes('\r');
-    const tick = text.includes('`');
-    const lf = text.includes('\n');
+    const decoded = text.includes("$'") || /`[rnu]/.test(text);
+    const cr = decoded || text.includes('\r');
+    const tick = decoded || text.includes('`');
+    const lf = decoded || text.includes('\n');
     const need = SPLITS.map((x) => (x.ps === 'in' || tick) && (cr || (tick && lf && x.sh === 'linux')));
     return Object.assign(need, {cr, tick});
   };
@@ -1531,8 +1903,7 @@ async function main() {
     if (!roots.size) return;
   } else if (SHELL_TOOLS.has(p.tool_name) && (!codex || p.tool_name === 'Bash')) {
     const command = input.command;
-    // Git Bash and cmd drop a CR, so `g<CR>it` is git there.
-    if (typeof command !== 'string' || !command.replace(/\r/g, '').includes('git')) return;
+    if (typeof command !== 'string' || !mayNameGit(command)) return;
     const dialect = !codex ? dialectOf(p.tool_name) : process.platform === 'win32' ? 'ps' : 'sh';
     current = walk(command, dialect, cwd);
     currentLegacy = walk(command, dialect, cwd, [], 0, true);

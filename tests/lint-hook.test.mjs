@@ -310,6 +310,10 @@ test('time: an edit full of renamed headings of one date is read in linear time'
 // another date, then n removed headings of their date that find only those.
 // Fails on a mutant of 4de7315 that counts a comparison only for a candidate
 // still free (`++pairs` after the fresh check): it walks n taken ones each.
+// The sizes are near the most the 1 MiB cap on an edit's text allows, and
+// each time is the best of 5: at 4,000 and 16,000 with the best of 3, the quarter
+// was only 16 to 79 ms past the fixed cost under WSL, and the check failed
+// twice on load (dev/release-state.md, Q83).
 test('time: removed headings whose date holds only taken candidates are read in linear time', (t) => {
   const {root} = oldPair();
   const run = (n) => () => {
@@ -318,10 +322,10 @@ test('time: removed headings whose date holds only taken candidates are read in 
     editOf(root, 'LESSONS.md', `${list((i) => `## 2026-02-05: t${i}`)}\n${list((i) => `## 2026-01-05: q${i}`)}`, list((i) => `## 2026-01-05: t${i}`));
     return performance.now() - start;
   };
-  const best = (f) => Math.min(f(), f(), f());
+  const best = (f) => Math.min(f(), f(), f(), f(), f());
   const base = best(run(1));
-  const a = best(run(4_000));
-  const b = best(run(16_000));
+  const a = best(run(5_500));
+  const b = best(run(22_000));
   const ratio = Math.max(0, b - base) / Math.max(20, a - base);
   const shown = `quarter ${Math.round(a)} ms, full ${Math.round(b)} ms, fixed cost ${Math.round(base)} ms, ratio past it ${ratio.toFixed(1)}`;
   t.diagnostic(shown);
