@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-25: The WSL release check failed a growth test once, and kept only its name
+- What went wrong: in Q79's release check after review round 2, `node --test` under WSL failed "time: reading a commit-heavy turn grows linearly", which had passed in the check before it. The check prints only a failing test's name, so the failed run's times were lost. Ten reruns under WSL, five on the new gate and five on main's, all passed, with ratios of 3.5 at most against the limit of 8.
+- Why: HYPOTHESIZED, and it can't be checked without the lost times: the test takes its ratio past a fixed cost of about 110 ms, and the quarter run is only about 85 ms past it, so one slow run of either lifts the ratio past 8.
+- Rule going forward: when the release check fails a timing test, run that test alone at once, 5 times on the new code and 5 on the old, and record each ratio in `dev/release-state.md` before calling it noise. A second failure of the same test gets its margin past the fixed cost widened, test first.
+- Evidence: `dev/release-state.md`, search "RS-T-commitheavy-wsl"
+- Status: open
+
 ## 2026-11-24: A macOS hang that passed on its rerun was logged as a one-off, and it hit four runs
 - What went wrong: after PR 17 merged, a hook child killed at 60 s on macOS CI was logged in `dev/release-state.md` as a one-off flake, because the rerun of that job passed. Two earlier runs held the same kill on their first attempt, rerun until green and recorded nowhere. PR 18's first attempt hit it twice more: seven kills in four runs.
 - Why: only the one failed log was read. `gh run list` shows a run's last attempt, so the earlier failures looked green. CONFIRMED: the first attempts of runs 45329972975 and 45445923714 failed on macOS only, with the same kill.
