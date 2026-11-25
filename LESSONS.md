@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-24: A macOS hang that passed on its rerun was logged as a one-off, and it had hit four runs
+- What went wrong: after PR 17 merged, a hook child killed at 60 s on macOS CI was logged in `dev/release-state.md` as a one-off flake, because the rerun of that job passed. Two earlier runs held the same kill on their first attempt, rerun until green and recorded nowhere. PR 18's first attempt hit it twice more: seven kills in four runs.
+- Why: only the one failed log was read. `gh run list` shows a run's last attempt, so the earlier failures looked green. CONFIRMED: the first attempts of runs 45329972975 and 45445923714 failed on macOS only, with the same kill.
+- Rule going forward: before a CI failure that passed on a rerun is logged as a one-off or a flake, read the failed jobs of the first attempt of each recent run that has more than one (`gh api repos/{owner}/{repo}/actions/runs/<id>/attempts/1/jobs`), and compare what the failed tests share: system, helper, input size. A failure seen in more than one run gets its cause found and a test-first fix, not another rerun.
+- Evidence: run 45517513781, attempt 1; `dev/release-state.md`, search "recurring, not a one-off"
+- Status: open
+
 ## 2026-11-24: The template's Limit paragraph was committed before its setup e2e
 - What went wrong: in phase 4, c3de3b9 changed the "Limit:" paragraph of the playbook template and was committed before any setup end-to-end run of that template. The run came after the commit. 476565c skipped the same run in Q40.
 - Why: the paragraph went in with the hook's docs, and was taken as a docs line, not a template change. CONFIRMED: the step 6 run had passed before the paragraph changed, and none ran between the change and the commit.
