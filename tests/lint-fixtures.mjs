@@ -38,6 +38,14 @@ const silenced = (text) => text.replace('- Rule going forward:', '  <!-- lint-ig
 // Twenty topic words of 40 characters: with a rule of 50,000 characters, the
 // check is past its work limit.
 const LONG_WORDS = Array.from({length: 20}, (_, i) => `\`${String(i).padStart(2, '0')}${'q'.repeat(38)}\``).join(', ');
+// A playbook whose lessons check has `step1` as its step 1, then a step 2.
+const CHECK_BOOK = (step1) => `# PLAYBOOK\n\n## The lessons check\n\n${step1}\n2. Write the line.\n`;
+// A fixture where step 1 lists `test` and unreached must name only it.
+const TEST_ONLY = (name, step1, lessons = UNREACHED) => ({
+  name, source: 'hand', files: repo(lessons, CHECK_BOOK(step1)),
+  fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test)'}],
+  count: {unreached: 1},
+});
 
 // This repo's F8: an Evidence path that named the file by its old place.
 const F8_BEFORE = 'the 0.2.0 hardening session: a scan found 1 literal U+FEFF in `templates/lessons.mjs`; after the replace, 0 non-ASCII characters.';
@@ -391,6 +399,47 @@ export const FIXTURES = [
     fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test)'}],
     count: {unreached: 1},
   },
+  // Markdown keeps a line indented to step 1's text (3 spaces after "1. ") in
+  // step 1, a nested list included. A line indented less goes on from it only
+  // as plain text: a list item, quote, rule or heading there ends step 1, and a
+  // code fence ends it at any indent (round 2: sub3, sub2, two-inside, quote,
+  // hr, fence-tilde, and the mutants no-bullet-break, no-heading-break,
+  // no-fence-break and paren-not-break).
+  {
+    name: 'unreached: a nested list indented to step 1\'s text is part of it',
+    source: 'hand',
+    files: repo(UNREACHED, CHECK_BOOK('1. Run a lookup with words for the topics:\n   - `test`\n   - `build`')),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, build)'}],
+    count: {unreached: 1},
+  },
+  TEST_ONLY('unreached: a 2. indented to step 1\'s text goes on with it', '1. Run a lookup with words for the topics, at most\n   2. of them (`test`).'),
+  TEST_ONLY('unreached: a list indented less than step 1\'s text ends it', '1. Run a lookup (`test`):\n  - `deploy`'),
+  TEST_ONLY('unreached: step 1\'s text starts after 01. and its space', '01. Run a lookup (`test`):\n   - `deploy`'),
+  TEST_ONLY('unreached: step 1\'s text starts after all the spaces after 1.', '1.  Run a lookup (`test`):\n   - `deploy`'),
+  TEST_ONLY('unreached: a bullet ends step 1', '1. Run a lookup (`test`).\n- For a `deploy`, too.'),
+  TEST_ONLY('unreached: a 2) ends step 1', '1. Run a lookup (`test`).\n2) For a `deploy`, too.'),
+  TEST_ONLY('unreached: a heading ends step 1', '1. Run a lookup (`test`).\n### For a `deploy`'),
+  TEST_ONLY('unreached: a quote ends step 1', '1. Run a lookup (`test`).\n> Also `deploy`.'),
+  TEST_ONLY('unreached: a rule ends step 1', '1. Run a lookup (`test`).\n***\n`deploy` is another.'),
+  TEST_ONLY('unreached: a ``` fence ends step 1', '1. Run a lookup (`test`).\n```\n`deploy`\n```'),
+  TEST_ONLY('unreached: a ~~~ fence ends step 1', '1. Run a lookup (`test`).\n~~~\n`deploy`\n~~~'),
+  TEST_ONLY('unreached: an indented fence ends step 1', '1. Run a lookup (`test`).\n   ~~~\n   `deploy`\n   ~~~'),
+  // A lint-ignore line in step 1 is skipped, its reason's spans too.
+  TEST_ONLY('unreached: a lint-ignore line in step 1 is skipped', '1. Run a lookup (`test`).\n<!-- lint-ignore md-steps: it names `deploy` -->'),
+  // A plain line indented less goes on from a paragraph, not from a heading.
+  TEST_ONLY('unreached: a plain line after a heading in step 1 ends it', '1. Run a lookup (`test`).\n   ### Notes\nand `deploy` too.'),
+  // A list number has at most 9 digits (round 2, zeros10).
+  {name: 'unreached: ten digits are not step 1', source: 'hand', files: repo(UNREACHED, CHECK_BOOK('0000000001. Run a lookup (`test`).')), quiet: ['unreached']},
+  // A path or a placeholder in backticks is no topic word: a lesson that names
+  // the file is not reached by it (round 2, filename).
+  TEST_ONLY('unreached: a path in backticks is no topic word', '1. Run a lookup (`dev/lessons.mjs`, `test`).', lesson({title: 'The script hung', rule: 'run dev/lessons.mjs with a timeout', evidence: 'run 42'})),
+  TEST_ONLY('unreached: a placeholder in backticks is no topic word', '1. Run a lookup (`<words>`, `test`).', lesson({title: 'The script hung', rule: 'give the lookup its <words> first', evidence: 'run 42'})),
+  // Markdown drops one space each side of a span, so ` deploy ` is `deploy`
+  // (round 2, padded).
+  {name: 'unreached: one space each side of a span is dropped, as Markdown does', source: 'hand', files: repo(UNREACHED, CHECK_BOOK('1. Run a lookup with words for the topics (`test`, ` deploy `).')), quiet: ['unreached']},
+  // Every topic word too long: the check didn't run, so its silence is not
+  // unused (round 2, the mutant long-ran).
+  {name: 'unreached: a silence is not unused when every topic word is too long', source: 'hand', files: repo(silenced(UNREACHED), CHECK_BOOK(`1. Run a lookup with words for the topics (\`${'q'.repeat(41)}\`).`)), quiet: ['unreached', 'unused-ignore']},
 ];
 
 // ---- Leads (--lint --leads) -------------------------------------------------

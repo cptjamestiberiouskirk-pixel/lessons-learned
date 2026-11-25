@@ -339,6 +339,52 @@ test('unreached stops at its limit on lessons times topic words and says so', ()
   assert.doesNotMatch(over.out, /WARN {2}unreached/);
 });
 
+// Step 1 is read by its indent, as Markdown reads a list item, tried on random
+// text (PLAYBOOK "Parsing untrusted text", step 2) built from what the reading
+// decides on: an indent, a block start and a topic word. For any such text, a
+// line indented to step 1's text (3 spaces after "1. ") is part of it, and so
+// is a plain line indented less; a list item, quote, heading or rule indented
+// less ends step 1, and no word after it counts (review round 2 of Q57).
+test('unreached reads step 1 by its indent, on random text', async () => {
+  const {loadLog, lintReport} = await import(pathToFileURL(SCRIPT).href);
+  let seed = 57; // mulberry32, so a failure can be run again
+  const random = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  const spaces = (from, to) => ' '.repeat(from + Math.floor(random() * (to - from + 1)));
+  const WORDS = ['alpha', 'beta', 'gamma', 'delta', 'omega'];
+  const INSIDE = ['', '- ', '* ', '2. ', '3) ', '> ', 'and '];
+  const ENDS = ['- ', '* ', '+ ', '2. ', '3) ', '> ', '# ', '### '];
+  const RULE_LINES = ['***', '---', '_ _ _'];
+  // A line's text after `start`, with a topic word or none; `used` collects the words.
+  const line = (start, used) => {
+    if (random() < 0.3) return `${start}plain text`;
+    const w = pick(WORDS);
+    used.push(w);
+    return `${start}the \`${w}\` case`;
+  };
+  const named = (rest) => {
+    const book = `# PLAYBOOK\n\n## The lessons check\n\n1. Run a lookup (\`test\`).\n${rest}\n2. Write the line.\n`;
+    const found = lintReport(loadLog(folder({'LESSONS.md': deployLesson(), 'PLAYBOOK.md': book}))).findings.filter((f) => f.rule === 'unreached');
+    assert.equal(found.length, 1, `step 1 goes on:\n${rest}\n${JSON.stringify(found)}`);
+    return found[0].message.match(/lists \((.*)\) leaves out/)[1];
+  };
+  const expected = (used) => [...new Set(['test', ...used])].join(', ');
+  for (let k = 0; k < 40; k++) {
+    const used = [];
+    const inside = Array.from({length: 1 + Math.floor(random() * 4)}, () => (random() < 0.7 ? spaces(3, 5) + line(pick(INSIDE), used) : spaces(0, 2) + line('and ', used)));
+    assert.equal(named(inside.join('\n')), expected(used), `step 1 goes on:\n${inside.join('\n')}`);
+    const end = random() < 0.25 ? spaces(0, 2) + pick(RULE_LINES) : spaces(0, 2) + line(pick(ENDS), []);
+    const after = Array.from({length: Math.floor(random() * 3)}, () => spaces(0, 5) + line(pick(INSIDE), []));
+    const all = [...inside, end, ...after].join('\n');
+    assert.equal(named(all), expected(used), `step 1 goes on:\n${all}`);
+  }
+});
+
 test('flags that do not go together are a usage error', () => {
   const dir = folder({'LESSONS.md': '# LESSONS\n', 'PLAYBOOK.md': '# PLAYBOOK\n'});
   for (const args of [

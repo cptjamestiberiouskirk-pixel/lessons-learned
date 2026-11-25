@@ -1231,35 +1231,54 @@ const MAX_TOPIC_LENGTH = 40; // characters of one topic word
 const MAX_REACH_READS = 200000;
 const MAX_REACH_WORK = 32 * 1024 * 1024;
 
-// The text of step 1 of "The lessons check" as Markdown reads it: the line
-// numbered 1 (or 01) and the lines that go on from it, indented or not, up to
-// a blank line, a heading, a code block or the next list item. A lint-ignore
-// line is skipped, as in playbookSteps. Null when there is no such line.
+// The text of step 1 of "The lessons check", read as Markdown reads its list
+// item up to the first blank line or code fence: the line numbered 1 (or 01,
+// at most 9 digits) and the lines after it. A line indented to step 1's text
+// (3 spaces after "1. ") is part of it, a nested list's lines included. A line
+// indented less goes on from it only as plain text after a paragraph's line: a
+// list item, a quote, a heading or a rule there ends step 1, and so does any
+// line after a heading or rule. A lint-ignore line is skipped, as in
+// playbookSteps. Null when there is no such line.
+const STEP_ONE = /^(0{0,8}1\.)( +)(.*)$/s;
+const BLOCK_START = /^ {0,3}(#{1,6}(\s|$)|\d{1,9}[.)]\s|[-*+]\s|>|(?<r>[-*_])([ \t]*\k<r>){2,}[ \t]*$)/;
+const HEADING_OR_RULE = /^ {0,3}(#{1,6}(\s|$)|(?<r>[-*_])([ \t]*\k<r>){2,}[ \t]*$)/;
+const FENCE_LINE = /^\s*(```|~~~)/;
 function stepOneText(log) {
   let parts = null;
+  let column = 0; // where step 1's text starts
+  let paragraph = true; // the last line read was a paragraph's
   for (const r of log.rows) {
     if (parts) {
-      if (r.fence || !/\S/.test(r.text) || /^ {0,3}(#{1,6}(\s|$)|\d{1,9}[.)]\s|[-*+]\s)/.test(r.text)) break;
-      if (!IGNORE_START.test(r.text)) parts.push(r.text.trim());
+      if (r.fence || !/\S/.test(r.text) || FENCE_LINE.test(r.text)) break;
+      if (IGNORE_START.test(r.text)) continue;
+      const inside = /^ */.exec(r.text)[0].length >= column;
+      if (!inside && (!paragraph || BLOCK_START.test(r.text))) break;
+      paragraph = !(inside && HEADING_OR_RULE.test(r.text.slice(column)));
+      parts.push(r.text.trim());
     } else if (!r.fence && r.section && r.section.name === CHECK) {
-      const m = r.text.match(/^0*1\. (.*)$/s);
-      if (m) parts = [m[1]];
+      const m = r.text.match(STEP_ONE);
+      if (m) {
+        parts = [m[3]];
+        column = m[1].length + m[2].length;
+      }
     }
   }
   return parts && parts.join(' ');
 }
 
-// The topic words step 1 lists: each span in backticks with no space in it, a
-// letter or digit, and not "-" first (the lookup reads that as an option), in
-// lower case as the lookup takes it, each once. The lookup escapes a word's
-// signs, so `node.js` and `c++` are words. Null when there is no step 1.
+// The topic words step 1 lists: each span in backticks, less one space each
+// side when it has both (as Markdown shows it), with no space, "/" or "<" in it
+// (a path or a placeholder is no word), a letter or digit, and not "-" first
+// (the lookup reads that as an option), in lower case as the lookup takes it,
+// each once. The lookup escapes a word's signs, so `node.js` and `c++` are
+// words. Null when there is no step 1.
 function topicWords(log) {
   const text = stepOneText(log);
   if (text === null) return null;
   const words = new Set();
   for (const m of text.matchAll(SPAN)) {
-    const w = m[1].toLowerCase();
-    if (!/\s/.test(w) && !w.startsWith('-') && /[\p{L}\p{N}]/u.test(w)) words.add(w);
+    const w = (/^ .*\S.* $/s.test(m[1]) ? m[1].slice(1, -1) : m[1]).toLowerCase();
+    if (!/[\s/<]/.test(w) && !w.startsWith('-') && /[\p{L}\p{N}]/u.test(w)) words.add(w);
   }
   return [...words];
 }
