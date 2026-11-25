@@ -232,6 +232,16 @@ test('codex: a command that ran is read from its argv', () => {
     // one, and the legacy reading, which it also runs, finds the commit
     // (tests/gate.test.mjs, "one reading of $( ) misses").
     [['/bin/bash', '-lc', 'x="$(echo ${y:- #})\n"\ngit commit -m x\n# "'], true],
+    // An escape before CR LF: bash on Linux and pwsh inside a word end the
+    // command at the LF (tests/gate.test.mjs, "an escape before CR LF").
+    [['/bin/bash', '-lc', 'echo a\\\r\ngit commit -m x'], true],
+    [[PWSH_EXE, '-NoProfile', '-Command', 'echo a`\r\ngit commit -m x'], true],
+    // A CR: Git Bash and cmd drop it, and pwsh reads one with no LF after it
+    // as a newline (tests/gate.test.mjs, "a CR is read"). The first and last
+    // hold no "git" but for the CR.
+    [['/bin/bash', '-lc', 'g\rit commit -m x'], true],
+    [[PWSH_EXE, '-NoProfile', '-Command', 'echo a\rgit commit -m x'], true],
+    [['C:\\Windows\\System32\\cmd.exe', '/c', 'gi\rt commit -m x'], true],
   ];
   for (const [argv, resets] of cases) assert.equal(patch(root, (r) => r.say(LINE).ran(argv.at(-1), {argv})).deny, resets, JSON.stringify(argv));
 });
@@ -256,6 +266,10 @@ test('codex: the payload\'s command is read as PowerShell on Windows and as sh e
   // nests, so the push on the next line is read.
   const nested = WIN ? "$m = \"$('b' + \"$(\"b'b\")'b\")\"\ngit push" : 'x="$(echo "$(echo "b\'b")\'b")"\ngit push';
   assert.equal(command(root, nested, () => {}).deny, true, 'a nested double-quoted $( )');
+  // And an escape before CR LF inside a word ends the command at the LF.
+  assert.equal(command(root, WIN ? 'echo a`\r\ngit push' : 'echo a\\\r\ngit push', () => {}).deny, true, 'an escape before CR LF');
+  // And a CR as each shell reads it.
+  assert.equal(command(root, WIN ? 'echo a\rgit push' : 'g\rit push', () => {}).deny, true, 'a CR');
 });
 
 test('codex: the payload\'s folder is where the command runs', () => {

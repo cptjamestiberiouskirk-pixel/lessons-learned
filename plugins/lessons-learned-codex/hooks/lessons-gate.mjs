@@ -222,14 +222,19 @@ function exempt(given, target, root) {
 // as one that can't be told.
 //
 // With `legacy`, a $( ) is read as before this hook learned comments,
-// $'...' and the nesting of double quotes in it: quotes only. main() judges a
-// call both ways and denies it if either reading does, so a rule learned
-// here can deny more than the legacy reading, never less.
+// $'...' and the nesting of double quotes in it: quotes only. `split` is
+// null, or a pair of ways to read a CR and an escape before a newline (see
+// tokenize): sh as bash on Linux ('linux') or Git Bash ('git') reads them,
+// and PowerShell with each word the hook can't place read as one pwsh reads
+// on ('in') or ends ('start'). Without it, they are read as main's reading
+// read them. main() judges a call each way and denies it if any reading
+// does, so a rule learned here can deny more than the legacy reading, never
+// less.
 
 // Here-doc and here-string bodies are text, not commands. Both are found line
 // by line, so the work grows linearly with the command.
-function dropBodies(command, dialect, legacy) {
-  if (dialect === 'ps') return dropHereStrings(command, legacy);
+function dropBodies(command, dialect, legacy, cr = false) {
+  if (dialect === 'ps') return dropHereStrings(command, legacy, cr);
   if (dialect !== 'sh' || !command.includes('<<')) return command;
   const out = [];
   // Here-docs opened and not yet closed, in order; `next` is the one whose
@@ -370,12 +375,16 @@ function codeAt(line, at, legacy) {
 
 // PowerShell here-strings: a line ending in @' or @" outside quotes and
 // comments opens one, and a line starting with '@ or "@ closes it. The body
-// becomes '' on the opening line; one never closed is left as it was.
-function dropHereStrings(command, legacy) {
+// becomes '' on the opening line; one never closed is left as it was. With
+// `cr`, a CR with no LF after it ends a line too, as pwsh reads it; each
+// line keeps what ended it.
+function dropHereStrings(command, legacy, cr = false) {
   if (!command.includes('@')) return command;
+  const parts = command.split(cr ? /(\r(?!\n)|\n)/ : /(\n)/);
+  const ends = parts.filter((_, k) => k % 2 === 1);
   const out = [];
   let open = null;
-  for (const raw of command.split('\n')) {
+  for (const raw of parts.filter((_, k) => k % 2 === 0)) {
     if (open) {
       open.lines.push(raw);
       if (raw.startsWith(`${open.q}@`)) {
@@ -395,11 +404,23 @@ function dropHereStrings(command, legacy) {
     out.length = open.at;
     for (const line of open.lines) out.push(line);
   }
-  return out.join('\n');
+  return out.map((line, k) => line + (ends[k] ?? '')).join('');
 }
 
-function tokenize(input, dialect, legacy = false) {
-  const s = dropBodies(input, dialect, legacy);
+function tokenize(input, dialect, legacy = false, split = null) {
+  // A CR, with `split`: Git Bash and cmd drop each one, bash on Linux reads
+  // it as part of a word, and pwsh reads one with no LF after it as a
+  // newline in code (`cr`). Without `split`, it is a space.
+  const drop = split && (dialect === 'cmd' || (dialect === 'sh' && split.sh === 'git'));
+  const cr = Boolean(split) && dialect === 'ps';
+  const s = dropBodies(drop ? input.replace(/\r/g, '') : input, dialect, legacy, cr);
+  const isNl = (k) => s[k] === '\n' || (cr && s[k] === '\r' && s[k + 1] !== '\n');
+  // The end of the line `from` is on.
+  const eol = (from) => {
+    let k = from;
+    while (k < s.length && !isNl(k)) k++;
+    return k;
+  };
   const esc = dialect === 'ps' ? '`' : dialect === 'cmd' ? '^' : '\\';
   const cmds = [];
   const subs = [];
@@ -458,12 +479,17 @@ function tokenize(input, dialect, legacy = false) {
   // A for a ( of sh arithmetic, (( )) or $(( )), where a # is no comment. In
   // code, a # that starts a word starts a comment to the line's end, and in
   // PowerShell <# #> is one too. `start` is whether the next character in
-  // code starts a word; an escape before a newline joins the lines, in bash
-  // and in pwsh. In PowerShell a $( inside double quotes ends at the ) that
+  // code starts a word; an escape before a LF joins the lines, in bash and
+  // in pwsh but where pwsh reads it as a space (below). In PowerShell a $(
+  // inside double quotes ends at the ) that
   // balances its parentheses, whatever is between.
   const close = (from) => {
     const st = [dialect === 'sh' && s[from] === '(' ? 'A' : '('];
     let start = true;
+    // Whether the quote open now started a word, and where the last quoted
+    // string that started one ended.
+    let fresh = false;
+    let whole = -1;
     for (let j = from; j < n; j++) {
       const c = s[j];
       const top = st[st.length - 1];
@@ -472,6 +498,7 @@ function tokenize(input, dialect, legacy = false) {
         else if (top === '"' && c === esc) j++;
         else if (c === (top === '"' ? '"' : "'")) {
           st.pop();
+          if (fresh) whole = j + 1;
           start = false;
         } else if (top === '"' && c === '$' && s[j + 1] === '(') {
           if (dialect === 'ps') j = parens(s, j + 2);
@@ -482,10 +509,14 @@ function tokenize(input, dialect, legacy = false) {
           }
         }
       } else if (c === "'" || c === '"' || (dialect === 'sh' && c === '$' && s[j + 1] === "'")) {
+        fresh = start;
         st.push(c === '$' ? "$'" : c);
         if (c === '$') j++;
       } else if (c === esc) {
-        if (s[j + 1] !== '\n') start = false;
+        // An escape before a LF joins the lines, but where pwsh reads it as
+        // a space (see the loop below), a # after it starts a comment.
+        if (isNl(j + 1) && cr && (split.ps === 'start' || whole === j)) start = true;
+        else if (!isNl(j + 1)) start = false;
         j++;
       } else if (c === '(') {
         st.push(top === 'A' || (dialect === 'sh' && s[j + 1] === '(') ? 'A' : '(');
@@ -499,8 +530,7 @@ function tokenize(input, dialect, legacy = false) {
         j = k < 0 ? n : k + 1;
         start = true;
       } else if (top === '(' && c === '#' && start) {
-        const k = s.indexOf('\n', j);
-        j = (k < 0 ? n : k) - 1;
+        j = eol(j) - 1;
       } else start = (dialect === 'ps' ? /[\s;&|{}<>]/ : /[ \t\n;&|<>]/).test(c);
     }
     return n;
@@ -537,16 +567,41 @@ function tokenize(input, dialect, legacy = false) {
     return j + 1;
   };
   const isVar = (i) => s[i] === '$' && /[A-Za-z_{(?!$@*#0-9]/.test(s[i + 1] ?? '');
+  // A token surely starts at `i` in pwsh where no word is open here and the
+  // character before is a space, a tab, a newline or one of ;|&(){}.
+  const tokenStart = (i) => w === null && (i === 0 || /[ \t\r\n;|&(){}]/.test(s[i - 1]));
+  // Where the last quoted string or $( ) that started a word ended.
+  let whole = -1;
   let i = 0;
   while (i < n) {
     const c = s[i];
+    // An escape before a newline. bash joins the lines at \ LF. At \ CR LF
+    // Git Bash joins them too, as it drops the CR, and bash on Linux reads an
+    // escaped CR, so the LF ends the command. pwsh reads ` and a newline as a
+    // space where a token starts, and after a quoted string or a $( ) that
+    // started a word. Inside another word it reads an escaped LF, part of the
+    // word, or an escaped CR, and the LF ends the command. Without `split`
+    // the lines join, as main's reading joined them. With it, in PowerShell,
+    // a word this hook can't place is read as one the escape is inside ('in')
+    // or ends ('start').
     if (c === esc && dialect !== 'cmd') {
-      if (s[i + 1] === '\n') i += 2;
-      else if (s[i + 1] === '\r' && s[i + 2] === '\n') i += 3;
-      else {
-        if (i + 1 < n) add(s[i + 1]);
-        i += 2;
+      const nl = isNl(i + 1) ? 1 : s[i + 1] === '\r' && s[i + 2] === '\n' ? 2 : 0;
+      if (nl && cr) {
+        if (tokenStart(i) || whole === i || split.ps === 'start') {
+          end();
+          i += nl + 1;
+          continue;
+        }
+        if (nl === 1) {
+          i += 2;
+          continue;
+        }
+      } else if (nl === 1 || (nl === 2 && !(split && dialect === 'sh'))) {
+        i += nl + 1;
+        continue;
       }
+      if (i + 1 < n) add(s[i + 1]);
+      i += 2;
       continue;
     }
     if (c === '^' && dialect === 'cmd') {
@@ -569,6 +624,7 @@ function tokenize(input, dialect, legacy = false) {
       continue;
     }
     if (c === "'" && dialect !== 'cmd') {
+      const fresh = w === null;
       let j = i + 1;
       let text = '';
       for (;;) {
@@ -589,9 +645,11 @@ function tokenize(input, dialect, legacy = false) {
       }
       add(text);
       i = j;
+      if (fresh) whole = i;
       continue;
     }
     if (c === '"') {
+      const fresh = w === null;
       add('');
       let j = i + 1;
       while (j < n && s[j] !== '"') {
@@ -621,10 +679,13 @@ function tokenize(input, dialect, legacy = false) {
         }
       }
       i = j + 1;
+      if (fresh) whole = i;
       continue;
     }
     if (dialect !== 'cmd' && c === '$' && s[i + 1] === '(') {
+      const fresh = w === null;
       i = sub(i);
+      if (fresh) whole = i;
       continue;
     }
     // PowerShell's ${name} is one variable.
@@ -676,7 +737,7 @@ function tokenize(input, dialect, legacy = false) {
     }
     // In PowerShell a script block's braces also end a command:
     // try { git push } catch { }, ForEach-Object { git ... }.
-    if (c === '\n' || c === ';' || c === '(' || c === ')' || (dialect === 'ps' && (c === '{' || c === '}'))) {
+    if (isNl(i) || c === ';' || c === '(' || c === ')' || (dialect === 'ps' && (c === '{' || c === '}'))) {
       brk();
       // In sh, ( ) is a subshell: a cd inside it ends with it.
       if (dialect === 'sh' && (c === '(' || c === ')')) cmds.push(c === '(' ? SUB_OPEN : SUB_CLOSE);
@@ -723,10 +784,11 @@ function tokenize(input, dialect, legacy = false) {
       continue;
     }
     if (c === '#' && !w && dialect !== 'cmd') {
-      while (i < n && s[i] !== '\n') i++;
+      i = eol(i);
       continue;
     }
-    if (/\s/.test(c)) {
+    // A CR left in sh with `split` is bash on Linux's: part of the word.
+    if (/\s/.test(c) && !(c === '\r' && split && dialect === 'sh')) {
       end();
       i++;
       continue;
@@ -788,10 +850,10 @@ function move(from, word) {
 // Each git commit or push and each lookup in a command, in order, with the
 // folder it runs in: git's -C <dir>, --work-tree or --git-dir, else the last
 // cd, Set-Location or pushd before it, else `cwd`.
-function walk(command, dialect, cwd, out = [], depth = 0, legacy = false) {
+function walk(command, dialect, cwd, out = [], depth = 0, legacy = false, split = null) {
   if (depth > MAX_DEPTH || typeof command !== 'string') return out;
-  const {cmds, subs} = tokenize(command, dialect, legacy);
-  for (const body of subs) walk(body, dialect, cwd, out, depth + 1, legacy);
+  const {cmds, subs} = tokenize(command, dialect, legacy, split);
+  for (const body of subs) walk(body, dialect, cwd, out, depth + 1, legacy, split);
   let cur = cwd;
   let prev;
   const stack = [];
@@ -861,14 +923,14 @@ function walk(command, dialect, cwd, out = [], depth = 0, legacy = false) {
     if (SH.has(name) || PWSH.has(name) || name === 'cmd') {
       if (SH.has(name)) {
         const at = args.findIndex((a) => /^-[A-Za-z]*c[A-Za-z]*$/.test(a.text));
-        if (at >= 0 && args[at + 1]) walk(args[at + 1].text, 'sh', here, out, depth + 1, legacy);
+        if (at >= 0 && args[at + 1]) walk(args[at + 1].text, 'sh', here, out, depth + 1, legacy, split);
       } else if (PWSH.has(name)) {
         const at = args.findIndex((a) => /^-(c|command|co|com|comm|comma|comman)$/i.test(a.text));
-        if (at >= 0) walk(args.slice(at + 1).map((a) => a.text).join(' '), 'ps', here, out, depth + 1, legacy);
+        if (at >= 0) walk(args.slice(at + 1).map((a) => a.text).join(' '), 'ps', here, out, depth + 1, legacy, split);
       } else {
         // cmd /c, or cmd //c as Git Bash spells it.
         const at = args.findIndex((a) => /^\/\/?[ck]$/i.test(a.text));
-        if (at >= 0) walk(args.slice(at + 1).map((a) => a.text).join(' '), 'cmd', here, out, depth + 1, legacy);
+        if (at >= 0) walk(args.slice(at + 1).map((a) => a.text).join(' '), 'cmd', here, out, depth + 1, legacy, split);
       }
       continue;
     }
@@ -1063,6 +1125,12 @@ function wakeUp(r) {
   return typeof text === 'string' && /^\s*<task-notification>/.test(text);
 }
 
+// Whether a transcript line may hold a lookup or a git command: it names
+// lessons.mjs or git, or holds a CR (JSON's \r after an even run of
+// backslashes), which Git Bash and cmd drop, so `g<CR>it` is git there.
+const JSON_CR = /(?:^|[^\\])(?:\\\\)*\\r/;
+const mayRunGit = (line) => line.includes('lessons.mjs') || line.includes('git') || JSON_CR.test(line);
+
 // The records of this turn, oldest first, read backwards from `size` in
 // chunks until the turn's start (past any wake-up starts), at most
 // MAX_WINDOW bytes. Only lines that
@@ -1076,7 +1144,7 @@ function readTurn(fd, size, modern) {
   let start = null;
   const take = (line) => {
     const text = line.includes('"text"') && line.includes(LINE_WORDS);
-    const call = line.includes('"tool_use"') && (line.includes('lessons.mjs') || line.includes('git'));
+    const call = line.includes('"tool_use"') && mayRunGit(line);
     const asst = (text || call) && line.includes('"assistant"');
     const user =
       line.includes('"user"') &&
@@ -1157,7 +1225,9 @@ function notRun(records) {
 // after its last commit or push to a gated repo (a call that never ran
 // doesn't count), up to the current call: a later call of the same message is
 // on disk too, and is left out. In the current call, a lookup before its first
-// such commit or push counts. Commands are read the legacy way if ctx.legacy.
+// such commit or push counts. Commands are read by ctx.read: the legacy way if
+// ctx.legacy, and with each CR and escape before a newline read the ctx.split
+// way if it is set.
 function judge(records, id, ctx) {
   const skip = notRun(records);
   const v = verdict(ctx);
@@ -1170,7 +1240,8 @@ function judge(records, id, ctx) {
         // Nothing at or after the current call counts.
         if (b.id === id) return v.finish();
         if (skip.has(b.id) || !SHELL_TOOLS.has(b.name) || !b.input || typeof b.input.command !== 'string') continue;
-        v.ran(walk(b.input.command, dialectOf(b.name), rcwd, [], 0, ctx.legacy));
+        ctx.seen.note(b.input.command);
+        v.ran(ctx.read(b.input.command, dialectOf(b.name), rcwd));
       }
     }
   }
@@ -1304,7 +1375,7 @@ function readCodexTurn(fd, size, turnId) {
   readBack(fd, size, (line) => {
     const begins = line.includes('"task_started"');
     const text = line.includes(LINE_WORDS) && (line.includes('"AgentMessage"') || line.includes('"assistant"'));
-    const ran = line.includes('"CommandExecution"') && (line.includes('lessons.mjs') || line.includes('git'));
+    const ran = line.includes('"CommandExecution"') && mayRunGit(line);
     if (!begins && !text && !ran) return false;
     const r = parse(line);
     const q = r && r.payload && typeof r.payload === 'object' && !Array.isArray(r.payload) ? r.payload : null;
@@ -1336,7 +1407,9 @@ function judgeCodex(records, turnId, ctx) {
       if (item.type === 'AgentMessage') texts(item.content).forEach(v.text);
       else if (item.type === 'CommandExecution' && (item.status === 'completed' || item.status === 'failed')) {
         const c = argvCommand(item.command);
-        if (c) v.ran(walk(c, 'sh', fileUrl(item.cwd) ?? ctx.cwd, [], 0, ctx.legacy));
+        if (!c) continue;
+        ctx.seen.note(c);
+        v.ran(ctx.read(c, 'sh', fileUrl(item.cwd) ?? ctx.cwd));
       }
     }
   }
@@ -1388,10 +1461,40 @@ async function main() {
   const turnId = typeof p.turn_id === 'string' && p.turn_id !== '' ? p.turn_id : null;
   const codex = turnId !== null && rolloutAt(tp);
   const roots = new Set();
-  // The current call's commands, read as this hook reads them and the legacy
-  // way (see "Reading a command").
+  // The current call's commands, read as this hook reads them, the legacy
+  // way, and each split way that reads them otherwise (see "Reading a
+  // command"). A command holding no CR reads the same with either `sh` way,
+  // one holding no ` the same with either `ps` way, and one holding neither
+  // a CR nor a ` and a LF the same as without `split`. Inner commands are cut
+  // from the command's text, and no reading makes a CR or a ` of other
+  // characters, or a LF of anything but a CR, so the text tells.
+  const SPLITS = [
+    {sh: 'linux', ps: 'in'},
+    {sh: 'linux', ps: 'start'},
+    {sh: 'git', ps: 'in'},
+    {sh: 'git', ps: 'start'},
+  ];
+  const needs = (text) => {
+    const cr = text.includes('\r');
+    const tick = text.includes('`');
+    const lf = text.includes('\n');
+    const need = SPLITS.map((x) => (x.ps === 'in' || tick) && (cr || (tick && lf && x.sh === 'linux')));
+    return Object.assign(need, {cr, tick});
+  };
+  // The reading that stands for split k of a text whose `need` doesn't hold
+  // it: its `in` partner if the text holds no `, else its `linux` partner if
+  // it holds no CR, each in turn, down to -1, the plain reading.
+  const standIn = (k, need) => {
+    while (k >= 0 && !need[k]) {
+      if (SPLITS[k].ps === 'start' && !need.tick) k -= 1;
+      else if (SPLITS[k].sh === 'git' && !need.cr) k -= 2;
+      else return -1;
+    }
+    return k;
+  };
   let current = null;
   let currentLegacy = null;
+  let currentSplit = [];
   if (!codex && EDIT_TOOLS.has(p.tool_name)) {
     const root = editRoot(typeof input.file_path === 'string' ? input.file_path : input.notebook_path);
     if (!root) return;
@@ -1407,11 +1510,17 @@ async function main() {
     if (!roots.size) return;
   } else if (SHELL_TOOLS.has(p.tool_name) && (!codex || p.tool_name === 'Bash')) {
     const command = input.command;
-    if (typeof command !== 'string' || !command.includes('git')) return;
+    // Git Bash and cmd drop a CR, so `g<CR>it` is git there.
+    if (typeof command !== 'string' || !command.replace(/\r/g, '').includes('git')) return;
     const dialect = !codex ? dialectOf(p.tool_name) : process.platform === 'win32' ? 'ps' : 'sh';
     current = walk(command, dialect, cwd);
     currentLegacy = walk(command, dialect, cwd, [], 0, true);
-    for (const e of [...current, ...currentLegacy]) {
+    const own = needs(command);
+    SPLITS.forEach((x, k) => {
+      const at = standIn(k, own);
+      currentSplit[k] = at === k ? walk(command, dialect, cwd, [], 0, false, x) : at < 0 ? current : currentSplit[at];
+    });
+    for (const e of [current, currentLegacy, ...currentSplit].flat()) {
       const root = e.kind === 'git' ? gatedRoot(e.dir) : null;
       if (root) roots.add(root);
     }
@@ -1423,10 +1532,23 @@ async function main() {
   // reason's `node dev/lessons.mjs` runs the script whose hash was checked.
   const home = cwd && gatedRoot(cwd);
   const needLookup = home !== null && home !== undefined && roots.has(home) && scriptMatches(home);
+  // Which split readings a command of the turn needs. Judging with ctx, the
+  // first reading, notes each command; only then is the turn read so.
+  const seen = {
+    need: SPLITS.map(() => false),
+    note(text) {
+      needs(text).forEach((x, k) => {
+        if (x) this.need[k] = true;
+      });
+    },
+  };
+  if (current) seen.note(input.command);
   const ctx = {
     cwd,
     current,
     legacy: false,
+    split: null,
+    seen,
     gated: (dir) => {
       const root = gatedRoot(dir);
       return root !== null && roots.has(root);
@@ -1437,9 +1559,24 @@ async function main() {
       return real !== null && isInRepo(real, home, ['dev', 'lessons.mjs']);
     },
   };
-  // The turn is judged with each reading, and passes only if both pass.
+  // The turn is judged with each reading, and passes only if all pass.
   const ctxLegacy = {...ctx, current: currentLegacy, legacy: true};
-  const pass = (judgeWith) => [ctx, ctxLegacy].every((c) => {
+  const ctxSplit = SPLITS.map((x, k) => ({...ctx, current: currentSplit[k] ?? null, split: x, k}));
+  // Each command of the turn is walked once for each reading it can read
+  // otherwise in: a split reading it doesn't need is the one that stands for
+  // it. Nothing changes a walk's events after it is made.
+  const walked = new Map();
+  const reader = (c) => (text, dialect, dir) => {
+    let m = walked.get(text);
+    if (!m) walked.set(text, (m = {need: needs(text), by: new Map()}));
+    const k = c.legacy ? -2 : c.split ? standIn(c.k, m.need) : -1;
+    const key = `${k} ${dialect} ${dir}`;
+    if (!m.by.has(key)) m.by.set(key, walk(text, dialect, dir, [], 0, c.legacy, k >= 0 ? SPLITS[k] : null));
+    return m.by.get(key);
+  };
+  for (const c of [ctx, ctxLegacy, ...ctxSplit]) c.read = reader(c);
+  const pass =(judgeWith) => [ctx, ctxLegacy, ...ctxSplit].every((c) => {
+    if (c.split && !seen.need[c.k]) return true;
     const v = judgeWith(c);
     return v.line && (!needLookup || v.lookup);
   });
