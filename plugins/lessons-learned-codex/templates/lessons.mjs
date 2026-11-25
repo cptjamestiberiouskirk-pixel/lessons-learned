@@ -30,9 +30,11 @@
 //                                    flags that aren't there, evidence another
 //                                    reader can't open, unsettled labels, text
 //                                    that reads like an injected instruction,
-//                                    Markdown structure and a size budget. Each
-//                                    finding has a rule ID and is an error or a
-//                                    warning; exit 1 on an error
+//                                    Markdown structure, a size budget, and open
+//                                    lessons and sections that a lookup with the
+//                                    topic words of "The lessons check" step 1
+//                                    leaves out. Each finding has a rule ID and
+//                                    is an error or a warning; exit 1 on an error
 //   node dev/lessons.mjs --doctor    --lint with a summary of the whole log
 //   --lint --all, --doctor --all     also list the findings silenced in place
 //   --lint --json, --doctor --json   the same as one JSON object, for CI
@@ -620,29 +622,44 @@ export function staleReport(log) {
   return lines;
 }
 
-// A lookup: the lessons with a word that starts with one of `words`, which are
-// lower case.
-export function lookupReport(log, words) {
+// The text a lookup searches in a lesson: its title and its field values, not
+// the field labels or Status, in lower case.
+const searchText = (e) => [e.title, ...FIELDS.filter((f) => f !== 'Status').map((f) => e.fields[f] || '')].join(' ').toLowerCase();
+
+// What a lookup finds for `words`, which are lower case, in the order it
+// prints them, before its cap: {section, n} for each PLAYBOOK section that
+// holds n matching promoted lessons, then {entry} for each other matching
+// lesson but closed ones. `shown` counts the matching lessons. `text` gives a
+// lesson's search text, for a caller that runs many lookups on one log.
+function lookupItems(log, words, text = searchText) {
   let shown = 0;
-  const open = []; // matching open lessons with their rules
+  const open = []; // matching lessons that are not promoted
   const promoted = new Map(); // section -> how many matching lessons it holds
   const escape = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const starts = words.map((w) => new RegExp(`(^|[^a-z0-9])${escape(w)}`));
   for (const e of log.entries) {
-    // Search the title and the field values, not the field labels or Status.
-    const text = [e.title, ...FIELDS.filter((f) => f !== 'Status').map((f) => e.fields[f] || '')].join(' ').toLowerCase();
-    if (e.status === 'closed' || !starts.some((re) => re.test(text))) continue;
+    if (e.status === 'closed') continue;
+    const t = text(e);
+    if (!starts.some((re) => re.test(t))) continue;
     shown++;
     if (e.status === 'promoted') promoted.set(e.section, (promoted.get(e.section) || 0) + 1);
-    else open.push(`${e.key}\n    ${e.fields['Rule going forward'] || ''}`);
+    else open.push(e);
   }
-  // The playbook sections first, so open lessons never push them past the cap
-  // below: each one stands for the lessons promoted into it.
+  // The playbook sections first, so open lessons never push them past the
+  // cap: each one stands for the lessons promoted into it.
+  return {shown, items: [...[...promoted].map(([section, n]) => ({section, n})), ...open.map((entry) => ({entry}))]};
+}
+
+// A lookup: the lessons with a word that starts with one of `words`, which are
+// lower case.
+export function lookupReport(log, words) {
+  const {shown, items: found} = lookupItems(log, words);
   // Each section's number is printed for --section, so a session never puts
   // a section's name, which is repo text, in a shell command.
   const numbers = new Map([...log.sections.keys()].map((name, i) => [name, i + 1]));
-  const pointers = [...promoted].map(([section, n]) => `PLAYBOOK "${section}": follow its steps (${n} matching lesson${n > 1 ? 's' : ''})${numbers.has(section) ? `, section ${numbers.get(section)}` : ', not a section of PLAYBOOK.md: run node dev/lessons.mjs --check'}`);
-  const items = [...pointers, ...open];
+  const pointer = ({section, n}) => `PLAYBOOK "${section}": follow its steps (${n} matching lesson${n > 1 ? 's' : ''})${numbers.has(section) ? `, section ${numbers.get(section)}` : ', not a section of PLAYBOOK.md: run node dev/lessons.mjs --check'}`;
+  const items = found.map((it) => (it.entry ? `${it.entry.key}\n    ${it.entry.fields['Rule going forward'] || ''}` : pointer(it)));
+  const pointers = found.filter((it) => !it.entry);
   const lines = items.slice(0, MAX_SHOWN);
   if (items.length > MAX_SHOWN) lines.push(`... and ${items.length - MAX_SHOWN} more, not printed: use more specific words`);
   if (pointers.length) lines.push('-- node dev/lessons.mjs --section <number> prints a section\'s steps and its lessons\' rules: give the section\'s number, never its name');
@@ -728,6 +745,7 @@ export const RULES = {
   'md-heading': 'warning',
   'md-steps': 'warning',
   'size-budget': 'warning',
+  'unreached': 'warning',
   'bad-setting': 'warning',
   'bad-ignore': 'error',
   'unused-ignore': 'warning',
@@ -1196,6 +1214,91 @@ function playbookSteps(log) {
   return steps.map(({parts, ...s}) => ({...s, text: parts.join(' ')}));
 }
 
+// ---- unreached --------------------------------------------------------------
+
+// Step 1 of "The lessons check" suggests topic words for a lookup. unreached
+// runs the lookup above with each of them alone, as a session that follows
+// step 1 may, and reports an open lesson it prints for none of them, and a
+// section it points to for none of them. A session picks its own words, so
+// such a lesson can still be read: this says only that the words step 1
+// suggests don't bring it up.
+const CHECK = 'The lessons check';
+const MAX_TOPIC_WORDS = 20; // topic words of step 1 unreached uses
+const MAX_TOPIC_LENGTH = 40; // characters of one topic word
+// Each word's pattern reads each lesson's text at most once per character of
+// the word, so this bounds the work: the lessons' text times the words' length.
+const MAX_REACH_WORK = 32 * 1024 * 1024;
+
+// The topic words step 1 of "The lessons check" lists: each span in backticks
+// that is one word (letters, digits, "_" and "-", but not "-" first, which the
+// lookup reads as an option), in lower case as the lookup takes them, each
+// once. Null when PLAYBOOK.md has no step 1 in that section.
+function topicWords(log) {
+  const step = playbookSteps(log).find((s) => s.section.name === CHECK && s.n === '1');
+  if (!step) return null;
+  const words = new Set();
+  for (const m of step.text.matchAll(SPAN)) {
+    const w = m[1].toLowerCase();
+    if (/^[\p{L}\p{N}][\p{L}\p{N}_-]*$/u.test(w)) words.add(w);
+  }
+  return [...words];
+}
+
+// Returns {findings: [{file, line, f, entry}], notes}.
+function reachFindings(log) {
+  const out = {findings: [], notes: []};
+  const listed = topicWords(log);
+  if (listed === null) return out;
+  const where = `step 1 of "${CHECK}"`;
+  if (!listed.length) {
+    out.notes.push(`unreached not checked: ${where} lists no topic word in backticks`);
+    return out;
+  }
+  const words = listed.filter((w) => w.length <= MAX_TOPIC_LENGTH).slice(0, MAX_TOPIC_WORDS);
+  if (words.length < listed.length) out.notes.push(`unreached used ${words.length} of the ${listed.length} topic words in ${where}: at most ${MAX_TOPIC_WORDS}, of at most ${MAX_TOPIC_LENGTH} characters each`);
+  if (!words.length) return out;
+  // Each lesson's search text is built once, for all the words.
+  const texts = new Map();
+  const text = (e) => {
+    let t = texts.get(e);
+    if (t === undefined) texts.set(e, (t = searchText(e)));
+    return t;
+  };
+  let size = 0;
+  for (const e of log.entries) if (e.status !== 'closed') size += text(e).length + 1;
+  if (size * words.reduce((n, w) => n + w.length + 1, 0) > MAX_REACH_WORK) {
+    out.notes.push('unreached not checked: past its work limit (the lessons\' text times the topic words\' length)');
+    return out;
+  }
+  const lessons = new Set(); // lessons a lookup prints for some word
+  const sections = new Set(); // section names it points to for some word
+  const cut = new Map(); // a lesson or section name -> the first word that finds it past the cap
+  for (const w of words) {
+    lookupItems(log, [w], text).items.forEach((it, i) => {
+      const key = it.entry ?? it.section;
+      if (i < MAX_SHOWN) (it.entry ? lessons : sections).add(key);
+      else if (!cut.has(key)) cut.set(key, w);
+    });
+  }
+  const lead = `a lookup with any one of the topic words that ${where} lists (${words.join(', ')})`;
+  const past = (key) => (cut.has(key) ? ` (${cut.get(key)} finds it, past the cap of ${MAX_SHOWN} items a lookup prints)` : '');
+  for (const e of log.entries) {
+    if (e.status !== 'open' || lessons.has(e)) continue;
+    const message = `${lead} leaves out this open lesson${past(e)}: if one of them fits it, use that word in its text, or add a word for its topic to step 1`;
+    out.findings.push({file: 'LESSONS.md', line: e.line, entry: e, f: {rule: 'unreached', message}});
+  }
+  const held = new Map(); // section name -> how many lessons are promoted to it
+  for (const e of log.entries) if (e.status === 'promoted') held.set(e.section, (held.get(e.section) || 0) + 1);
+  for (const [name, n] of held) {
+    // A section that isn't there is a from-mismatch error already.
+    const section = log.sections.get(name);
+    if (!section || sections.has(name)) continue;
+    const message = `${lead} points to no lesson promoted to section "${section.label}" (${n} lesson${n > 1 ? 's' : ''})${past(name)}: if one of them fits, use that word in a lesson's text, or add a word for the section's topic to step 1`;
+    out.findings.push({file: 'PLAYBOOK.md', line: section.line, entry: null, f: {rule: 'unreached', message}});
+  }
+  return out;
+}
+
 // Pasted tool output in Evidence. Each pattern's repeats are bounded, so none
 // can backtrack past a line or cost more than linear time.
 const STACK_FRAME = /\bat [\w.$<>]{1,200} \([^\s()]{1,400}:\d{1,9}:\d{1,9}\)|\bFile "[^"\n]{1,400}", line \d{1,9}/;
@@ -1597,6 +1700,11 @@ export function lintReport(log, {leads = false} = {}) {
     if (/\.md$/i.test(file.name)) for (const f of structureFindings(rows)) push(file.name, f.n, f);
     ignores.push(...lineIgnores(rows).map((ig) => ({...ig, file: file.name})));
   }
+
+  // The lessons and sections a lookup with step 1's topic words leaves out.
+  const reach = reachFindings(log);
+  for (const r of reach.findings) push(r.file, r.line, r.f, r.entry);
+  notes.push(...reach.notes);
 
   // Sizes.
   const {budget} = log.settings;

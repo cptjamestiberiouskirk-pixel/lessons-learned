@@ -284,6 +284,46 @@ test('--doctor adds the summary of the whole log', () => {
   assert.match(r.out, /^-- doctor: 0 lessons: 0 open, 0 promoted, 0 closed, 0 bad; LESSONS\.md about \d+ tokens \(budget 24000\), --all about \d+ \(budget 6000\)$/m);
 });
 
+// ---- unreached: what a lookup with step 1's topic words leaves out -----------
+
+// A playbook whose lessons check lists `words` in step 1, as the template's does.
+const reachBook = (words) =>
+  `# PLAYBOOK\n\n## The lessons check\n\n1. Run a lookup with two to four words for the step's topics (${words}). A word finds lessons with a word that starts with it.\n2. Write the line.\n`;
+// One open lesson, its heading on line 3, with no word that starts with test or build.
+const deployLesson = (rule = 'sign each deploy first') =>
+  `# LESSONS\n\n## 2026-01-02: A deploy went out unsigned\n- What went wrong: it broke\n- Why: a cause\n- Rule going forward: ${rule}\n- Evidence: run 42\n- Status: open\n`;
+
+test('unreached is a warning on the lesson\'s heading that names the topic words, and --lint still exits 0', () => {
+  const r = run(['--lint'], folder({'LESSONS.md': deployLesson(), 'PLAYBOOK.md': reachBook('`test`, `build`')}));
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /^WARN  unreached LESSONS\.md:3 a lookup with any one of the topic words that step 1 of "The lessons check" lists \(test, build\) leaves out this open lesson: if one of them fits it, use that word in its text, or add a word for its topic to step 1$/m);
+  assert.match(r.out, /^-- lint: 0 errors, 1 warning$/m);
+});
+
+test('unreached says when step 1 lists no topic word, and when it uses only some of them', () => {
+  const none = run(['--lint'], folder({'LESSONS.md': deployLesson(), 'PLAYBOOK.md': reachBook('any two words')}));
+  assert.match(none.out, /^-- unreached not checked: step 1 of "The lessons check" lists no topic word in backticks$/m);
+  assert.doesNotMatch(none.out, /WARN {2}unreached/);
+  // 22 words of a few characters and one of 41: the first 20 short ones are used.
+  const words = [...Array.from({length: 22}, (_, i) => `\`w${i}\``), `\`${'a'.repeat(41)}\``].join(', ');
+  const many = run(['--lint'], folder({'LESSONS.md': deployLesson(), 'PLAYBOOK.md': reachBook(words)}));
+  assert.match(many.out, /^-- unreached used 20 of the 23 topic words in step 1 of "The lessons check": at most 20, of at most 40 characters each$/m);
+  assert.match(many.out, /\(w0, w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12, w13, w14, w15, w16, w17, w18, w19\) leaves out/);
+});
+
+// The topic words come from the repo, so their cost is bounded: the lessons'
+// text times the topic words' length. Twenty words of 40 characters, against a
+// rule of 30,000 characters (checked) and 50,000 (past the limit).
+test('unreached stops at its work limit and says so', () => {
+  const words = Array.from({length: 20}, (_, i) => `\`${String(i).padStart(2, '0')}${'q'.repeat(38)}\``).join(', ');
+  const under = run(['--lint'], folder({'LESSONS.md': deployLesson('sign '.repeat(6000)), 'PLAYBOOK.md': reachBook(words)}));
+  assert.match(under.out, /^WARN {2}unreached LESSONS\.md:3 /m);
+  assert.doesNotMatch(under.out, /work limit/);
+  const over = run(['--lint'], folder({'LESSONS.md': deployLesson('sign '.repeat(10000)), 'PLAYBOOK.md': reachBook(words)}));
+  assert.match(over.out, /^-- unreached not checked: past its work limit \(the lessons' text times the topic words' length\)$/m);
+  assert.doesNotMatch(over.out, /WARN {2}unreached/);
+});
+
 test('flags that do not go together are a usage error', () => {
   const dir = folder({'LESSONS.md': '# LESSONS\n', 'PLAYBOOK.md': '# PLAYBOOK\n'});
   for (const args of [
@@ -502,6 +542,24 @@ async function timeLint(make, leads = false) {
   }
   return best;
 }
+
+// Slow version it fails on: naming the topic word that finds a lesson left out
+// past the cap by running the lookup again for each such lesson, quadratic in
+// the lessons (the mutant `rerun` in Q57's scratch mutants.mjs). `test` finds
+// every lesson here, so all but the first 50 are left out, and each is a
+// finding.
+test('unreached costs linear time in the lessons', async () => {
+  const day = (i) => new Date(Date.UTC(2026, 0, 1 - i)).toISOString().slice(0, 10);
+  const make = (n) => ({
+    'LESSONS.md': '# LESSONS\n' + Array.from({length: n}, (_, i) => `\n## ${day(i)}: Lesson ${i}\n- What went wrong: it broke\n- Why: a cause\n- Rule going forward: a rule\n- Evidence: a test run\n- Status: open\n`).join(''),
+    'PLAYBOOK.md': reachBook('`test`, `build`'),
+  });
+  const base = await timeLint(make(1));
+  const quarter = await timeLint(make(REACH_QUARTER));
+  const full = await timeLint(make(4 * REACH_QUARTER));
+  assert.ok(full - base < 8 * (quarter - base) + 50, `${4 * REACH_QUARTER} lessons took ${full} ms, ${REACH_QUARTER} took ${quarter} ms, 1 took ${base} ms`);
+});
+const REACH_QUARTER = 1000;
 
 // Slow version it fails on: matching each finding against every silencing
 // comment (valid.find), quadratic in the number of comments.

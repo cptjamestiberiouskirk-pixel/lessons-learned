@@ -76,7 +76,8 @@ test('an edit to LESSONS.md that leaves a format error is told the error, in the
 });
 
 test('a clean edit, an edit to another file, and a repo without the lessons check print nothing', () => {
-  const clean = makeRepo({entries: [entry('2026-01-03', 'A fine lesson')]});
+  // Its rule holds `test`, a topic word of the template's step 1, so unreached is quiet.
+  const clean = makeRepo({entries: [entry('2026-01-03', 'A fine lesson', {rule: 'run the test first'})]});
   const c = editOf(clean, 'LESSONS.md', 'x', 'y');
   assert.equal(c.out, '', c.out);
   assert.equal(c.status, 0);
