@@ -343,8 +343,9 @@ test('unreached stops at its limit on lessons times topic words and says so', ()
 // text (PLAYBOOK "Parsing untrusted text", step 2) built from what the reading
 // decides on: an indent, a block start and a topic word. For any such text, a
 // line indented to step 1's text (3 spaces after "1. ") is part of it, and so
-// is a plain line indented less; a list item, quote, heading or rule indented
-// less ends step 1, and no word after it counts (review round 2 of Q57).
+// is a plain line indented less; a list item, quote or heading indented less
+// ends step 1, and no word after it counts (review round 2 of Q57). A rule is
+// not in the set: RS-A-unreached-rule defers it.
 test('unreached reads step 1 by its indent, on random text', async () => {
   const {loadLog, lintReport} = await import(pathToFileURL(SCRIPT).href);
   let seed = 57; // mulberry32, so a failure can be run again
@@ -359,7 +360,6 @@ test('unreached reads step 1 by its indent, on random text', async () => {
   const WORDS = ['alpha', 'beta', 'gamma', 'delta', 'omega'];
   const INSIDE = ['', '- ', '* ', '2. ', '3) ', '> ', 'and '];
   const ENDS = ['- ', '* ', '+ ', '2. ', '3) ', '> ', '# ', '### '];
-  const RULE_LINES = ['***', '---', '_ _ _'];
   // A line's text after `start`, with a topic word or none; `used` collects the words.
   const line = (start, used) => {
     if (random() < 0.3) return `${start}plain text`;
@@ -378,10 +378,37 @@ test('unreached reads step 1 by its indent, on random text', async () => {
     const used = [];
     const inside = Array.from({length: 1 + Math.floor(random() * 4)}, () => (random() < 0.7 ? spaces(3, 5) + line(pick(INSIDE), used) : spaces(0, 2) + line('and ', used)));
     assert.equal(named(inside.join('\n')), expected(used), `step 1 goes on:\n${inside.join('\n')}`);
-    const end = random() < 0.25 ? spaces(0, 2) + pick(RULE_LINES) : spaces(0, 2) + line(pick(ENDS), []);
+    const end = spaces(0, 2) + line(pick(ENDS), []);
     const after = Array.from({length: Math.floor(random() * 3)}, () => spaces(0, 5) + line(pick(INSIDE), []));
     const all = [...inside, end, ...after].join('\n');
     assert.equal(named(all), expected(used), `step 1 goes on:\n${all}`);
+  }
+});
+
+// Each test on a span of step 1 runs before the 40-character cap, so it must be
+// linear in the span's length. Review round 3 of Q57, RS-A-unreached-pad-cost:
+// 8971206's space strip (`/^ .*\S.* $/s`) is quadratic on a span that starts
+// with a space and doesn't end with one. It took 1,694 ms for 40,000 characters
+// and 31,725 ms for 160,000, where b3aad73 took 164 and 236 ms (the times are
+// in dev/release-state.md). This test fails on 8971206's script.
+test('unreached reads a long span in step 1 in time linear in its length', async () => {
+  const make = (n) => ({'LESSONS.md': deployLesson(), 'PLAYBOOK.md': reachBook(`\`test\`, \` ${'a'.repeat(n)}\``)});
+  const base = await timeLint(make(1));
+  const quarter = await timeLint(make(40000));
+  const full = await timeLint(make(160000));
+  assert.ok(full - base < 8 * (quarter - base) + 50, `160,000 characters took ${full} ms, 40,000 took ${quarter} ms, 1 took ${base} ms`);
+});
+
+// A long line after step 1 is read with no regex that recurses on each
+// character. Review round 3 of Q57, RS-A-unreached-rule-stack: 8971206's rule
+// test, `(?<r>[-*_])([ \t]*\k<r>){2,}`, threw "RangeError: Maximum call stack
+// size exceeded" on a line of 2,000,000 `*` and an `x`, where b3aad73 exited 0.
+// Lines of 3,000,000: `*` and `_` at column 0, and `*` indented into step 1.
+test('a 3 MB line after step 1 does not crash --lint', () => {
+  for (const line of [`${'*'.repeat(3e6)}x`, `${'_'.repeat(3e6)}x`, `   ${'*'.repeat(3e6)}x`]) {
+    const r = run(['--lint'], folder({'LESSONS.md': deployLesson(), 'PLAYBOOK.md': `# PLAYBOOK\n\n## The lessons check\n\n1. Run a lookup (\`test\`).\n${line}\n2. Write the line.\n`}));
+    assert.doesNotMatch(r.out, /RangeError|Maximum call stack/, `${line.slice(0, 8)}...: ${r.out.slice(0, 300)}`);
+    assert.equal(r.code, 0, `${line.slice(0, 8)}...: ${r.out.slice(0, 300)}`);
   }
 });
 

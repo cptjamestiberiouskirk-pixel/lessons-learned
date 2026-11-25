@@ -401,10 +401,11 @@ export const FIXTURES = [
   },
   // Markdown keeps a line indented to step 1's text (3 spaces after "1. ") in
   // step 1, a nested list included. A line indented less goes on from it only
-  // as plain text: a list item, quote, rule or heading there ends step 1, and a
-  // code fence ends it at any indent (round 2: sub3, sub2, two-inside, quote,
-  // hr, fence-tilde, and the mutants no-bullet-break, no-heading-break,
-  // no-fence-break and paren-not-break).
+  // as plain text: a list item, quote or heading there ends step 1, and a code
+  // fence ends it at any indent (round 2: sub3, sub2, two-inside, quote,
+  // fence-tilde, and the mutants no-bullet-break, no-heading-break,
+  // no-fence-break and paren-not-break). A rule (hr) is deferred:
+  // RS-A-unreached-rule.
   {
     name: 'unreached: a nested list indented to step 1\'s text is part of it',
     source: 'hand',
@@ -420,7 +421,6 @@ export const FIXTURES = [
   TEST_ONLY('unreached: a 2) ends step 1', '1. Run a lookup (`test`).\n2) For a `deploy`, too.'),
   TEST_ONLY('unreached: a heading ends step 1', '1. Run a lookup (`test`).\n### For a `deploy`'),
   TEST_ONLY('unreached: a quote ends step 1', '1. Run a lookup (`test`).\n> Also `deploy`.'),
-  TEST_ONLY('unreached: a rule ends step 1', '1. Run a lookup (`test`).\n***\n`deploy` is another.'),
   TEST_ONLY('unreached: a ``` fence ends step 1', '1. Run a lookup (`test`).\n```\n`deploy`\n```'),
   TEST_ONLY('unreached: a ~~~ fence ends step 1', '1. Run a lookup (`test`).\n~~~\n`deploy`\n~~~'),
   TEST_ONLY('unreached: an indented fence ends step 1', '1. Run a lookup (`test`).\n   ~~~\n   `deploy`\n   ~~~'),
@@ -430,13 +430,12 @@ export const FIXTURES = [
   TEST_ONLY('unreached: a plain line after a heading in step 1 ends it', '1. Run a lookup (`test`).\n   ### Notes\nand `deploy` too.'),
   // A list number has at most 9 digits (round 2, zeros10).
   {name: 'unreached: ten digits are not step 1', source: 'hand', files: repo(UNREACHED, CHECK_BOOK('0000000001. Run a lookup (`test`).')), quiet: ['unreached']},
-  // A path or a placeholder in backticks is no topic word: a lesson that names
-  // the file is not reached by it (round 2, filename).
-  TEST_ONLY('unreached: a path in backticks is no topic word', '1. Run a lookup (`dev/lessons.mjs`, `test`).', lesson({title: 'The script hung', rule: 'run dev/lessons.mjs with a timeout', evidence: 'run 42'})),
-  TEST_ONLY('unreached: a placeholder in backticks is no topic word', '1. Run a lookup (`<words>`, `test`).', lesson({title: 'The script hung', rule: 'give the lookup its <words> first', evidence: 'run 42'})),
-  // Markdown drops one space each side of a span, so ` deploy ` is `deploy`
-  // (round 2, padded).
-  {name: 'unreached: one space each side of a span is dropped, as Markdown does', source: 'hand', files: repo(UNREACHED, CHECK_BOOK('1. Run a lookup with words for the topics (`test`, ` deploy `).')), quiet: ['unreached']},
+  // A placeholder in backticks is no topic word (round 2, filename). A path
+  // still is: RS-A-unreached-paths.
+  // A word with "/" that a lookup takes stays a topic word: the lookup with
+  // `ci/cd` prints this lesson (review round 3, slash.mjs, RS-A-unreached-slash).
+  {name: 'unreached: a word with / that a lookup takes is a topic word', source: 'hand', files: repo(lesson({title: 'The ci/cd job ran on a stale cache', what: 'the pipeline shipped old files', rule: 'clear the ci/cd cache before a release build', evidence: 'run 42'}), CHECK_BOOK('1. Run a lookup with words for the topics (`test`, `ci/cd`).')), quiet: ['unreached']},
+  TEST_ONLY('unreached: a placeholder in backticks is no topic word','1. Run a lookup (`<words>`, `test`).', lesson({title: 'The script hung', rule: 'give the lookup its <words> first', evidence: 'run 42'})),
   // Every topic word too long: the check didn't run, so its silence is not
   // unused (round 2, the mutant long-ran).
   {name: 'unreached: a silence is not unused when every topic word is too long', source: 'hand', files: repo(silenced(UNREACHED), CHECK_BOOK(`1. Run a lookup with words for the topics (\`${'q'.repeat(41)}\`).`)), quiet: ['unreached', 'unused-ignore']},
