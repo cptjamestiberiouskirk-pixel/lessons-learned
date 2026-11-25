@@ -17,7 +17,7 @@ const sha = (s) => createHash('sha256').update(s).digest('hex');
 // character of two UTF-8 bytes and one of four at the end.
 const BIG = `${'x'.repeat(1024 * 1024)}é\u{1f600}`;
 
-// On macOS, three hook children were killed at 60 s in CI, each sent a large
+// On macOS, seven hook children were killed at 60 s in CI, each sent a large
 // input through spawnSync's pipe (RS-T-lint-macos-hang in dev/release-state.md).
 // From a file, the input always ends.
 test('spawnSync gives a child all of its input from a file when stdinFile is set, and the input ends', () => {
