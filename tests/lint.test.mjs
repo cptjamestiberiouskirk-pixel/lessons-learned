@@ -324,6 +324,21 @@ test('unreached stops at its work limit and says so', () => {
   assert.doesNotMatch(over.out, /WARN {2}unreached/);
 });
 
+// Many short lessons cost a lookup each per word, however short their text
+// (review round 1 of Q57, RS-A-unreached-cost: 83,886 lessons and 20 words of
+// one letter took 513 ms under the text limit). Twenty words against 9,999
+// lessons (checked) and 10,001 (past 200,000 lessons times words).
+test('unreached stops at its limit on lessons times topic words and says so', () => {
+  const words = Array.from({length: 20}, (_, i) => `\`${String.fromCharCode(97 + i)}\``).join(', ');
+  const make = (n) => '# LESSONS\n' + Array.from({length: n}, (_, i) => `\n## ${new Date(Date.UTC(2026, 0, 1) - i * 864e5).toISOString().slice(0, 10)}: L ${i}\n- What went wrong: x\n- Why: y\n- Rule going forward: z\n- Evidence: w\n- Status: open\n`).join('');
+  const under = run(['--lint'], folder({'LESSONS.md': make(9999), 'PLAYBOOK.md': reachBook(words)}));
+  assert.match(under.out, /^WARN {2}unreached LESSONS\.md:/m);
+  assert.doesNotMatch(under.out, /work limit/);
+  const over = run(['--lint'], folder({'LESSONS.md': make(10001), 'PLAYBOOK.md': reachBook(words)}));
+  assert.match(over.out, /^-- unreached not checked: past its work limit \(the lessons times the topic words\)$/m);
+  assert.doesNotMatch(over.out, /WARN {2}unreached/);
+});
+
 test('flags that do not go together are a usage error', () => {
   const dir = folder({'LESSONS.md': '# LESSONS\n', 'PLAYBOOK.md': '# PLAYBOOK\n'});
   for (const args of [

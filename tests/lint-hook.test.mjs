@@ -76,8 +76,9 @@ test('an edit to LESSONS.md that leaves a format error is told the error, in the
 });
 
 test('a clean edit, an edit to another file, and a repo without the lessons check print nothing', () => {
-  // Its rule holds `test`, a topic word of the template's step 1, so unreached is quiet.
-  const clean = makeRepo({entries: [entry('2026-01-03', 'A fine lesson', {rule: 'run the test first'})]});
+  // No topic word of the template's step 1 finds this lesson: --lint warns on
+  // it (unreached), but the hook doesn't run that check.
+  const clean = makeRepo({entries: [entry('2026-01-03', 'A fine lesson')]});
   const c = editOf(clean, 'LESSONS.md', 'x', 'y');
   assert.equal(c.out, '', c.out);
   assert.equal(c.status, 0);
@@ -96,6 +97,15 @@ test('a clean edit, an edit to another file, and a repo without the lessons chec
   const loose = scratch();
   writeFileSync(join(loose, 'LESSONS.md'), BROKEN);
   assert.equal(claude(loose, 'Write', {file_path: join(loose, 'LESSONS.md'), content: 'x'}).out, '');
+});
+
+// The hook runs --lint without unreached, so an unreached silence is not
+// unused there: removing it would bring the warning back in --lint.
+test('the hook does not call a silence of unreached unused', () => {
+  const root = makeRepo({entries: [entry('2026-01-03', 'A deploy went out unsigned', {extra: '  <!-- lint-ignore unreached: its topic has no word in step 1 yet -->\n'})]});
+  const r = editOf(root, 'LESSONS.md', 'x', 'y');
+  assert.equal(r.out, '', r.out);
+  assert.equal(r.status, 0);
 });
 
 test('LESSONS_GATE=off, another event, another tool, or a broken payload prints nothing and exits 0', () => {

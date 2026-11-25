@@ -1225,28 +1225,49 @@ function playbookSteps(log) {
 const CHECK = 'The lessons check';
 const MAX_TOPIC_WORDS = 20; // topic words of step 1 unreached uses
 const MAX_TOPIC_LENGTH = 40; // characters of one topic word
-// Each word's pattern reads each lesson's text at most once per character of
-// the word, so this bounds the work: the lessons' text times the words' length.
+// Each word's lookup reads each lesson once, and its pattern reads a lesson's
+// text at most once per character of the word. These bound the work: the
+// lessons times the words, and the lessons' text times the words' length.
+const MAX_REACH_READS = 200000;
 const MAX_REACH_WORK = 32 * 1024 * 1024;
 
-// The topic words step 1 of "The lessons check" lists: each span in backticks
-// that is one word (letters, digits, "_" and "-", but not "-" first, which the
-// lookup reads as an option), in lower case as the lookup takes them, each
-// once. Null when PLAYBOOK.md has no step 1 in that section.
+// The text of step 1 of "The lessons check" as Markdown reads it: the line
+// numbered 1 (or 01) and the lines that go on from it, indented or not, up to
+// a blank line, a heading, a code block or the next list item. A lint-ignore
+// line is skipped, as in playbookSteps. Null when there is no such line.
+function stepOneText(log) {
+  let parts = null;
+  for (const r of log.rows) {
+    if (parts) {
+      if (r.fence || !/\S/.test(r.text) || /^ {0,3}(#{1,6}(\s|$)|\d{1,9}[.)]\s|[-*+]\s)/.test(r.text)) break;
+      if (!IGNORE_START.test(r.text)) parts.push(r.text.trim());
+    } else if (!r.fence && r.section && r.section.name === CHECK) {
+      const m = r.text.match(/^0*1\. (.*)$/s);
+      if (m) parts = [m[1]];
+    }
+  }
+  return parts && parts.join(' ');
+}
+
+// The topic words step 1 lists: each span in backticks with no space in it, a
+// letter or digit, and not "-" first (the lookup reads that as an option), in
+// lower case as the lookup takes it, each once. The lookup escapes a word's
+// signs, so `node.js` and `c++` are words. Null when there is no step 1.
 function topicWords(log) {
-  const step = playbookSteps(log).find((s) => s.section.name === CHECK && s.n === '1');
-  if (!step) return null;
+  const text = stepOneText(log);
+  if (text === null) return null;
   const words = new Set();
-  for (const m of step.text.matchAll(SPAN)) {
+  for (const m of text.matchAll(SPAN)) {
     const w = m[1].toLowerCase();
-    if (/^[\p{L}\p{N}][\p{L}\p{N}_-]*$/u.test(w)) words.add(w);
+    if (!/\s/.test(w) && !w.startsWith('-') && /[\p{L}\p{N}]/u.test(w)) words.add(w);
   }
   return [...words];
 }
 
-// Returns {findings: [{file, line, f, entry}], notes}.
+// Returns {findings: [{file, line, f, entry}], notes, ran}. ran is false when
+// the check stopped before its lookups: its silences are then not unused.
 function reachFindings(log) {
-  const out = {findings: [], notes: []};
+  const out = {findings: [], notes: [], ran: false};
   const listed = topicWords(log);
   if (listed === null) return out;
   const where = `step 1 of "${CHECK}"`;
@@ -1265,11 +1286,21 @@ function reachFindings(log) {
     return t;
   };
   let size = 0;
-  for (const e of log.entries) if (e.status !== 'closed') size += text(e).length + 1;
+  let count = 0;
+  for (const e of log.entries) {
+    if (e.status === 'closed') continue;
+    size += text(e).length + 1;
+    count++;
+  }
+  if (count * words.length > MAX_REACH_READS) {
+    out.notes.push('unreached not checked: past its work limit (the lessons times the topic words)');
+    return out;
+  }
   if (size * words.reduce((n, w) => n + w.length + 1, 0) > MAX_REACH_WORK) {
     out.notes.push('unreached not checked: past its work limit (the lessons\' text times the topic words\' length)');
     return out;
   }
+  out.ran = true;
   const lessons = new Set(); // lessons a lookup prints for some word
   const sections = new Set(); // section names it points to for some word
   const cut = new Map(); // a lesson or section name -> the first word that finds it past the cap
@@ -1608,7 +1639,7 @@ export function pairsJson(report) {
 // warnings, notes, sizes}. Findings are {file, line, rule, severity, message},
 // in file and line order; a silenced one also has its reason. `leads` adds the
 // lead rules (--leads).
-export function lintReport(log, {leads = false} = {}) {
+export function lintReport(log, {leads = false, reach = true} = {}) {
   const look = finder(log.root);
   const ctx = {look, texts: new Map(), refs: 0, unchecked: 0};
   // At most MAX_KEEP findings are kept; past that only the errors are counted.
@@ -1702,9 +1733,11 @@ export function lintReport(log, {leads = false} = {}) {
   }
 
   // The lessons and sections a lookup with step 1's topic words leaves out.
-  const reach = reachFindings(log);
-  for (const r of reach.findings) push(r.file, r.line, r.f, r.entry);
-  notes.push(...reach.notes);
+  // The lint hook turns it off (reach: false): it would repeat every such
+  // lesson after each edit of LESSONS.md.
+  const reached = reach ? reachFindings(log) : {findings: [], notes: [], ran: false};
+  for (const r of reached.findings) push(r.file, r.line, r.f, r.entry);
+  notes.push(...reached.notes);
 
   // Sizes.
   const {budget} = log.settings;
@@ -1757,8 +1790,9 @@ export function lintReport(log, {leads = false} = {}) {
       silenced.push({...f, reason: unkeyed(ig.reason)});
     } else kept.push(f);
   }
-  // A silence for a lead rule is unused only when the leads ran.
-  for (const v of valid) if (!v.used && (leads || !LEADS.has(v.rule))) kept.push({file: v.file, line: v.n, rule: 'unused-ignore', severity: 'warning', message: `this lint-ignore for ${v.rule} matches no finding: remove it`});
+  // A silence for a lead rule is unused only when the leads ran, and one for
+  // unreached only when its lookups ran.
+  for (const v of valid) if (!v.used && (leads || !LEADS.has(v.rule)) && (reached.ran || v.rule !== 'unreached')) kept.push({file: v.file, line: v.n, rule: 'unused-ignore', severity: 'warning', message: `this lint-ignore for ${v.rule} matches no finding: remove it`});
 
   const order = new Map([['LESSONS.md', 0], ['PLAYBOOK.md', 1], ...rules.files.map((f, i) => [f.name, i + 2])]);
   const sort = (a, b) => (order.get(a.file) ?? 99) - (order.get(b.file) ?? 99) || a.line - b.line;

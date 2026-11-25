@@ -309,13 +309,15 @@ async function main() {
     for (const n of ruleFiles) if (typeof n === 'string' && n && !names.has(foldAscii(join(n)))) names.set(foldAscii(join(n)), n);
     const files = new Set([...rels].filter((r) => names.has(r)).map((r) => names.get(r)));
     if (!files.size) continue;
-    for (const f of lint.lintReport(log).findings) if (files.has(f.file)) (f.severity === 'error' ? errors : warnings).push(f);
+    // Without unreached: it would name every lesson the topic words leave out
+    // after each edit of LESSONS.md (RS-H-unreached-hook in dev/release-state.md).
+    for (const f of lint.lintReport(log, {reach: false}).findings) if (files.has(f.file)) (f.severity === 'error' ? errors : warnings).push(f);
     // The lessons the edit added: leads for them, and for no other lesson.
     const keys = (known && files.has('LESSONS.md') && newKeys(added, removed)) || new Set();
     const fresh = log.entries.filter((e) => keys.has(e.key));
     if (!fresh.length) continue;
     const spans = fresh.map((e) => [e.line, Math.max(e.line, ...e.lines.map((l) => l.n), ...e.ignores.map((l) => l.n))]);
-    for (const f of lint.lintReport(log, {leads: true}).findings)
+    for (const f of lint.lintReport(log, {leads: true, reach: false}).findings)
       if (f.file === 'LESSONS.md' && W2.has(f.rule) && spans.some(([a, b]) => f.line >= a && f.line <= b)) leads.push(f);
   }
   const all = [...errors, ...leads, ...warnings];
