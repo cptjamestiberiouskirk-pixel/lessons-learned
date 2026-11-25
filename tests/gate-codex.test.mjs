@@ -228,6 +228,10 @@ test('codex: a command that ran is read from its argv', () => {
     // commit on the next line is read (tests/gate.test.mjs has more cases).
     [['/bin/bash', '-lc', 'x="$(echo "$(echo "b\'b")\'b")"\ngit commit -m x'], true],
     [[PWSH_EXE, '-NoProfile', '-Command', "$m = \"$('b' + \"$(\"b'b\")'b\")\"\ngit commit -m x"], true],
+    // A # inside ${ } is no comment. The gate's reading of $( ) takes it for
+    // one, and the legacy reading, which it also runs, finds the commit
+    // (tests/gate.test.mjs, "one reading of $( ) misses").
+    [['/bin/bash', '-lc', 'x="$(echo ${y:- #})\n"\ngit commit -m x\n# "'], true],
   ];
   for (const [argv, resets] of cases) assert.equal(patch(root, (r) => r.say(LINE).ran(argv.at(-1), {argv})).deny, resets, JSON.stringify(argv));
 });

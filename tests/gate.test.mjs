@@ -662,11 +662,15 @@ test('a case pattern\'s ) closes no subshell', () => {
 });
 
 // A seeded byte source for the property tests (mulberry32, as in
-// tests/property.test.mjs). Each run takes a new seed, and a failure's message
-// names it: with GATE_SEED=<seed> set, `node --test` makes the same inputs.
-function seeded() {
+// tests/property.test.mjs). Each run takes a new seed and prints it, and a
+// failure's message names it: with GATE_SEED=<seed> set, `node --test` makes
+// the same inputs. A GATE_SEED that is not a seed fails the test, so a typo
+// can't run a different seed than the one asked for.
+function seeded(t) {
   const given = process.env.GATE_SEED;
-  const seed = given ? Number(given) >>> 0 : randomBytes(4).readUInt32LE(0);
+  if (given && !(/^\d{1,10}$/.test(given) && Number(given) <= 0xffffffff)) throw new Error(`GATE_SEED is ${JSON.stringify(given)}: a seed is a whole number from 0 to 4294967295`);
+  const seed = given ? Number(given) : randomBytes(4).readUInt32LE(0);
+  t.diagnostic(`GATE_SEED=${seed}`);
   let a = seed;
   const byte = () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -680,10 +684,10 @@ function seeded() {
 
 // Random case statements inside a subshell that cds: the commit after esac
 // runs in the subshell's folder. Built from pieces Git Bash runs.
-test('property: a commit after a case statement in a subshell is judged in the subshell\'s folder', () => {
+test('property: a commit after a case statement in a subshell is judged in the subshell\'s folder', (t) => {
   const root = makeRepo();
   const plain = makeRepo({check: false});
-  const {seed, byte} = seeded();
+  const {seed, byte} = seeded(t);
   const pick = (xs) => xs[byte() % xs.length];
   const build = (to, away) => {
     const n = 1 + (byte() % 3);
@@ -754,49 +758,175 @@ test('a double-quoted string inside $( ) inside double quotes nests, so the next
   assert.equal(command(root, "$m = \"$('b' + \"$(\"it's git push\")'b\")\"", () => {}, {tool: 'PowerShell'}).deny, false, 'ps: git push as text');
 });
 
-// Random PowerShell expressions before an @' opener: quotes, ( ), and $( )
-// inside double quotes, nested. Built from pieces pwsh 7 runs: it refuses an
-// empty string, or one holding ( ) # ` or a doubled quote, inside a $( )
-// inside double quotes, so those come only in a string at the top.
-test('property: an @\' after any balanced PowerShell expression opens a here-string', () => {
+// Q79's review round 1: once a $( ) inside double quotes nested, the scan had
+// to read more of each shell's rules. In sh a # that starts a word is a
+// comment to the end of its line, but not in $(( )), and $'...' has its own
+// \ escapes. In PowerShell a # that starts a word, and <# #>, are comments
+// in a $( ) outside quotes, and a $( ) inside double quotes ends at the )
+// that balances its parentheses, counting no quotes, with each "" or `" in
+// it one " (ScanSubExpression in pwsh 7.7's tokenizer.cs). The first three
+// sh inputs and the first two PowerShell ones were denied before Q79's first
+// fix and not after it. Each push input ran its git push in WSL bash or
+// pwsh 7 with a stub git, or pwsh's own parser listed it as a command.
+test('a $( ) is read by its shell\'s rules: comments and $\'...\' in sh, only parentheses inside PowerShell quotes', () => {
   const root = makeRepo();
-  const {seed, byte} = seeded();
+  const sh = [
+    'x="$(echo a # "$( "\n)"\ngit push',
+    'x=$(echo "$(echo b #"$("\n)")\ngit push',
+    "x=$(echo \"$(echo $'(\\'')\")\ngit push",
+    "x=\"$(echo a # it's\n)\"\ngit push",
+    "x=\"$(echo $'it\\'s')\"\ngit push",
+    // A # inside a word is no comment, $' inside double quotes is text, and
+    // a # right after $( is a comment.
+    'x="$(echo a#"$(echo "b\'b")\'b")"\ngit push',
+    'x="$(echo "$\'(\\\'")"\ngit push',
+    "x=\"$(# it's\necho a)\"\ngit push",
+    // A \ before a newline joins the lines, so a#b is one word and its # no
+    // comment; the comment in the next $( ) holds a ) and a quote.
+    'x="$(echo a\\\n#b)"; y=$( # )"\n)\ngit push\n# "',
+  ];
+  for (const cmd of sh) assert.equal(command(root, cmd, () => {}).deny, true, JSON.stringify(cmd));
+  assert.equal(command(root, 'x="$(echo a # git push\n)"', () => {}).deny, false, 'sh: git push in a comment');
+  // In $(( )) a # is no comment, so the string after it holds the git push:
+  // bash ran no git in these.
+  const arith = [
+    'x="$(( 1 # 2 ))"; echo "\ngit push\n"',
+    'x="$(echo $(( 1 # 2 )))"; echo "\ngit push\n"',
+    'x="$(echo "$(( 1 # 2 ))")"; echo "\ngit push\n"',
+  ];
+  for (const cmd of arith) assert.equal(command(root, cmd, () => {}).deny, false, JSON.stringify(cmd));
+  const ps = [
+    "$m = \"$(\"$(\"\"it's\"\")\")\"\ngit push",
+    "$m = \"$(\"$(`\"it's`\")\")\"\ngit push",
+    "$m = \"$(\"\"it's\"\")\"\ngit push",
+    "$m = \"$(\"\"it's\"\"; git push)\"",
+    "$m = \"$(\"$(\"\"it's\"\")\")\" + @'\nit's\n'@\ngit push",
+    // A $( ) outside quotes keeps its quotes, and a $( ) inside double quotes
+    // in it ends at its balancing ).
+    "$m = $(\")\")\ngit push",
+    "$m = $(\"$(\"\"it's\"\")\")\necho ')\")'\ngit push\n# '",
+    // The same with a " that main's reading takes for the string's end.
+    "$m = $(\"$('\"' + \"\"it's\"\")\")\necho ')\")'\ngit push\n# '",
+    // A `" in the code of a $( ) inside double quotes is one " too.
+    "$m = \"$(`\"it's`\"; git push)\"",
+    // Comments in a $( ) outside quotes, which main let through too: the )
+    // or the quote in them is text.
+    "$m = $( # )\"\n)\ngit push\n# \"",
+    "$m = $(echo (1)# )\"\n)\ngit push\n# \"",
+    "$m = $( <# )\" #> 'a')\ngit push\n# \"",
+    "$m = $( <# \n) \" #> 1 )\ngit push\n# \"",
+    // A ` before a newline joins the lines, so the # after it starts a word.
+    "$m = $(echo a `\n# )\"\n)\ngit push\n# \"",
+    // A here-string inside a $( ) inside double quotes, or a comment there
+    // that ends in @', which main let through too: pwsh ends the $( ) by its
+    // parentheses first.
+    "$m = \"$(@'\n'\n'@)\"\ngit push\n# '",
+    "$m = \"$( #@'\n)\"\ngit push",
+  ];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+});
+
+// The hook judges each call twice: with $( ) read as above, and the legacy
+// way, by its quotes only. In bash a # inside ${ } is no comment, but the
+// first reading takes it for one, runs past the ) after it, and reads the
+// git push as quoted text. The legacy reading ends the $( ) at that ) and
+// finds the push. bash ran it.
+test('a git push that one reading of $( ) misses is found by the other', () => {
+  const root = makeRepo();
+  const push = 'x="$(echo ${y:- #})\n"\ngit push\n# "';
+  assert.equal(command(root, push, () => {}).deny, true, 'the current call');
+  // Earlier calls are read both ways too: the push used the line up.
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'Bash', {command: push})).deny, true, 'an earlier call');
+  // The legacy reading reads a $( )'s body, and the script after pwsh -c, the
+  // legacy way too. The first reading takes the # in backticks for a comment
+  // (bash ran this push), and runs a PowerShell comment past a lone CR,
+  // where pwsh ends it (pwsh ran the second push).
+  assert.equal(command(root, 'z=$(y="$(echo `echo #`)"; git push; # "\n)', () => {}).deny, true, 'a $( ) body');
+  assert.equal(command(root, "pwsh -c '$m = $(# x\r); git push'", () => {}).deny, true, 'pwsh -c');
+  assert.equal(command(root, '$m = $(# x\r); git push', () => {}, {tool: 'PowerShell'}).deny, true, 'PowerShell');
+  // In PowerShell double quotes the legacy reading ends a $( ) by its quotes,
+  // and its here-string check skips one the same way, as main did. pwsh can't
+  // parse these two, and main denied them, so the hook still does.
+  assert.equal(command(root, "$m = \"$('(')\"\ngit push", () => {}, {tool: 'PowerShell'}).deny, true, 'legacy $( ) in quotes');
+  assert.equal(command(root, "$m = \"$('(')\" + @'\nit's\n'@\ngit push", () => {}, {tool: 'PowerShell'}).deny, true, 'legacy here-string check');
+});
+
+// A random PowerShell expression from `byte`: quotes, ( ), $( ) inside double
+// quotes, and comments in a $( ) outside them, nested. A <# #> is on one line,
+// as the check for an @' opener reads one line at a time (SECURITY.md, known
+// limits). Built from pieces pwsh 7 runs. pwsh counts only parentheses in a
+// $( ) inside double quotes, and reads each "" or `" there as one ", so it
+// refuses an empty string, or one holding ( ) # or `, in a $( )
+// inside double quotes, so those come only in a string at the top. The code
+// of such a $( ) is written with bare quotes, or with each " as "" or `"
+// (bare only where the character before is no " or `, which would join it).
+function psExpr(byte) {
   const pick = (xs) => xs[byte() % xs.length];
+  const p = (s) => () => s;
+  const escape = (code) => {
+    let out = '';
+    for (const c of code) out += c !== '"' ? c : pick(/["`]$/.test(out) ? ['""', '`"'] : ['"', '""', '`"']);
+    return out;
+  };
   const expr = (d) => Array.from({length: 1 + (byte() % 2)}, () => atom(d)).join(' + ');
   const atom = (d) => {
     const top = (piece) => (d === 0 ? piece : 'b');
     const many = (pieces) => Array.from({length: d === 0 ? byte() % 4 : 1 + (byte() % 3)}, () => pick(pieces)()).join('');
-    const p = (s) => () => s;
+    const inString = () => (d < 2 ? `$(${pick([(c) => c, escape, escape])(expr(d + 1))})` : 'b');
+    const comment = () => pick([` # ${many(['a', ' ', '(', ')', '"', "'", '$(', '#'].map(p))}\n`, ` <# ${many(['a', ' ', '(', ')', '"', "'", '$(', '#'].map(p))} #>`]);
     return pick([
       () => '$x',
       () => `'${many(['a', '"', ' ', top('('), top(')'), top('$('), top('`'), top('#'), top("''")].map(p))}'`,
-      () => `"${many([...['a', "'", ' ', '$x', top('('), top(')'), top('#'), top('`"'), top('""')].map(p), () => (d < 2 ? `$(${expr(d + 1)})` : 'b')])}"`,
+      () => `"${many([...['a', "'", ' ', '$x', top('('), top(')'), top('#'), top('`"'), top('""')].map(p), inString, inString, inString])}"`,
       () => (d < 2 ? `(${expr(d + 1)})` : '$x'),
+      () => (d === 0 ? `$(${expr(1)}${comment()})` : '$x'),
+      () => (d === 0 ? `"$(${escape(`${expr(1)} + "${pick(['a', "'", ' '])}"`)})"` : '$x'),
     ])();
   };
+  return expr(0);
+}
+
+// Random PowerShell expressions before an @' opener. Each input from seeds 1
+// to 10 ran its git push in pwsh 7 with a stub git, twice.
+test('property: an @\' after any balanced PowerShell expression opens a here-string', (t) => {
+  const root = makeRepo();
+  const {seed, byte} = seeded(t);
   for (let i = 0; i < 10; i++) {
-    const cmd = `$m = ${expr(0)} + @'\nit's\n'@\ngit push`;
+    const cmd = `$m = ${psExpr(byte)} + @'\nit's\n'@\ngit push`;
     assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, `${JSON.stringify(cmd)}, GATE_SEED=${seed}`);
   }
 });
 
-// Random sh words before a git push on the next line: double quotes holding
-// $( ) that holds more quoted words, and single quotes holding $( and other
-// text, three levels deep at most. Built from pieces Git Bash and WSL bash
-// run: each of 100 generated inputs, run twice, ran the git push after it.
-test('property: a git push after any balanced sh word with nested quotes is read', () => {
-  const root = makeRepo();
-  const {seed, byte} = seeded();
+// A random sh word from `byte`, three levels deep at most: double quotes
+// holding $( ) that holds more words, single quotes holding $( and other
+// text, $'...' with its \ escapes, comments in a $( ) holding a ) or a quote,
+// and a # inside a word, which starts no comment. Built from pieces Git Bash
+// and WSL bash run.
+function shWord(byte) {
   const pick = (xs) => xs[byte() % xs.length];
   const many = (pieces) => Array.from({length: byte() % 4}, () => pick(pieces)()).join('');
   const p = (s) => () => s;
+  const comment = () => pick(['', ` #${many(['a', ' ', '(', ')', '"', "'", '$(', '`', '#'].map(p))}\n`]);
+  const sub = (d) => (d < 3 ? `$(echo ${word(d + 1)}${comment()})` : 'b');
   const word = (d) => pick([
     () => `'${many(['a', '"', ' ', '(', ')', '$(', '`', '#', '\\'].map(p))}'`,
-    () => `"${many([...['a', "'", ' ', '(', ')', '#', '\\"', '$x'].map(p), () => (d < 3 ? `$(echo ${word(d + 1)})` : 'b')])}"`,
-    () => (d < 3 ? `$(echo ${word(d + 1)})` : 'b'),
+    () => `"${many([...['a', "'", ' ', '(', ')', '#', '\\"', '$x', "$'", '$((1+(2)))'].map(p), () => sub(d)])}"`,
+    () => sub(d),
+    () => `$'${many(['a', '"', ' ', '(', ')', '$(', '`', '#', "\\'", '\\\\'].map(p))}'`,
+    () => `a#${pick(["')'", '")"', "$')'", 'b'])}`,
+    // A \ before a newline joins the lines, so the # is inside the word.
+    () => `a\\\n#${pick(["')'", 'b'])}`,
   ])();
+  return word(0);
+}
+
+// Random sh words before a git push on the next line. Each input from seeds
+// 1 to 10 ran its git push in Git Bash and WSL bash, twice.
+test('property: a git push after any balanced sh word with nested quotes is read', (t) => {
+  const root = makeRepo();
+  const {seed, byte} = seeded(t);
   for (let i = 0; i < 10; i++) {
-    const cmd = `x=${word(0)}\ngit push`;
+    const cmd = `x=${shWord(byte)}\ngit push`;
     assert.equal(command(root, cmd, () => {}).deny, true, `${JSON.stringify(cmd)}, GATE_SEED=${seed}`);
   }
 });
@@ -1270,10 +1400,10 @@ test('setup writes the line before it builds, and the setup e2e runs with this p
 // passes; the same text with the line in quotes or backticks, or with no line,
 // is denied. One transcript per case, so this costs a process each, and the
 // cases are few.
-test('property: the line on its own line passes after any text, and a quoted one never does', () => {
+test('property: the line on its own line passes after any text, and a quoted one never does', (ctx) => {
   const root = makeRepo({script: 'other'});
   const pieces = ['a', ' ', '\n', '.', '!', '?', '"', '`', '*', '>', '-', '_', '#', '(', ')', 'Lessons', ' checked', ':', String.fromCodePoint(0x2028), '\t', String.fromCodePoint(0xe9), String.fromCodePoint(0x1f600), 'L'];
-  const {seed, byte} = seeded();
+  const {seed, byte} = seeded(ctx);
   for (let i = 0; i < 8; i++) {
     let text = '';
     const n = byte() % 40;
