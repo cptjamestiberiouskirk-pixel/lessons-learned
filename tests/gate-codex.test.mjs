@@ -224,6 +224,10 @@ test('codex: a command that ran is read from its argv', () => {
     [['/bin/bash', '-lc', "echo 'git commit'"], false],
     // One word holding quotes and a separator stays one word.
     [['echo', "a' ; git commit -m 'b"], false],
+    // A double-quoted string inside $( ) inside double quotes nests, so the
+    // commit on the next line is read (tests/gate.test.mjs has more cases).
+    [['/bin/bash', '-lc', 'x="$(echo "$(echo "b\'b")\'b")"\ngit commit -m x'], true],
+    [[PWSH_EXE, '-NoProfile', '-Command', "$m = \"$('b' + \"$(\"b'b\")'b\")\"\ngit commit -m x"], true],
   ];
   for (const [argv, resets] of cases) assert.equal(patch(root, (r) => r.say(LINE).ran(argv.at(-1), {argv})).deny, resets, JSON.stringify(argv));
 });
@@ -244,6 +248,10 @@ test('codex: the payload\'s command is read as PowerShell on Windows and as sh e
   assert.equal(command(root, '$out = git commit -m x', () => {}).deny, WIN, 'a PowerShell assignment');
   // sh runs a backtick substitution; PowerShell reads a backtick as an escape.
   assert.equal(command(root, 'echo `git commit -m x`', () => {}).deny, !WIN, 'a backtick substitution');
+  // In either shell, a double-quoted string inside $( ) inside double quotes
+  // nests, so the push on the next line is read.
+  const nested = WIN ? "$m = \"$('b' + \"$(\"b'b\")'b\")\"\ngit push" : 'x="$(echo "$(echo "b\'b")\'b")"\ngit push';
+  assert.equal(command(root, nested, () => {}).deny, true, 'a nested double-quoted $( )');
 });
 
 test('codex: the payload\'s folder is where the command runs', () => {

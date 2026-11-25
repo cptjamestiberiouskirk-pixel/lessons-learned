@@ -661,26 +661,44 @@ test('a case pattern\'s ) closes no subshell', () => {
   assert.equal(command(root, 'x=$(case a in a) echo;; esac); git commit -m x', () => {}).deny, true, 'a ) that closes nothing');
 });
 
+// A seeded byte source for the property tests (mulberry32, as in
+// tests/property.test.mjs). Each run takes a new seed, and a failure's message
+// names it: with GATE_SEED=<seed> set, `node --test` makes the same inputs.
+function seeded() {
+  const given = process.env.GATE_SEED;
+  const seed = given ? Number(given) >>> 0 : randomBytes(4).readUInt32LE(0);
+  let a = seed;
+  const byte = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return (t ^ (t >>> 14)) >>> 24;
+  };
+  return {seed, byte};
+}
+
 // Random case statements inside a subshell that cds: the commit after esac
 // runs in the subshell's folder. Built from pieces Git Bash runs.
 test('property: a commit after a case statement in a subshell is judged in the subshell\'s folder', () => {
   const root = makeRepo();
   const plain = makeRepo({check: false});
-  const pick = (xs) => xs[randomBytes(1)[0] % xs.length];
+  const {seed, byte} = seeded();
+  const pick = (xs) => xs[byte() % xs.length];
   const build = (to, away) => {
-    const n = 1 + (randomBytes(1)[0] % 3);
+    const n = 1 + (byte() % 3);
     let items = '';
     for (let k = 0; k < n; k++) {
-      const list = Array.from({length: randomBytes(1)[0] % 3}, () => pick(['echo', 'echo "a)"', `(cd "${fwd(away)}")`, 'case y in q) echo;; esac', 'if true; then echo; fi', 'x=$(echo a)'])).join('; ');
+      const list = Array.from({length: byte() % 3}, () => pick(['echo', 'echo "a)"', `(cd "${fwd(away)}")`, 'case y in q) echo;; esac', 'if true; then echo; fi', 'x=$(echo a)'])).join('; ');
       items += `${pick(['a', '*', 'a|b', '(a', '"x)"', '[ab]'])}) ${list}${k < n - 1 ? pick([';;', ';&', ';;&']) : pick([';;', '\n'])} `;
     }
     return `(cd "${fwd(to)}"; case x in ${items}esac; git commit -m x)`;
   };
   for (let i = 0; i < 8; i++) {
     const cmd = build(root, plain);
-    assert.equal(command(plain, cmd, () => {}).deny, true, JSON.stringify(cmd));
+    assert.equal(command(plain, cmd, () => {}).deny, true, `${JSON.stringify(cmd)}, GATE_SEED=${seed}`);
     const back = build(plain, root);
-    assert.equal(command(root, back, () => {}).deny, false, JSON.stringify(back));
+    assert.equal(command(root, back, () => {}).deny, false, `${JSON.stringify(back)}, GATE_SEED=${seed}`);
   }
 });
 
@@ -700,17 +718,54 @@ test('a $( ) inside PowerShell double quotes is code, so an @\' after it opens a
   for (const cmd of cases) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
 });
 
+// Inside double quotes a $( ) can hold another double-quoted string, and that
+// one another $( ). The scan for the ) that ends a $( ) skipped a $( inside a
+// quoted string, so the inner string's quotes ended the outer one, a ' after
+// them opened a quote, and the next line, git push included, was read as
+// text. The first input is the one CI printed for the property test below
+// (PR 20, macOS); each input was run in pwsh 7, or in Git Bash and WSL bash,
+// with a stub git.
+test('a double-quoted string inside $( ) inside double quotes nests, so the next line is read', () => {
+  const root = makeRepo();
+  const ps = [
+    "$m = \"$(' b')$('b' + \"$(\"b'b\")'b\")\"\"\" + @'\nit's\n'@\ngit push",
+    "$m = \"$('b' + \"$(\"b'b\")'b\")\" + @'\nit's\n'@\ngit push",
+    "$m = \"$('b' + \"$(\"b'b\")'b\")\"\ngit push",
+    // One level, which was read right, and a $( ) outside quotes.
+    "$m = \"$(\"b'b\")'b\"\ngit push",
+    "$m = $(\"$(\"b'b\")'b\")\ngit push",
+    // A $ before anything but ( starts no $( ).
+    "$m = \"$(\"$a\" + \"b'b\")\"\ngit push",
+  ];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  const sh = [
+    'x="$(echo "$(echo "b\'b")\'b")"\ngit push',
+    'x="$(echo "$(echo "$(echo "c\'c")\'c")\'c")"\ngit push',
+    'x="$(echo "b\'b")\'b"\ngit push',
+    'x=$(echo "$(echo "b\'b")\'b")\ngit push',
+    // Only a $( inside double quotes nests: in single quotes it is text, and
+    // a $ before anything but ( starts no $( ).
+    'x="$(echo \'$(\')"\ngit push',
+    'x="$(echo "$a" "b\'b")"\ngit push',
+  ];
+  for (const cmd of sh) assert.equal(command(root, cmd, () => {}).deny, true, JSON.stringify(cmd));
+  // A git push in the inner string is still text.
+  assert.equal(command(root, 'x="$(echo "$(echo "it\'s git push")\'b")"', () => {}).deny, false, 'sh: git push as text');
+  assert.equal(command(root, "$m = \"$('b' + \"$(\"it's git push\")'b\")\"", () => {}, {tool: 'PowerShell'}).deny, false, 'ps: git push as text');
+});
+
 // Random PowerShell expressions before an @' opener: quotes, ( ), and $( )
 // inside double quotes, nested. Built from pieces pwsh 7 runs: it refuses an
 // empty string, or one holding ( ) # ` or a doubled quote, inside a $( )
 // inside double quotes, so those come only in a string at the top.
 test('property: an @\' after any balanced PowerShell expression opens a here-string', () => {
   const root = makeRepo();
-  const pick = (xs) => xs[randomBytes(1)[0] % xs.length];
-  const expr = (d) => Array.from({length: 1 + (randomBytes(1)[0] % 2)}, () => atom(d)).join(' + ');
+  const {seed, byte} = seeded();
+  const pick = (xs) => xs[byte() % xs.length];
+  const expr = (d) => Array.from({length: 1 + (byte() % 2)}, () => atom(d)).join(' + ');
   const atom = (d) => {
     const top = (piece) => (d === 0 ? piece : 'b');
-    const many = (pieces) => Array.from({length: d === 0 ? randomBytes(1)[0] % 4 : 1 + (randomBytes(1)[0] % 3)}, () => pick(pieces)()).join('');
+    const many = (pieces) => Array.from({length: d === 0 ? byte() % 4 : 1 + (byte() % 3)}, () => pick(pieces)()).join('');
     const p = (s) => () => s;
     return pick([
       () => '$x',
@@ -721,7 +776,28 @@ test('property: an @\' after any balanced PowerShell expression opens a here-str
   };
   for (let i = 0; i < 10; i++) {
     const cmd = `$m = ${expr(0)} + @'\nit's\n'@\ngit push`;
-    assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+    assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, `${JSON.stringify(cmd)}, GATE_SEED=${seed}`);
+  }
+});
+
+// Random sh words before a git push on the next line: double quotes holding
+// $( ) that holds more quoted words, and single quotes holding $( and other
+// text, three levels deep at most. Built from pieces Git Bash and WSL bash
+// run: each of 100 generated inputs, run twice, ran the git push after it.
+test('property: a git push after any balanced sh word with nested quotes is read', () => {
+  const root = makeRepo();
+  const {seed, byte} = seeded();
+  const pick = (xs) => xs[byte() % xs.length];
+  const many = (pieces) => Array.from({length: byte() % 4}, () => pick(pieces)()).join('');
+  const p = (s) => () => s;
+  const word = (d) => pick([
+    () => `'${many(['a', '"', ' ', '(', ')', '$(', '`', '#', '\\'].map(p))}'`,
+    () => `"${many([...['a', "'", ' ', '(', ')', '#', '\\"', '$x'].map(p), () => (d < 3 ? `$(echo ${word(d + 1)})` : 'b')])}"`,
+    () => (d < 3 ? `$(echo ${word(d + 1)})` : 'b'),
+  ])();
+  for (let i = 0; i < 10; i++) {
+    const cmd = `x=${word(0)}\ngit push`;
+    assert.equal(command(root, cmd, () => {}).deny, true, `${JSON.stringify(cmd)}, GATE_SEED=${seed}`);
   }
 });
 
@@ -1197,14 +1273,15 @@ test('setup writes the line before it builds, and the setup e2e runs with this p
 test('property: the line on its own line passes after any text, and a quoted one never does', () => {
   const root = makeRepo({script: 'other'});
   const pieces = ['a', ' ', '\n', '.', '!', '?', '"', '`', '*', '>', '-', '_', '#', '(', ')', 'Lessons', ' checked', ':', String.fromCodePoint(0x2028), '\t', String.fromCodePoint(0xe9), String.fromCodePoint(0x1f600), 'L'];
+  const {seed, byte} = seeded();
   for (let i = 0; i < 8; i++) {
     let text = '';
-    const n = randomBytes(1)[0] % 40;
-    for (let k = 0; k < n; k++) text += pieces[randomBytes(1)[0] % pieces.length];
+    const n = byte() % 40;
+    for (let k = 0; k < n; k++) text += pieces[byte() % pieces.length];
     const clean = text.replace(/Lessons checked/g, 'Lessons_checked');
-    assert.equal(edit(root, (t) => t.newMessage().text(`${clean}\nLessons checked: x\n${clean}`)).deny, false, JSON.stringify(clean));
+    assert.equal(edit(root, (t) => t.newMessage().text(`${clean}\nLessons checked: x\n${clean}`)).deny, false, `${JSON.stringify(clean)}, GATE_SEED=${seed}`);
     const flat = [...clean].map((c) => ('.!?\n'.includes(c) || c.codePointAt(0) === 0x2028 ? ' ' : c)).join('');
-    for (const q of ['"', '`', "'"]) assert.equal(edit(root, (t) => t.newMessage().text(`${flat} ${q}Lessons checked: x${q}`)).deny, true, JSON.stringify(clean) + q);
+    for (const q of ['"', '`', "'"]) assert.equal(edit(root, (t) => t.newMessage().text(`${flat} ${q}Lessons checked: x${q}`)).deny, true, `${JSON.stringify(clean + q)}, GATE_SEED=${seed}`);
   }
 });
 

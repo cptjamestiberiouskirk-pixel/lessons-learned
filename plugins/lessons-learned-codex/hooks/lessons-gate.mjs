@@ -422,19 +422,30 @@ function tokenize(input, dialect) {
     if (dyn) w.dyn = true;
   };
   const n = s.length;
-  // The index of the ")" that closes a "(" just before `from`.
+  // The index of the ")" that closes a "(" just before `from`. `st` holds the
+  // open contexts, as in codeAt: a quote, or ( for a ( or for a $( inside
+  // double quotes, which is code again until its ), quotes included.
   const close = (from) => {
-    let depth = 1;
-    let q = null;
+    const st = ['('];
     for (let j = from; j < n; j++) {
       const c = s[j];
-      if (q) {
-        if (c === q) q = null;
-        else if (c === esc && q === '"') j++;
-      } else if (c === "'" || c === '"') q = c;
+      const top = st[st.length - 1];
+      if (top === "'") {
+        if (c === "'") st.pop();
+      } else if (top === '"') {
+        if (c === esc) j++;
+        else if (c === '"') st.pop();
+        else if (c === '$' && s[j + 1] === '(') {
+          st.push('(');
+          j++;
+        }
+      } else if (c === "'" || c === '"') st.push(c);
       else if (c === esc) j++;
-      else if (c === '(') depth++;
-      else if (c === ')' && --depth === 0) return j;
+      else if (c === '(') st.push('(');
+      else if (c === ')') {
+        st.pop();
+        if (!st.length) return j;
+      }
     }
     return n;
   };
