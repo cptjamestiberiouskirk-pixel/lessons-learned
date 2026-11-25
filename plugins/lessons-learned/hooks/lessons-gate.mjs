@@ -220,11 +220,16 @@ function exempt(given, target, root) {
 // cmd ('cmd') rules. It needn't be exact: it finds the simple commands and
 // their words, and a word built from a variable or a substitution is marked
 // as one that can't be told.
+//
+// With `legacy`, a $( ) is read as before this hook learned comments,
+// $'...' and the nesting of double quotes in it: quotes only. main() judges a
+// call both ways and denies it if either reading does, so a rule learned
+// here can deny more than the legacy reading, never less.
 
 // Here-doc and here-string bodies are text, not commands. Both are found line
 // by line, so the work grows linearly with the command.
-function dropBodies(command, dialect) {
-  if (dialect === 'ps') return dropHereStrings(command);
+function dropBodies(command, dialect, legacy) {
+  if (dialect === 'ps') return dropHereStrings(command, legacy);
   if (dialect !== 'sh' || !command.includes('<<')) return command;
   const out = [];
   // Here-docs opened and not yet closed, in order; `next` is the one whose
@@ -303,11 +308,32 @@ function hereDocs(line, state) {
   return found;
 }
 
+// The index of the ")" that balances a "(" just before `from` in `text`,
+// counting parentheses only, or text.length if none does. pwsh ends a $( )
+// inside double quotes so (ScanSubExpression in its tokenizer.cs).
+function parens(text, from) {
+  let depth = 1;
+  for (let j = from; j < text.length; j++) {
+    if (text[j] === '(') depth++;
+    else if (text[j] === ')' && --depth === 0) return j;
+  }
+  return text.length;
+}
+
+// The code pwsh reads from the text of a $( ) inside double quotes: a ` or
+// a " before a " is dropped. (pwsh drops one before a typographic double
+// quote too, which this hook reads as text everywhere.)
+const psSubText = (text) => text.replace(/[`"]"/g, '"');
+
 // Whether the @ at `at` in a line of PowerShell is outside quotes and
 // comments, so an @' or @" there opens a here-string. `st` holds the open
-// contexts: a quote, or ( for a $( ) inside double quotes, which is code
-// again until its ). A quote opened on an earlier line is not seen.
-function codeAt(line, at) {
+// quote. A $( inside double quotes runs to the ) that balances it, as pwsh
+// reads it. An @ inside one opens no here-string here: pwsh reads one there
+// only when it reads the $( )'s text as code, and tokenize reads that text
+// on its own, here-strings included. With `legacy`, such a $( ) pushes a (
+// instead: code until its ), quotes included. A quote opened on an earlier
+// line is not seen.
+function codeAt(line, at, legacy) {
   const st = [];
   for (let i = 0; i < at; i++) {
     const c = line[i];
@@ -323,8 +349,11 @@ function codeAt(line, at) {
         if (line[i + 1] === '"') i++;
         else st.pop();
       } else if (c === '$' && line[i + 1] === '(') {
-        st.push('(');
-        i++;
+        if (!legacy) i = parens(line, i + 2);
+        else {
+          st.push('(');
+          i++;
+        }
       }
     } else if (c === "'" || c === '"') st.push(c);
     else if (c === '`') i++;
@@ -342,7 +371,7 @@ function codeAt(line, at) {
 // PowerShell here-strings: a line ending in @' or @" outside quotes and
 // comments opens one, and a line starting with '@ or "@ closes it. The body
 // becomes '' on the opening line; one never closed is left as it was.
-function dropHereStrings(command) {
+function dropHereStrings(command, legacy) {
   if (!command.includes('@')) return command;
   const out = [];
   let open = null;
@@ -357,7 +386,7 @@ function dropHereStrings(command) {
       continue;
     }
     const m = /@(['"])[ \t]*\r?$/.exec(raw);
-    if (m && codeAt(raw, m.index)) {
+    if (m && codeAt(raw, m.index, legacy)) {
       open = {q: m[1], at: out.length, lines: [raw]};
       out.push(`${raw.slice(0, m.index)}''`);
     } else out.push(raw);
@@ -369,8 +398,8 @@ function dropHereStrings(command) {
   return out.join('\n');
 }
 
-function tokenize(input, dialect) {
-  const s = dropBodies(input, dialect);
+function tokenize(input, dialect, legacy = false) {
+  const s = dropBodies(input, dialect, legacy);
   const esc = dialect === 'ps' ? '`' : dialect === 'cmd' ? '^' : '\\';
   const cmds = [];
   const subs = [];
@@ -422,8 +451,63 @@ function tokenize(input, dialect) {
     if (dyn) w.dyn = true;
   };
   const n = s.length;
-  // The index of the ")" that closes a "(" just before `from`.
+  // The index of the ")" that closes a "(" just before `from`, as the shell
+  // reads it. `st` holds the open contexts: a quote; $' for bash's $'...',
+  // where a backslash escapes the next character; ( for a ( in code, or in
+  // sh for a $( inside double quotes, which is code again until its ); and
+  // A for a ( of sh arithmetic, (( )) or $(( )), where a # is no comment. In
+  // code, a # that starts a word starts a comment to the line's end, and in
+  // PowerShell <# #> is one too. `start` is whether the next character in
+  // code starts a word; an escape before a newline joins the lines, in bash
+  // and in pwsh. In PowerShell a $( inside double quotes ends at the ) that
+  // balances its parentheses, whatever is between.
   const close = (from) => {
+    const st = [dialect === 'sh' && s[from] === '(' ? 'A' : '('];
+    let start = true;
+    for (let j = from; j < n; j++) {
+      const c = s[j];
+      const top = st[st.length - 1];
+      if (top === "'" || top === "$'" || top === '"') {
+        if (top === "$'" && c === '\\') j++;
+        else if (top === '"' && c === esc) j++;
+        else if (c === (top === '"' ? '"' : "'")) {
+          st.pop();
+          start = false;
+        } else if (top === '"' && c === '$' && s[j + 1] === '(') {
+          if (dialect === 'ps') j = parens(s, j + 2);
+          else {
+            st.push(s[j + 2] === '(' ? 'A' : '(');
+            start = true;
+            j++;
+          }
+        }
+      } else if (c === "'" || c === '"' || (dialect === 'sh' && c === '$' && s[j + 1] === "'")) {
+        st.push(c === '$' ? "$'" : c);
+        if (c === '$') j++;
+      } else if (c === esc) {
+        if (s[j + 1] !== '\n') start = false;
+        j++;
+      } else if (c === '(') {
+        st.push(top === 'A' || (dialect === 'sh' && s[j + 1] === '(') ? 'A' : '(');
+        start = true;
+      } else if (c === ')') {
+        st.pop();
+        if (!st.length) return j;
+        start = true;
+      } else if (top === '(' && dialect === 'ps' && c === '<' && s[j + 1] === '#') {
+        const k = s.indexOf('#>', j + 2);
+        j = k < 0 ? n : k + 1;
+        start = true;
+      } else if (top === '(' && c === '#' && start) {
+        const k = s.indexOf('\n', j);
+        j = (k < 0 ? n : k) - 1;
+      } else start = (dialect === 'ps' ? /[\s;&|{}<>]/ : /[ \t\n;&|<>]/).test(c);
+    }
+    return n;
+  };
+  // The legacy reading's end of a $( ): it knows quotes and nothing else, so
+  // a $( ) inside double quotes is text there.
+  const closeLegacy = (from) => {
     let depth = 1;
     let q = null;
     for (let j = from; j < n; j++) {
@@ -439,8 +523,16 @@ function tokenize(input, dialect) {
     return n;
   };
   const sub = (i) => {
-    const j = close(i + 2);
+    const j = legacy ? closeLegacy(i + 2) : close(i + 2);
     subs.push(s.slice(i + 2, j));
+    add(s.slice(i, j + 1), true);
+    return j + 1;
+  };
+  // A $( inside PowerShell double quotes: its text, read as code once each
+  // `" and "" in it is one ".
+  const inString = (i) => {
+    const j = parens(s, i + 2);
+    subs.push(psSubText(s.slice(i + 2, j)));
     add(s.slice(i, j + 1), true);
     return j + 1;
   };
@@ -513,7 +605,7 @@ function tokenize(input, dialect) {
             j++;
           }
         } else if (s[j] === '$' && s[j + 1] === '(' && dialect !== 'cmd') {
-          j = sub(j);
+          j = dialect === 'ps' && !legacy ? inString(j) : sub(j);
         } else if (s[j] === '`' && dialect === 'sh') {
           const k = s.indexOf('`', j + 1);
           subs.push(s.slice(j + 1, k < 0 ? n : k));
@@ -696,10 +788,10 @@ function move(from, word) {
 // Each git commit or push and each lookup in a command, in order, with the
 // folder it runs in: git's -C <dir>, --work-tree or --git-dir, else the last
 // cd, Set-Location or pushd before it, else `cwd`.
-function walk(command, dialect, cwd, out = [], depth = 0) {
+function walk(command, dialect, cwd, out = [], depth = 0, legacy = false) {
   if (depth > MAX_DEPTH || typeof command !== 'string') return out;
-  const {cmds, subs} = tokenize(command, dialect);
-  for (const body of subs) walk(body, dialect, cwd, out, depth + 1);
+  const {cmds, subs} = tokenize(command, dialect, legacy);
+  for (const body of subs) walk(body, dialect, cwd, out, depth + 1, legacy);
   let cur = cwd;
   let prev;
   const stack = [];
@@ -769,14 +861,14 @@ function walk(command, dialect, cwd, out = [], depth = 0) {
     if (SH.has(name) || PWSH.has(name) || name === 'cmd') {
       if (SH.has(name)) {
         const at = args.findIndex((a) => /^-[A-Za-z]*c[A-Za-z]*$/.test(a.text));
-        if (at >= 0 && args[at + 1]) walk(args[at + 1].text, 'sh', here, out, depth + 1);
+        if (at >= 0 && args[at + 1]) walk(args[at + 1].text, 'sh', here, out, depth + 1, legacy);
       } else if (PWSH.has(name)) {
         const at = args.findIndex((a) => /^-(c|command|co|com|comm|comma|comman)$/i.test(a.text));
-        if (at >= 0) walk(args.slice(at + 1).map((a) => a.text).join(' '), 'ps', here, out, depth + 1);
+        if (at >= 0) walk(args.slice(at + 1).map((a) => a.text).join(' '), 'ps', here, out, depth + 1, legacy);
       } else {
         // cmd /c, or cmd //c as Git Bash spells it.
         const at = args.findIndex((a) => /^\/\/?[ck]$/i.test(a.text));
-        if (at >= 0) walk(args.slice(at + 1).map((a) => a.text).join(' '), 'cmd', here, out, depth + 1);
+        if (at >= 0) walk(args.slice(at + 1).map((a) => a.text).join(' '), 'cmd', here, out, depth + 1, legacy);
       }
       continue;
     }
@@ -1065,7 +1157,7 @@ function notRun(records) {
 // after its last commit or push to a gated repo (a call that never ran
 // doesn't count), up to the current call: a later call of the same message is
 // on disk too, and is left out. In the current call, a lookup before its first
-// such commit or push counts.
+// such commit or push counts. Commands are read the legacy way if ctx.legacy.
 function judge(records, id, ctx) {
   const skip = notRun(records);
   const v = verdict(ctx);
@@ -1078,7 +1170,7 @@ function judge(records, id, ctx) {
         // Nothing at or after the current call counts.
         if (b.id === id) return v.finish();
         if (skip.has(b.id) || !SHELL_TOOLS.has(b.name) || !b.input || typeof b.input.command !== 'string') continue;
-        v.ran(walk(b.input.command, dialectOf(b.name), rcwd));
+        v.ran(walk(b.input.command, dialectOf(b.name), rcwd, [], 0, ctx.legacy));
       }
     }
   }
@@ -1244,7 +1336,7 @@ function judgeCodex(records, turnId, ctx) {
       if (item.type === 'AgentMessage') texts(item.content).forEach(v.text);
       else if (item.type === 'CommandExecution' && (item.status === 'completed' || item.status === 'failed')) {
         const c = argvCommand(item.command);
-        if (c) v.ran(walk(c, 'sh', fileUrl(item.cwd) ?? ctx.cwd));
+        if (c) v.ran(walk(c, 'sh', fileUrl(item.cwd) ?? ctx.cwd, [], 0, ctx.legacy));
       }
     }
   }
@@ -1296,7 +1388,10 @@ async function main() {
   const turnId = typeof p.turn_id === 'string' && p.turn_id !== '' ? p.turn_id : null;
   const codex = turnId !== null && rolloutAt(tp);
   const roots = new Set();
+  // The current call's commands, read as this hook reads them and the legacy
+  // way (see "Reading a command").
   let current = null;
+  let currentLegacy = null;
   if (!codex && EDIT_TOOLS.has(p.tool_name)) {
     const root = editRoot(typeof input.file_path === 'string' ? input.file_path : input.notebook_path);
     if (!root) return;
@@ -1315,7 +1410,8 @@ async function main() {
     if (typeof command !== 'string' || !command.includes('git')) return;
     const dialect = !codex ? dialectOf(p.tool_name) : process.platform === 'win32' ? 'ps' : 'sh';
     current = walk(command, dialect, cwd);
-    for (const e of current) {
+    currentLegacy = walk(command, dialect, cwd, [], 0, true);
+    for (const e of [...current, ...currentLegacy]) {
       const root = e.kind === 'git' ? gatedRoot(e.dir) : null;
       if (root) roots.add(root);
     }
@@ -1330,6 +1426,7 @@ async function main() {
   const ctx = {
     cwd,
     current,
+    legacy: false,
     gated: (dir) => {
       const root = gatedRoot(dir);
       return root !== null && roots.has(root);
@@ -1340,6 +1437,12 @@ async function main() {
       return real !== null && isInRepo(real, home, ['dev', 'lessons.mjs']);
     },
   };
+  // The turn is judged with each reading, and passes only if both pass.
+  const ctxLegacy = {...ctx, current: currentLegacy, legacy: true};
+  const pass = (judgeWith) => [ctx, ctxLegacy].every((c) => {
+    const v = judgeWith(c);
+    return v.line && (!needLookup || v.lookup);
+  });
   const modern = typeof p.prompt_id === 'string' && p.prompt_id !== '';
   const fd = openSync(tp, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
   try {
@@ -1347,8 +1450,7 @@ async function main() {
     if (codex) {
       const {records, other} = readCodexTurn(fd, Number(fstatSync(fd).size), turnId);
       if (other) return;
-      const v = judgeCodex(records, turnId, ctx);
-      if (v.line && (!needLookup || v.lookup)) return;
+      if (pass((c) => judgeCodex(records, turnId, c))) return;
       return deny(needLookup);
     }
     const size = await waitForCall(fd, id);
@@ -1356,8 +1458,7 @@ async function main() {
     const {records, start} = readTurn(fd, size, modern);
     // A turn start for another prompt means this isn't the shape expected.
     if (modern && start && typeof start.promptId === 'string' && start.promptId !== p.prompt_id) return;
-    const v = judge(records, id, ctx);
-    if (v.line && (!needLookup || v.lookup)) return;
+    if (pass((c) => judge(records, id, c))) return;
   } finally {
     closeSync(fd);
   }
