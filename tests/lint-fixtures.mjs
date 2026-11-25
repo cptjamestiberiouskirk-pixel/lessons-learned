@@ -24,6 +24,28 @@ const BOOK = '# PLAYBOOK\n\n## Checking your work\n\n1. Run the tests.\n2. Repor
 const lesson = ({title = 'A lesson', date = '2026-01-02', what = 'it broke', why = 'a cause', rule = 'a rule', evidence = 'a test run', status = 'open'} = {}) =>
   `\n## ${date}: ${title}\n- What went wrong: ${what}\n- Why: ${why}\n- Rule going forward: ${rule}\n- Evidence: ${evidence}\n- Status: ${status}\n`;
 const repo = (lessons, playbook = BOOK, more = {}) => ({'LESSONS.md': HEAD + lessons, 'PLAYBOOK.md': playbook, ...more});
+// A playbook whose lessons check lists `words` in step 1, as the template's
+// does, and a section "Releasing" on line 8.
+const REACH_BOOK = (words) =>
+  `# PLAYBOOK\n\n## The lessons check\n\n1. Run \`node dev/lessons.mjs <words>\` with two to four words for the step's topics (${words}). A word finds lessons with a word that starts with it.\n2. Write the line.\n\n## Releasing\n\n1. Tag the release.\n`;
+const TOPICS = '`test`, `build`';
+// An open lesson with no word that starts with test or build.
+const UNREACHED = lesson({title: 'A deploy went out unsigned', rule: 'sign each deploy first', evidence: 'run 42'});
+// The date i days before 2026-01-31, so a list of lessons is newest first.
+const dayBefore = (i) => new Date(Date.UTC(2026, 0, 31 - i)).toISOString().slice(0, 10);
+// A lesson's text with unreached silenced in its entry.
+const silenced = (text) => text.replace('- Rule going forward:', '  <!-- lint-ignore unreached: its topic has no word in step 1 yet -->\n- Rule going forward:');
+// Twenty topic words of 40 characters: with a rule of 50,000 characters, the
+// check is past its work limit.
+const LONG_WORDS = Array.from({length: 20}, (_, i) => `\`${String(i).padStart(2, '0')}${'q'.repeat(38)}\``).join(', ');
+// A playbook whose lessons check has `step1` as its step 1, then a step 2.
+const CHECK_BOOK = (step1) => `# PLAYBOOK\n\n## The lessons check\n\n${step1}\n2. Write the line.\n`;
+// A fixture where step 1 lists `test` and unreached must name only it.
+const TEST_ONLY = (name, step1, lessons = UNREACHED) => ({
+  name, source: 'hand', files: repo(lessons, CHECK_BOOK(step1)),
+  fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test)'}],
+  count: {unreached: 1},
+});
 
 // This repo's F8: an Evidence path that named the file by its old place.
 const F8_BEFORE = 'the 0.2.0 hardening session: a scan found 1 literal U+FEFF in `templates/lessons.mjs`; after the replace, 0 non-ASCII characters.';
@@ -260,6 +282,169 @@ export const FIXTURES = [
     quiet: ['stale-path', 'quoted-tool-output'],
     fires: [{rule: 'unopenable-evidence', severity: 'warning', file: 'LESSONS.md'}],
   },
+  // unreached: the lookup run with each topic word step 1 of "The lessons
+  // check" lists, one at a time. In these repos a lesson's heading is on line 5,
+  // 12, 19 and so on, and the section "Releasing" on PLAYBOOK.md line 8.
+  {name: 'unreached: an open lesson no topic word of step 1 finds', source: 'hand', files: repo(UNREACHED + lesson({title: 'A test was skipped', date: '2026-01-01', evidence: 'run 43'}), REACH_BOOK(TOPICS)), fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, build)'}], count: {unreached: 1}},
+  {name: 'unreached: quiet when a topic word finds each open lesson', source: 'hand', files: repo(lesson() + lesson({title: 'The build broke', date: '2026-01-01', evidence: 'run 7'}), REACH_BOOK(TOPICS)), quiet: ['unreached']},
+  {
+    // "save" finds "saved" but not "unsaved", as the lookup's word-start match does.
+    name: 'unreached: a topic word finds the start of a word only, as a lookup does',
+    source: 'hand',
+    files: repo(lesson({title: 'The settings were saved twice', evidence: 'run 1'}) + lesson({title: 'Unsaved settings were lost', date: '2026-01-01', evidence: 'run 2'}), REACH_BOOK('`save`')),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 12}],
+    count: {unreached: 1},
+  },
+  {
+    name: 'unreached: a section no topic word points a lookup to',
+    source: 'hand',
+    files: repo(lesson({title: 'Tagged from a branch', rule: 'tag from main', evidence: 'run 7', status: 'promoted to PLAYBOOK "Releasing"'}), REACH_BOOK(TOPICS)),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'PLAYBOOK.md', line: 8, has: '"Releasing"'}],
+    count: {unreached: 1},
+  },
+  {name: 'unreached: quiet for a section a topic word points to', source: 'hand', files: repo(lesson({title: 'Tagged from a branch', rule: 'build from a clean tree', evidence: 'run 7', status: 'promoted to PLAYBOOK "Releasing"'}), REACH_BOOK(TOPICS)), quiet: ['unreached']},
+  {
+    // `test` finds all 51; the lookup prints the first 50, so the last is left out.
+    name: 'unreached: an open lesson past the lookup\'s cap of 50 items',
+    source: 'hand',
+    files: repo(Array.from({length: 51}, (_, i) => lesson({title: `Lesson ${i}`, date: dayBefore(i)})).join(''), REACH_BOOK(TOPICS)),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 355, has: 'past the cap'}],
+    count: {unreached: 1},
+  },
+  {
+    name: 'unreached: silenced in its entry',
+    source: 'hand',
+    files: repo(UNREACHED.replace('- Rule going forward:', '  <!-- lint-ignore unreached: its topic has no word in step 1 yet -->\n- Rule going forward:'), REACH_BOOK(TOPICS)),
+    quiet: ['unreached', 'unused-ignore'],
+    silenced: ['unreached'],
+  },
+  {
+    // `Deploy` is lowered; `-x` reads as an option and `two words` as more than one.
+    name: 'unreached: a topic word is one word in backticks, in lower case',
+    source: 'hand',
+    files: repo(UNREACHED + lesson({title: 'Two of them', date: '2026-01-01', rule: 'x marks it', evidence: 'run 2'}), REACH_BOOK('`Deploy`, `-x`, `two words`')),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 12, has: '(deploy)'}],
+    count: {unreached: 1},
+  },
+  {name: 'unreached: no lessons check, so nothing to reach', source: 'hand', files: repo(UNREACHED), quiet: ['unreached']},
+  {name: 'unreached: a closed lesson is never reported', source: 'hand', files: repo(lesson({title: 'A deploy went out unsigned', evidence: 'run 42', status: 'closed: a test enforces it'}), REACH_BOOK(TOPICS)), quiet: ['unreached']},
+  // Review round 1 of Q57, from its probes (scratch q57/review1/agree.mjs,
+  // silence.mjs and mut.mjs).
+  {
+    // A lookup takes one word with signs in it, and escapes them; `İ` lowers to
+    // `i` and U+0307, a mark (RS-A-unreached-words).
+    name: 'unreached: a topic word may hold signs a lookup takes, and a letter that lowers to two',
+    source: 'hand',
+    files: repo(['A c++ compile failed', 'A node.js upgrade failed', 'The .env file leaked', 'The İstanbul office went dark'].map((title, i) => lesson({title, date: dayBefore(i), evidence: 'run 1'})).join(''), REACH_BOOK('`test`, `c++`, `node.js`, `.env`, `İstanbul`')),
+    quiet: ['unreached'],
+  },
+  {
+    // `...` holds no letter or digit, so it is not a word.
+    name: 'unreached: the topic words it names include ones with signs, not a span of signs alone',
+    source: 'hand',
+    files: repo(UNREACHED, REACH_BOOK('`test`, `c++`, `node.js`, `...`')),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, c++, node.js)'}],
+    count: {unreached: 1},
+  },
+  // When the check doesn't run, its silences are not unused: removing one would
+  // bring the warning back once it runs (RS-A-unreached-limit-ignore).
+  {name: 'unreached: a silence is not unused past the work limit', source: 'hand', files: repo(silenced(lesson({title: 'A deploy went out unsigned', rule: 'sign '.repeat(10000), evidence: 'run 42'})), REACH_BOOK(LONG_WORDS)), quiet: ['unreached', 'unused-ignore']},
+  {name: 'unreached: a silence is not unused when step 1 lists no topic word', source: 'hand', files: repo(silenced(UNREACHED), REACH_BOOK('any two words')), quiet: ['unreached', 'unused-ignore']},
+  {name: 'unreached: a silence is not unused with no lessons check', source: 'hand', files: repo(silenced(UNREACHED)), quiet: ['unreached', 'unused-ignore']},
+  {
+    // A section that isn't there is from-mismatch's error, not a crash here
+    // (RS-T-unreached-mutants, no-missing-guard). No topic word finds the
+    // lesson, so no lookup points to the section either.
+    name: 'unreached: a lesson promoted to a section that is not there',
+    source: 'hand',
+    files: repo(lesson({title: 'A gone section', evidence: 'run 1', status: 'promoted to PLAYBOOK "Nowhere"'}), REACH_BOOK(TOPICS)),
+    fires: [{rule: 'from-mismatch', severity: 'error', file: 'LESSONS.md'}],
+    quiet: ['unreached'],
+  },
+  {
+    // `test` points to 51 sections; the lookup prints 50, so "S50" on line 212
+    // is left out (section-no-cap).
+    name: 'unreached: a section past the lookup\'s cap of 50 items',
+    source: 'hand',
+    files: repo(Array.from({length: 51}, (_, i) => lesson({title: `Promoted test ${i}`, date: dayBefore(i), status: `promoted to PLAYBOOK "S${i}"`})).join(''), REACH_BOOK(TOPICS) + Array.from({length: 51}, (_, i) => `\n## S${i}\n\n1. Do ${i}.\n`).join('')),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'PLAYBOOK.md', line: 212, has: '"S50" (1 lesson) (test finds it, past the cap'}],
+    count: {unreached: 1},
+  },
+  {
+    // Only step 1 of "The lessons check" lists topic words (any-section-step1).
+    name: 'unreached: step 1 of another section lists no topic word',
+    source: 'hand',
+    files: repo(UNREACHED, '# PLAYBOOK\n\n## Setting up\n\n1. Name the `deploy` target.\n\n## The lessons check\n\n1. Run a lookup with words for the topics (`test`, `build`).\n2. Write the line.\n'),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, build)'}],
+    count: {unreached: 1},
+  },
+  // Markdown reads `01.` as step 1, and a line after it, indented or not, as
+  // more of it, up to a blank line (RS-A-unreached-step1).
+  {name: 'unreached: step 1 numbered 01', source: 'hand', files: repo(UNREACHED, REACH_BOOK(TOPICS).replace('1. Run', '01. Run')), fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, build)'}], count: {unreached: 1}},
+  {name: 'unreached: topic words on a line that goes on from step 1 unindented', source: 'hand', files: repo(UNREACHED, '# PLAYBOOK\n\n## The lessons check\n\n1. Run a lookup with words for the topics\n(`test`, `build`).\n2. Write the line.\n'), fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, build)'}], count: {unreached: 1}},
+  {name: 'unreached: topic words on an indented line of step 1', source: 'hand', files: repo(UNREACHED, '# PLAYBOOK\n\n## The lessons check\n\n1. Run a lookup with words for the topics\n   (`test`, `build`).\n2. Write the line.\n'), fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, build)'}], count: {unreached: 1}},
+  {
+    // Step 2 starts a new list item, so its `deploy` is no topic word.
+    name: 'unreached: step 1 ends where step 2 starts',
+    source: 'hand',
+    files: repo(UNREACHED, '# PLAYBOOK\n\n## The lessons check\n\n1. Run a lookup with words for the topics (`test`, `build`).\n2. Before a `deploy`, write the line.\n'),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, build)'}],
+    count: {unreached: 1},
+  },
+  {
+    // After a blank line, a paragraph is not step 1, so `deploy` is no topic word.
+    name: 'unreached: a paragraph after step 1 is not part of it',
+    source: 'hand',
+    files: repo(UNREACHED, '# PLAYBOOK\n\n## The lessons check\n\n1. Run a lookup with words for the topics (`test`).\n\nFor example `deploy`.\n2. Write the line.\n'),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test)'}],
+    count: {unreached: 1},
+  },
+  // Markdown keeps a line indented to step 1's text (3 spaces after "1. ") in
+  // step 1, a nested list included. A line indented less goes on from it only
+  // as plain text: a list item, quote or heading there ends step 1, and a code
+  // fence ends it at any indent (round 2: sub3, sub2, two-inside, quote,
+  // fence-tilde, and the mutants no-bullet-break, no-heading-break,
+  // no-fence-break and paren-not-break). A rule (hr) is deferred:
+  // RS-A-unreached-rule.
+  {
+    name: 'unreached: a nested list indented to step 1\'s text is part of it',
+    source: 'hand',
+    files: repo(UNREACHED, CHECK_BOOK('1. Run a lookup with words for the topics:\n   - `test`\n   - `build`')),
+    fires: [{rule: 'unreached', severity: 'warning', file: 'LESSONS.md', line: 5, has: '(test, build)'}],
+    count: {unreached: 1},
+  },
+  TEST_ONLY('unreached: a 2. indented to step 1\'s text goes on with it', '1. Run a lookup with words for the topics, at most\n   2. of them (`test`).'),
+  TEST_ONLY('unreached: a list indented less than step 1\'s text ends it', '1. Run a lookup (`test`):\n  - `deploy`'),
+  TEST_ONLY('unreached: step 1\'s text starts after 01. and its space', '01. Run a lookup (`test`):\n   - `deploy`'),
+  TEST_ONLY('unreached: step 1\'s text starts after all the spaces after 1.', '1.  Run a lookup (`test`):\n   - `deploy`'),
+  TEST_ONLY('unreached: a bullet ends step 1', '1. Run a lookup (`test`).\n- For a `deploy`, too.'),
+  TEST_ONLY('unreached: a 2) ends step 1', '1. Run a lookup (`test`).\n2) For a `deploy`, too.'),
+  TEST_ONLY('unreached: a heading ends step 1', '1. Run a lookup (`test`).\n### For a `deploy`'),
+  TEST_ONLY('unreached: a quote ends step 1', '1. Run a lookup (`test`).\n> Also `deploy`.'),
+  TEST_ONLY('unreached: a ``` fence ends step 1', '1. Run a lookup (`test`).\n```\n`deploy`\n```'),
+  TEST_ONLY('unreached: a ~~~ fence ends step 1', '1. Run a lookup (`test`).\n~~~\n`deploy`\n~~~'),
+  TEST_ONLY('unreached: an indented fence ends step 1', '1. Run a lookup (`test`).\n   ~~~\n   `deploy`\n   ~~~'),
+  // A lint-ignore line in step 1 is skipped, its reason's spans too.
+  TEST_ONLY('unreached: a lint-ignore line in step 1 is skipped', '1. Run a lookup (`test`).\n<!-- lint-ignore md-steps: it names `deploy` -->'),
+  // A plain line indented less goes on from a paragraph, not from a heading.
+  TEST_ONLY('unreached: a plain line after a heading in step 1 ends it', '1. Run a lookup (`test`).\n   ### Notes\nand `deploy` too.'),
+  // A list number has at most 9 digits (round 2, zeros10).
+  {name: 'unreached: ten digits are not step 1', source: 'hand', files: repo(UNREACHED, CHECK_BOOK('0000000001. Run a lookup (`test`).')), quiet: ['unreached']},
+  // A word with "/" that a lookup takes stays a topic word: the lookup with
+  // `ci/cd` prints this lesson (review round 3, slash.mjs, RS-A-unreached-slash).
+  {name: 'unreached: a word with / that a lookup takes is a topic word', source: 'hand', files: repo(lesson({title: 'The ci/cd job ran on a stale cache', what: 'the pipeline shipped old files', rule: 'clear the ci/cd cache before a release build', evidence: 'run 42'}), CHECK_BOOK('1. Run a lookup with words for the topics (`test`, `ci/cd`).')), quiet: ['unreached']},
+  // A placeholder in backticks is no topic word (round 2, filename). A path
+  // still is: RS-A-unreached-paths.
+  TEST_ONLY('unreached: a placeholder in backticks is no topic word', '1. Run a lookup (`<words>`, `test`).', lesson({title: 'The script hung', rule: 'give the lookup its <words> first', evidence: 'run 42'})),
+  // Only a span that starts with "<" and ends with ">" is a placeholder. A
+  // heredoc marker and a generic type are topic words, and a lookup with each
+  // prints its lesson (review round 4: mutants that drop a span with "<"
+  // anywhere, with "<" first, or with ">" last passed every test).
+  {name: 'unreached: a span that starts with < but does not end with > is a topic word', source: 'hand', files: repo(lesson({title: 'A <<EOF heredoc lost the script tabs', what: 'the script would not parse', rule: 'write a script with the Write tool, not a <<EOF heredoc', evidence: 'run 42'}), CHECK_BOOK('1. Run a lookup with words for the topics (`test`, `<<eof`).')), quiet: ['unreached']},
+  {name: 'unreached: a span that ends with > but does not start with < is a topic word', source: 'hand', files: repo(lesson({title: 'A list<int> field was read as a string', what: 'the sum was wrong', rule: 'parse each list<int> field before it is stored', evidence: 'run 42'}), CHECK_BOOK('1. Run a lookup with words for the topics (`test`, `list<int>`).')), quiet: ['unreached']},
+  // Every topic word too long: the check didn't run, so its silence is not
+  // unused (round 2, the mutant long-ran).
+  {name: 'unreached: a silence is not unused when every topic word is too long', source: 'hand', files: repo(silenced(UNREACHED), CHECK_BOOK(`1. Run a lookup with words for the topics (\`${'q'.repeat(41)}\`).`)), quiet: ['unreached', 'unused-ignore']},
 ];
 
 // ---- Leads (--lint --leads) -------------------------------------------------
