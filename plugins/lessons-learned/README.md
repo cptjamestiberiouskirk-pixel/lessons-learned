@@ -90,7 +90,7 @@ The plugin has two hooks: the gate, here, and the lint hook, below. In a repo wh
 Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry. To turn this check off: LESSONS_GATE=off (see the lessons-learned README).
 ```
 
-A repo already set up is gated as soon as the plugin with the hook is installed or updated. Edits to the repo's own `LESSONS.md`, anything under `.git/`, and anything under `.claude/` but its `settings*.json` files, are never gated, and neither are subagents. In other repos the hook does nothing. It only reads: the repo's `PLAYBOOK.md` and `dev/lessons.mjs`, and the session's transcript. To turn it off, set `LESSONS_GATE=off` in the `env` of your Claude Code settings. See [SECURITY.md](https://github.com/cptjamestiberiouskirk-pixel/lessons-learned/blob/main/SECURITY.md).
+A repo already set up is gated as soon as the plugin with the hook is installed or updated. Edits to the repo's own `LESSONS.md`, anything under `.git/`, and anything under `.claude/` but its `settings*.json` files, are never gated, and neither are subagents. In other repos the hook does nothing. It only reads: the repo's `PLAYBOOK.md` and `dev/lessons.mjs`, and the session's transcript. If it can't finish reading the turn within 6 seconds, it denies the call, since Claude Code runs a call whose hook its 10 second timeout ends; the next turn starts fresh. To turn it off, set `LESSONS_GATE=off` in the `env` of your Claude Code settings. See [SECURITY.md](https://github.com/cptjamestiberiouskirk-pixel/lessons-learned/blob/main/SECURITY.md).
 
 ## The lint hook
 

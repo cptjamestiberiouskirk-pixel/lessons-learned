@@ -22,6 +22,7 @@ const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
 const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry." + OFF;
 const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry." + OFF;
+const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
 const WIN = process.platform === 'win32';
@@ -380,6 +381,19 @@ const onlyJson = (run, what) => {
   assert.equal(run.stdout.trim().split(/\r?\n/).length, 1, `${what}: one line on stdout, got ${JSON.stringify(run.stdout)}`);
   return JSON.parse(run.stdout.trim()).hookSpecificOutput.permissionDecisionReason;
 };
+
+// The gate stops at its own deadline and denies, as Claude Code lets a call
+// through once the hook's timeout ends it (tests/gate.test.mjs). At 1 ms the
+// deadline has passed before the gate reads its first command.
+test('codex: a gate out of time denies the call', () => {
+  const root = makeRepo();
+  const late = {LESSONS_GATE_DEADLINE_MS: '1'};
+  assert.equal(command(root, 'git push', ready).deny, false, 'a push in time');
+  assert.equal(command(root, 'git push', ready, {env: late}).reason, REASON_LATE, 'a push out of time');
+  assert.equal(patch(root, ready).deny, false, 'an edit in time');
+  assert.equal(patch(root, ready, {env: late}).reason, REASON_LATE, 'an edit out of time');
+  assert.equal(command(root, 'ls -la', () => {}, {env: late}).deny, false, 'no git: not read');
+});
 
 test('codex: hooks.json matches Bash and apply_patch, and its command runs the hook from PLUGIN_ROOT in each shell Codex may use', () => {
   const hooks = JSON.parse(readFileSync(join(PLUGIN, 'hooks/hooks.json'), 'utf8'));

@@ -21,6 +21,7 @@ const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
 const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry." + OFF;
 const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry." + OFF;
+const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
 const WIN = process.platform === 'win32';
@@ -1033,6 +1034,62 @@ test('a command read once is read in its own tool and folder', () => {
   };
   assert.equal(edit(root, away).deny, false, 'a push with no gated repo');
   assert.equal(edit(root, (t) => away(t).call('toolu_r', 'Bash', {command: 'git push'})).deny, true, 'then one in the repo');
+});
+
+// Each command is read in its own stand-in, so a pair of ways no one command
+// needs still pairs two commands' partners: on Windows, a Bash call read the
+// Git Bash way and a PowerShell call read the `start` way (Bugbot on PR 22).
+// Git Bash 5.3 drops A's CR and joins the lines, so its lookup is quoted text
+// (WSL bash runs it). pwsh 7.7 reads B's backtick after $x[0] as a space, so
+// the push runs and the lookup after it is a comment (read `in`, the lookup
+// runs and the push is quoted).
+test('a turn is read with each pair of ways, though no one command needs that pair', () => {
+  const root = makeRepo();
+  const a = `echo a\\\r\n#b'\n${LOOKUP}\n# '`;
+  const b = `echo $x[0]\`\n#'\ngit push\n#'; ${LOOKUP}`;
+  const r = command(root, b, (t) => t.newMessage().text(LINE).call('toolu_a', 'Bash', {command: a}), {tool: 'PowerShell'});
+  assert.equal(r.reason, REASON_LOOKUP);
+  assert.equal(command(root, b, (t) => ready(t).call('toolu_a', 'Bash', {command: a}), {tool: 'PowerShell'}).deny, false, 'with a lookup before it');
+});
+
+// Claude Code ends a hook at its timeout and then runs the call: in 2.1.332 a
+// gate that took past 10 s left a `hook_cancelled` record with timedOut, and
+// the `git push` it would have denied ran (dev/release-state.md, Q82). So the
+// gate stops reading at its own deadline, well inside that timeout, and
+// denies. LESSONS_GATE_DEADLINE_MS lowers the deadline; at 1 ms it has passed
+// before the gate reads its first command.
+test('a gate out of time denies the call, and a call it never reads still passes', () => {
+  const root = makeRepo();
+  const late = {LESSONS_GATE_DEADLINE_MS: '1'};
+  const turn = (t) => ready(t).call('toolu_s', 'Bash', {command: `git -C "${root}" status`});
+  assert.equal(edit(root, turn).deny, false, 'an edit in time');
+  assert.equal(edit(root, turn, {env: late}).reason, REASON_LATE, 'an edit out of time');
+  assert.equal(command(root, 'git push', ready).deny, false, 'a push in time');
+  assert.equal(command(root, 'git push', ready, {env: late}).reason, REASON_LATE, 'a push out of time');
+  assert.equal(command(root, 'ls -la', () => {}, {env: late}).deny, false, 'no git: not read');
+  assert.equal(edit(makeRepo({check: false}), () => {}, {env: late}).deny, false, 'an edit in a repo without the check');
+  // It only lowers the deadline: a value past it, or not a number, is the deadline.
+  for (const v of ['', 'x', '-1', '600000']) assert.equal(edit(root, turn, {env: {LESSONS_GATE_DEADLINE_MS: v}}).deny, false, JSON.stringify(v));
+});
+
+test('a call the gate denied for lack of time never ran', () => {
+  const root = makeRepo();
+  const denied = (t) => ready(t).newMessage().use('toolu_p', 'Bash', {command: 'git push'}).result('toolu_p', `PreToolUse:Bash hook error: ${REASON_LATE}`, true);
+  assert.equal(edit(root, denied).deny, false);
+});
+
+// Claude Code ends the hook at hooks.json's timeout, and so may Codex. The
+// deadline leaves 3 seconds of it for Node's start (behind a shell, in Codex)
+// and for the last piece of work before the gate looks at the clock.
+test('the gate\'s deadline is well inside the timeout hooks.json gives it, in both copies', () => {
+  const m = /^const DEADLINE = (\d+);/m.exec(readFileSync(GATE, 'utf8'));
+  assert.ok(m, 'const DEADLINE = <ms>; in the gate');
+  for (const dir of [PLUGIN, join(ROOT, 'plugins/lessons-learned-codex')]) {
+    const hooks = JSON.parse(readFileSync(join(dir, 'hooks/hooks.json'), 'utf8'));
+    const gates = hooks.hooks.PreToolUse.flatMap((x) => x.hooks);
+    assert.ok(gates.length > 0, dir);
+    for (const h of gates) assert.ok(h.timeout * 1000 - Number(m[1]) >= 3000, `${dir}: timeout ${h.timeout} s, deadline ${m[1]} ms`);
+  }
 });
 
 // bash on Linux reads a CR inside a word as part of it, so `a<CR>b` is one

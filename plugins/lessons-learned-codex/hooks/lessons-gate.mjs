@@ -11,7 +11,8 @@
 // It reads the target repo's PLAYBOOK.md, its dev/lessons.mjs (for the hash)
 // and the session transcript (Claude Code's, or Codex's rollout file). It
 // writes nothing, starts no program and opens no network connection. Every
-// error lets the call through, and so does anything it doesn't recognise.
+// error lets the call through, and so does anything it doesn't recognise,
+// except running out of time: past DEADLINE it stops reading and denies.
 // LESSONS_GATE=off in its environment turns it off.
 
 import {closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync} from 'node:fs';
@@ -42,16 +43,33 @@ const MAX_FILE = 1024 * 1024; // bytes of PLAYBOOK.md or dev/lessons.mjs read
 const MAX_PATH = 4096; // characters of a path looked at; a longer one passes
 const MAX_PARTS = 512; // names in a path looked at; a deeper one passes
 const MAX_DEPTH = 4; // shells inside shells (bash -c "pwsh -c ...") read
+// ms after Node's start past which the gate stops reading and denies the
+// call. Claude Code ends a hook at its timeout (10 s in hooks.json) and then
+// runs the call, so a gate still reading then would let it through unread.
+// LESSONS_GATE_DEADLINE_MS can lower it (the tests do), never raise it.
+const DEADLINE = 6000;
 const HEADING = '## The lessons check';
 // Fixed text, so nothing from the repo reaches the agent through the hook.
 const DENY_MARK = 'Lessons check (PLAYBOOK.md';
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
 const REASON_LOOKUP = `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\`, write a visible \`Lessons checked:\` line, then retry.${OFF}`;
 const REASON_LINE = `${DENY_MARK}, 'The lessons check'): write a visible \`Lessons checked:\` line naming the lessons that apply, then retry.${OFF}`;
+const REASON_LATE = `${DENY_MARK}, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.${OFF}`;
 // Earlier wording of the reasons, so a call denied by an older copy is known.
 const OLD_REASONS = [REASON_LOOKUP.slice(0, -OFF.length), REASON_LINE.slice(0, -OFF.length)];
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
+const LIMIT = (() => {
+  const v = process.env.LESSONS_GATE_DEADLINE_MS;
+  const ms = v ? Number(v) : NaN;
+  return Number.isFinite(ms) && ms >= 0 && ms < DEADLINE ? ms : DEADLINE;
+})();
+const LATE = new Error('out of time');
+// Called as the gate reads commands. Past the deadline it stops, and main()
+// denies the call.
+const inTime = () => {
+  if (performance.now() > LIMIT) throw LATE;
+};
 const HOME = process.env.HOME || process.env.USERPROFILE || null;
 
 const foldAscii = (p) => (/^(win32|darwin)$/.test(process.platform) ? p.replace(/[A-Z]/g, (c) => c.toLowerCase()) : p);
@@ -573,7 +591,9 @@ function tokenize(input, dialect, legacy = false, split = null) {
   // Where the last quoted string or $( ) that started a word ended.
   let whole = -1;
   let i = 0;
+  let steps = 0;
   while (i < n) {
+    if ((++steps & 0xffff) === 0) inTime();
     const c = s[i];
     // An escape before a newline. bash joins the lines at \ LF. At \ CR LF
     // Git Bash joins them too, as it drops the CR, and bash on Linux reads an
@@ -852,6 +872,7 @@ function move(from, word) {
 // cd, Set-Location or pushd before it, else `cwd`.
 function walk(command, dialect, cwd, out = [], depth = 0, legacy = false, split = null) {
   if (depth > MAX_DEPTH || typeof command !== 'string') return out;
+  inTime();
   const {cmds, subs} = tokenize(command, dialect, legacy, split);
   for (const body of subs) walk(body, dialect, cwd, out, depth + 1, legacy, split);
   let cur = cwd;
@@ -1214,7 +1235,7 @@ function notRun(records) {
       const c = b.content;
       const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x && typeof x.text === 'string' ? x.text : '')).join('\n') : '';
       const refused = typeof r.toolDenialKind === 'string' && r.toolDenialKind !== '';
-      const ours = b.is_error === true && [REASON_LOOKUP, REASON_LINE, ...OLD_REASONS].some((x) => text.includes(x));
+      const ours = b.is_error === true && [REASON_LOOKUP, REASON_LINE, REASON_LATE, ...OLD_REASONS].some((x) => text.includes(x));
       if (refused || ours || (b.is_error === true && text.trimStart().startsWith('<tool_use_error>'))) ids.add(b.tool_use_id);
     }
   }
@@ -1532,14 +1553,17 @@ async function main() {
   // reason's `node dev/lessons.mjs` runs the script whose hash was checked.
   const home = cwd && gatedRoot(cwd);
   const needLookup = home !== null && home !== undefined && roots.has(home) && scriptMatches(home);
-  // Which split readings a command of the turn needs. Judging with ctx, the
-  // first reading, notes each command; only then is the turn read so.
+  // Whether a command of the turn reads otherwise in a split reading. Judging
+  // with ctx, the first reading, notes each command; only then is the turn
+  // read so. If one does, every split reading runs, even one that no one
+  // command needs: each command is read in its own stand-in, so that reading
+  // still pairs two commands' partners, such as a Bash call read the Git Bash
+  // way with a PowerShell call read the `start` way. Its walks are all made
+  // for the other readings already.
   const seen = {
-    need: SPLITS.map(() => false),
+    any: false,
     note(text) {
-      needs(text).forEach((x, k) => {
-        if (x) this.need[k] = true;
-      });
+      if (!this.any && needs(text).some(Boolean)) this.any = true;
     },
   };
   if (current) seen.note(input.command);
@@ -1576,7 +1600,7 @@ async function main() {
   };
   for (const c of [ctx, ctxLegacy, ...ctxSplit]) c.read = reader(c);
   const pass =(judgeWith) => [ctx, ctxLegacy, ...ctxSplit].every((c) => {
-    if (c.split && !seen.need[c.k]) return true;
+    if (c.split && !seen.any) return true;
     const v = judgeWith(c);
     return v.line && (!needLookup || v.lookup);
   });
@@ -1588,7 +1612,7 @@ async function main() {
       const {records, other} = readCodexTurn(fd, Number(fstatSync(fd).size), turnId);
       if (other) return;
       if (pass((c) => judgeCodex(records, turnId, c))) return;
-      return deny(needLookup);
+      return deny(needLookup ? REASON_LOOKUP : REASON_LINE);
     }
     const size = await waitForCall(fd, id);
     if (size === null) return;
@@ -1599,14 +1623,16 @@ async function main() {
   } finally {
     closeSync(fd);
   }
-  deny(needLookup);
+  deny(needLookup ? REASON_LOOKUP : REASON_LINE);
 }
 
 // Claude Code and Codex both read this shape as a deny.
-function deny(needLookup) {
-  process.stdout.write(
-    `${JSON.stringify({hookSpecificOutput: {hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: needLookup ? REASON_LOOKUP : REASON_LINE}})}\n`,
-  );
+function deny(reason) {
+  process.stdout.write(`${JSON.stringify({hookSpecificOutput: {hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason}})}\n`);
 }
 
-main().catch(() => {});
+// Any error lets the call through, but running out of time denies it: the
+// tool's timeout would let it through unread.
+main().catch((e) => {
+  if (e === LATE) deny(REASON_LATE);
+});
