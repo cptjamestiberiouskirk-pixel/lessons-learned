@@ -269,6 +269,11 @@ test('codex: git spelled with quotes or capitals is read', () => {
   // only once that is dropped. (A Claude Code record always holds git, in
   // its gitBranch field.)
   assert.equal(patch(root, (r) => ready(r).ran('gi\\\nt commit -m x', {argv: ['/bin/bash', '-lc', 'gi\\\nt commit -m x']})).deny, true, 'a line join in one that ran');
+  // JSON's escapes are read from the left, so in g\r\\it the \\ is one escape
+  // and the i a letter: Git's sh.exe drops the CR and runs git push. And a \
+  // before a line join (Q83 review round 1, scratch q83/review1-code/codex-probe.mjs).
+  assert.equal(patch(root, (r) => ready(r).ran("sh -c 'g\r\\it push'", {argv: [PWSH_EXE, '-NoProfile', '-Command', "sh -c 'g\r\\it push'"]})).deny, true, 'a CR and an escape in one that ran');
+  assert.equal(patch(root, (r) => ready(r).ran('g\\i\\\nt push', {argv: ['/bin/bash', '-lc', 'g\\i\\\nt push']})).deny, true, 'an escape and a line join in one that ran');
 });
 
 test('codex: the payload\'s command is read as PowerShell on Windows and as sh elsewhere', () => {

@@ -1260,17 +1260,54 @@ test('a PowerShell escape before a newline is read by the word before it', () =>
   ];
   for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
   // A plain word after an index is a new word: its newline is part of it, so
-  // the # is text and the quote hides the push from pwsh too.
-  assert.equal(command(root, "echo $x[0]a`\n#'\ngit push\n#'", () => {}, {tool: 'PowerShell'}).deny, false, 'a word after an index');
-  // The same after a ( ), in a $( ) or not (scratch q83/verify-q83d.mjs).
+  // the # is text and the quote hides the push from pwsh too. The gate leaves
+  // a word after an index to each reading (the next test), so it denies this
+  // call, as main did.
+  assert.equal(command(root, "echo $x[0]a`\n#'\ngit push\n#'", () => {}, {tool: 'PowerShell'}).deny, true, 'a word after an index');
+  // The same after a ( ), in a $( ) or not (scratch q83/verify-q83d.mjs). In
+  // the $( ) the gate can't place the word either, so it denies, as main did.
   assert.equal(command(root, "echo (1)z`\n#'\necho a`\r\ngit push\n#'", () => {}, {tool: 'PowerShell'}).deny, false, 'a word after a ( )');
-  assert.equal(command(root, "$m = $(echo (1)z`\n#'\n)\ngit push\n#'\n)", () => {}, {tool: 'PowerShell'}).deny, false, 'a word after a ( ) in a $( )');
+  assert.equal(command(root, "$m = $(echo (1)z`\n#'\n)\ngit push\n#'\n)", () => {}, {tool: 'PowerShell'}).deny, true, 'a word after a ( ) in a $( )');
   assert.equal(command(root, 'git a"push"', () => {}, {tool: 'PowerShell'}).deny, false, 'a quote inside a word');
   // After -a: they are a space, so git is -a's value; and a # after a $( )
   // inside a word is part of the word, so the ) ends the $( ) and the quote
   // after it is a quote (scratch q83/verify-more.mjs).
   assert.equal(command(root, 'echo -a:`\ngit push', () => {}, {tool: 'PowerShell'}).deny, false, 'after -a:');
   assert.equal(command(root, "echo $(echo x$(echo a)#) '\ngit push\n'", () => {}, {tool: 'PowerShell'}).deny, false, 'a # after a $( ) in a word');
+});
+
+// Q83 review round 1: where the gate couldn't place the word before a ` and a
+// newline, it read the newline as part of the word in both PowerShell
+// readings, so neither found the push pwsh runs on the next line, and main
+// did. Such a word is now left to each reading. And pwsh reads an en dash, an
+// em dash or a horizontal bar as a parameter's dash. Each push ran in pwsh 7.7
+// with a stub git (scratch q83/verify/r1-cases.mjs, dash.mjs).
+test('a PowerShell word the gate cannot place before an escape is read each way', () => {
+  const root = makeRepo();
+  const T = '`';
+  const tail = `${T}\n#'\ngit push\n#'`;
+  const ps = [
+    `echo a,-a${tail}`,
+    `$m = $x${tail}`,
+    `$x+$y${tail}`,
+    `echo $x[']']${tail}`,
+    `$x["["]${tail}`,
+    `(1)[']']${tail}`,
+    `$h = @{'a"b'='v'}; echo $h."a${T}"b"${tail}`,
+    `echo $('a', ')')[0]${tail}`,
+    `echo $x[(1)]${tail}`,
+    `echo $x.$(1)${tail}`,
+    `echo @{a=1}.y${tail}`,
+    `echo -a:$x.y${tail}`,
+    `echo $(echo $x[']']${T}\n#)'\ngit push\n)`,
+    `echo $(echo (1).y$((2))${T}\n#)'\ngit push\n)`,
+    `$x=@{']'='.'}; git -C $x[']']${T}\npush`,
+    `& –a${T}\ngit push`,
+    `echo —a${T}\ngit push`,
+    `―a${T}\ngit push`,
+    `echo a,–a${tail}`,
+  ];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
 });
 
 // A random PowerShell expression from `byte`: quotes, ( ), $( ) inside double
@@ -2091,6 +2128,32 @@ test('time: a PowerShell word with many escapes after an expression is read in l
     t2.diagnostic(`${name}: ${g.shown}`);
     assert.ok(g.ratio < 8, `${name}: ${g.shown}`);
   }
+});
+
+// Fails on Q83 review round 1's reviewed gate (scratch q83/review1-state),
+// whose psKind started its cache afresh at each $( ) in a word and read the
+// word again from its start at each ), so a word holding many $( ) was read
+// once for each.
+test('time: a PowerShell word holding many $( ) is read in linear time', (t2) => {
+  const root = makeRepo();
+  const run = (n) => () => command(root, `echo $(echo $x[${'$(c`\n)`\n'.repeat(n)}])\ngit commit -m x`, () => {}, {tool: 'PowerShell'}).ms;
+  const g = growth(run(3_000), run(12_000), run(1));
+  t2.diagnostic(g.shown);
+  assert.ok(g.ratio < 8, g.shown);
+});
+
+// Fails on Q83 review round 1's reviewed gate, which looked for the end of a
+// here-doc tag whose $( ) isn't closed to the line's end, once for each <<.
+// Past a budget that grows with the command, the gate denies the call as out
+// of time instead.
+test('time: here-doc tags that never close are read in linear time', (t2) => {
+  const root = makeRepo();
+  const cmd = (n) => `git push\necho ${'<<$('.repeat(n)}`;
+  const run = (n) => () => command(root, cmd(n), () => {}).ms;
+  const g = growth(run(2_000), run(8_000), run(1));
+  t2.diagnostic(g.shown);
+  assert.ok(g.ratio < 8, g.shown);
+  assert.equal(command(root, cmd(8_000), () => {}).reason, REASON_LATE, 'denied as out of time');
 });
 
 test('time: finding the line grows linearly with the text before a mention in backticks', (t2) => {

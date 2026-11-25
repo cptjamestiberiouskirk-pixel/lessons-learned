@@ -260,7 +260,7 @@ function dropBodies(command, dialect, legacy, cr = false, linux = false) {
   // the closing line; the other readings take a CR at the line's end off.
   const waiting = [];
   let next = 0;
-  const state = {stack: [], legacy, linux};
+  const state = {stack: [], legacy, linux, work: 0, budget: 4 * command.length + 4096};
   for (const raw of command.split('\n')) {
     if (next < waiting.length) {
       const line = linux ? raw : raw.replace(/\r$/, '');
@@ -378,6 +378,12 @@ function hereDocs(line, state) {
       }
       if (!state.legacy) {
         const t = hereTag(line, i, state.linux);
+        // A tag whose quote or $( ) isn't closed on its line was looked for
+        // to the line's end, and the next << may look as far again: past a
+        // budget that grows with the command, the gate denies the call
+        // rather than read on (scratch q83/verify/time.mjs).
+        state.work += (t ? t.end : line.length) - i;
+        if (state.work > state.budget) throw LATE;
         if (!t) {
           i++;
           continue;
@@ -543,24 +549,29 @@ function psStep(s, e, to, st) {
 // How pwsh reads a ` and a newline right after s[from..to), an argument so far
 // (scratch q83/probe-ps.mjs, probe-ps2.mjs): 'start' after an index or a
 // member, where they are a space; 'param' after a parameter (-a, -a$x, a
-// letter past ASCII) or
-// a word like :a, where the ` is part of it and the newline ends the command;
-// 'in' inside any other word, where the newline is part of it; null with no
-// argument. An expression it starts with ends it, and what follows is read as
-// a new one: $x.y-z ends in the parameter -z. Where a word could be a
-// parameter or a plain one, it is read as a parameter: that reading can only
-// deny more. `lead` is whether the word starts right after a ), so its
-// members and indexes are the value's before it: $x.y(1).z, (1)[0] and
-// a(1).z end in an expression, where a(1) is a and (1) (scratch
-// q83/probe-paren.mjs). `cache` keeps the word's place between its escapes,
-// each read with a later `to`, so a word with many escapes is read once:
-// k, where the expression being read starts or, once `rest`, where the
-// words after the last one start (pe and colon: where PS_PARAM ends there
-// and whether in a :, found once); h, k's head; e, where the expression is
-// read to, -1 before its head; at and head, its head's end and whether that
-// alone makes an expression. A . or [ where `to` cut it is read again from
-// there, and a [ from where its scan got to.
-const PS_PARAM = /(?:-[\p{L}_?]|:[\p{L}\p{N}_?])[\p{L}\p{N}_?$-]*:?/uy;
+// letter past ASCII, and a dash pwsh reads as one, PS_DASH) or a word like
+// :a, where the ` is part of it and the newline ends the command; null inside
+// any other word, or with no argument. There each split reads it (tokenize):
+// pwsh reads the newline as part of a plain word, but as a space where it
+// reads an expression, as after = or a comma or at a statement's start
+// (scratch q83/verify/f1.mjs). An expression it starts with ends it, and
+// what follows is read as a new one: $x.y-z ends in the parameter -z. Where
+// a word could be a parameter or a plain one, it is read as a parameter:
+// that reading can only deny more. `lead` is whether the word starts right
+// after a ), so its members and indexes are the value's before it:
+// $x.y(1).z, (1)[0] and a(1).z end in an expression, where a(1) is a and
+// (1) (scratch q83/probe-paren.mjs). `cache` keeps the word's place between
+// its escapes, each read with a later `to`, so a word with many escapes is
+// read once: k, where the expression being read starts or, once `rest`,
+// where the words after the last one start (pe and colon: where PS_PARAM
+// ends there and whether in a :, found once); h, k's head; e, where the
+// expression is read to, -1 before its head; at and head, its head's end and
+// whether that alone makes an expression. A . or [ where `to` cut it is read
+// again from there, and a [ from where its scan got to.
+// pwsh reads U+2013, U+2014 and U+2015 as a parameter's dash wherever it reads
+// - (scratch q83/verify/dash.mjs).
+const PS_DASH = `-${String.fromCharCode(0x2013, 0x2014, 0x2015)}`;
+const PS_PARAM = new RegExp(`(?:[${PS_DASH}][\\p{L}_?]|:[\\p{L}\\p{N}_?])[\\p{L}\\p{N}_?$-]*:?`, 'uy');
 function psKind(s, from, to, c, lead = false) {
   if (from >= to) return null;
   if (c.from !== from || to < c.to) {
@@ -610,12 +621,11 @@ function psKind(s, from, to, c, lead = false) {
     PS_PARAM.lastIndex = c.k;
     const m = PS_PARAM.exec(s);
     c.pe = m ? PS_PARAM.lastIndex : -2;
-    c.colon = Boolean(m) && s[c.k] === '-' && m[0].endsWith(':');
+    c.colon = Boolean(m) && PS_DASH.includes(s[c.k]) && m[0].endsWith(':');
   }
   // Cut, the words after the expression start at its . or [ (or its $, if it
   // is a variable with no member yet), where no parameter does.
-  if (!c.rest) return 'in';
-  if (c.pe !== to) return 'in';
+  if (!c.rest || c.pe !== to) return null;
   return c.colon ? 'start' : 'param';
 }
 
@@ -800,9 +810,11 @@ function tokenize(input, dialect, legacy = false, split = null) {
     let whole = -1;
     let after = -1;
     // Where the word now open in code began, psKind's cache for it, and for
-    // each ( open, the word it is in and whether its $ started that word.
+    // each ( open, the word it is in, whether its $ started that word, and
+    // that word's cache and `after`. At the ) the word goes on from where
+    // its cache got to, so it is read once, however many words the ( holds.
     let wordAt = from;
-    const kc = {from: -1};
+    let kc = {from: -1};
     const outer = [];
     // In PowerShell a quoted string or a $( ) that starts a word ends it,
     // unless a member or an index follows (scratch q83/probe-after*.ps1):
@@ -845,7 +857,10 @@ function tokenize(input, dialect, legacy = false, split = null) {
         j++;
       } else if (c === '(') {
         st.push(top === 'A' || (dialect === 'sh' && s[j + 1] === '(') ? 'A' : '(');
-        outer.push(dialect === 'ps' && s[j - 1] === '$' && j - 1 >= from ? {wordAt, fresh: wordAt === j - 1} : null);
+        if (dialect === 'ps' && s[j - 1] === '$' && j - 1 >= from) {
+          outer.push({wordAt, fresh: wordAt === j - 1, kc, after});
+          kc = {from: -1};
+        } else outer.push(null);
         start = true;
       } else if (c === ')') {
         st.pop();
@@ -853,7 +868,7 @@ function tokenize(input, dialect, legacy = false, split = null) {
         // After a PowerShell $( ), the word it is in goes on.
         const o = outer.pop();
         if (o) {
-          wordAt = o.wordAt;
+          ({wordAt, kc, after} = o);
           if (o.fresh) whole = j + 1;
           start = false;
         } else {
@@ -926,11 +941,12 @@ function tokenize(input, dialect, legacy = false, split = null) {
     // escaped CR, so the LF ends the command. pwsh reads ` and a newline as a
     // space where a token starts, and after a quoted string or a $( ) that
     // started a word. Inside another word it reads by that word (psKind): a
-    // space after an expression, the parameter's last character before a
-    // newline that ends the command, or else an escaped LF, part of the word,
-    // or an escaped CR, and the LF ends the command. Without `split` the
-    // lines join, as main's reading joined them. With it, in PowerShell, a
-    // word this hook can't place is read as one the escape is inside ('in')
+    // space after an expression, or the parameter's last character before a
+    // newline that ends the command. Any other word pwsh reads by where it
+    // is: an escaped LF, part of the word, or an escaped CR, and the LF ends
+    // the command, but a space where it reads an expression. Without `split`
+    // the lines join, as main's reading joined them. With it, in PowerShell,
+    // a word this hook can't place is read as one the escape is inside ('in')
     // or ends ('start'). Any other escape is the character it makes: in
     // PowerShell `n is a LF (psEscape), but not in the legacy reading.
     if (c === esc && dialect !== 'cmd') {
@@ -1507,19 +1523,26 @@ function wakeUp(r) {
 // case (GIT runs git on Windows and macOS), or from an escape that makes a
 // letter (bash's $'\x67it', pwsh's `u{67}). So the text, lowercased, is taken
 // if it holds $' or `u{, or if its letters and digits hold git once all
-// else is dropped, or once JSON's escapes (\n, \r, and \u with four hex
-// digits) are dropped too.
-// Other characters between them never make git. It may take more than it
-// needs: that only costs a read. A transcript line is a Buffer.
+// else is dropped, or once JSON's escapes (\n, \r, \\ and \u with four hex
+// digits) are dropped too, each read from the left, so in g\r\\it the \\ is
+// one escape and the i a letter. Other characters between them make git
+// only where the shell expands them when it runs (g$1it, g${9}it), which
+// the gate can't read in any case (SECURITY.md, the known limits). It may
+// take more than it needs: that only costs a read. A transcript line is a
+// Buffer.
 const NOT_ALNUM = /[^a-z0-9]+/g;
-const JSON_ESC = /\\(?:u[0-9a-f]{4}|[a-z])/g;
+const JSON_ESC = /\\(?:u[0-9a-f]{4}|[^])/g;
 function mayNameGit(text) {
   if (text.includes('git') || text.includes("$'")) return true;
   const t = String(text).toLowerCase();
   if (t.includes('git') || t.includes('`u{')) return true;
   return t.replace(NOT_ALNUM, '').includes('git') || t.replace(JSON_ESC, '').replace(NOT_ALNUM, '').includes('git');
 }
-const mayRunGit = (line) => line.includes('lessons.mjs') || mayNameGit(line);
+// A transcript line is also read if it holds a CR (JSON's \r after an even
+// run of backslashes), as main's reading read it, so the lines read are
+// never fewer than there.
+const JSON_CR = /(?:^|[^\\])(?:\\\\)*\\r/;
+const mayRunGit = (line) => line.includes('lessons.mjs') || JSON_CR.test(line) || mayNameGit(line);
 
 // The records of this turn, oldest first, read backwards from `size` in
 // chunks until the turn's start (past any wake-up starts), at most
