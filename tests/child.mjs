@@ -24,7 +24,8 @@ const named = (cmd, args) => [cmd, ...args].map(cut).join(' ');
 // On macOS, spawnSync can write all of a large input to the child's pipe and
 // never close it. The child then waits for the end of its input until it is
 // killed. In CI this killed seven hook children in four runs, on Node 22 and
-// 24, each sent from about 80 KB to 1.5 MB; Linux and Windows never did
+// 24, each sent from about 80 KB to 1.5 MB. No Linux or Windows child was
+// killed this way in the 43 runs since the 60 s limit came in
 // (RS-T-lint-macos-hang in dev/release-state.md). So on macOS the input goes
 // to a file, and the child reads that file as its stdin: a file always ends.
 // Elsewhere it still goes through a pipe, as Claude Code and Codex send a hook
