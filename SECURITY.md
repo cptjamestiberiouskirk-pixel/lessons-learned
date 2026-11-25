@@ -69,7 +69,7 @@ Please don't open a public issue for anything that lets a repo, a web page or an
     - `env -C"DIR"` with the folder joined to the option, and `sudo -D DIR` or `sudo --chdir DIR`: the folder is not followed (`env -C"/path/to/repo" git commit -m x`);
     - a commit or push inside a `$( )` or backticks after a `cd` in the same command (`cd /path/to/repo && out=$(git push)`), judged in the folder the call was made in;
   - a subagent's calls;
-  - any call where it errs, takes longer than Claude Code's 10 second timeout (on one Windows machine, a gated call took 14 seconds after 20 MB of commands nested four deep in `bash -c "$(` in the same turn, where the gate before this release took 6.5 seconds), can't find the current call in the transcript within 300 ms, or finds a turn start whose prompt ID isn't the payload's.
+  - any call where it errs, takes longer than Claude Code's 10 second timeout (on one Windows machine, a gated call took 14 seconds after 20 MB of commands nested four deep in `bash -c "$(` in the same turn, where the gate before this release took 6.5 seconds; that the call is then let through is inferred from the tools' docs, not tried in a live run), can't find the current call in the transcript within 300 ms, or finds a turn start whose prompt ID isn't the payload's.
 
   A line written before a background task's notification still counts after it, and after any chain of them that fits in the 32 MB the gate reads, until the next commit or push. An older transcript record with no `turnOrigin` or `origin` field is taken as a notification when its text starts with `<task-notification>`.
 
