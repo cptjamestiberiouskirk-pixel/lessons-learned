@@ -19,14 +19,14 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: in Q87, the deny's sentence for a deny that comes back named what to check. Round 1 found two causes it left out, round 2 three more, and round 3 three more: a commit that ran and failed, a subagent's report starting a turn, and `Set-Location -Path:..`. Each time the advice hung on the agent's own count of what had used up the line and the lookup.
 - Why: CONFIRMED from the three rounds' probes: the gate has more paths to the same deny than each round listed, and a list of causes is only as good as the paths probed.
 - Rule going forward: when a message tells the reader what to do after a result, give first a step that works whatever the cause, and list causes to check only for when that step fails. Probe that the step clears the result on each path found.
-- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If this deny comes back, do both again just before the call."
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If this deny comes back, do both again as above."
 - Status: open
 
 ## 2026-11-26: The new deny named one cause for a deny that comes back, and two others bring it back
 - What went wrong: Q87's first wording (6c00b22) told the session that a deny coming back after the lookup and the line meant the line didn't reach the reply's text. Review round 1 found two other causes, each shown with a probe: a commit or push in between uses up both, and a lookup run from a subfolder runs another `dev/lessons.mjs`, which doesn't count.
 - Why: CONFIRMED: the wording was checked against the one case that led to Q87, the denies of an Edit whose message went out as thinking, and not against each path in the gate that gives the same deny.
 - Rule going forward: before a deny, a hint or a doc tells the reader what a result means, list each path in the code that gives that result and check the claim against each one with a probe. Name what the reader can check, rather than one cause.
-- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If it still comes back, check that the lookup ran from the repo's top folder"
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If it still comes back, check that the lookup finished before the call started"
 - Status: promoted to PLAYBOOK "Writing a message about a result"
 
 ## 2026-11-26: A comment named older copies of the gate that never existed
