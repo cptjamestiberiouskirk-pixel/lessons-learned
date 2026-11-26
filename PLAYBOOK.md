@@ -71,8 +71,8 @@ Run it before you report a change as done, and before a commit. A claim that som
 
 ## Writing a message about a result
 
-1. Before you write a message (a deny, a hint, a doc line) that says what a result means, list every path in the code that gives that result. Run a probe that reaches the result by each path, and check the message's claim against it. Then have the message name what the reader can check, not a single cause.
-2. When the message tells the reader what to do after the result, give first a step that works whatever the cause (such as doing it all again), and list causes only for when that step fails. Probe that the step clears the result on each path found, done one part after another and done at once, as a Codex code cell can run its commands at once.
+1. Before you write a message (a deny, a hint, a doc line, a step) that says what a result means or what to do after it, list every path in the code that gives that result. Search the code for each place that can give it, such as each place a hook denies, whatever its reason. Don't stop at the places your diff changes. Run a probe for each path, and check the message's claim against what it shows. Then have the message name what the reader can check, not a single cause.
+2. When the message tells the reader what to do after the result, give first a step that works whatever the cause (such as doing it all again), and list causes only for when that step fails. Probe that the step clears the result on each path step 1 found, done one part after another and done at once, as a Codex code cell can run its commands at once.
 
 ## Committing
 
@@ -111,4 +111,4 @@ Run it before you report a change as done, and before a commit. A claim that som
 ## Working with the lessons gate
 
 1. In this repo, just before each call the lessons gate checks (an edit, a `git commit` or a `git push`), write the `Lessons checked:` line as the only text of the message that makes the call. Text written before the line in the same message has at times been recorded in the transcript as thinking, and the line lost with it.
-2. A subagent's hand-back, another session's message, and any command with a `git commit` or `git push` in it each use up the lookup and the line. Before the next call the gate checks, run the lookup and write the line again. When the gate denies a call for the lookup or the line, do both again, whichever one its reason names, and check both only if the deny comes back. A deny that says the turn holds more commands than the gate can read clears only in a new turn.
+2. A subagent's hand-back, another session's message, and any command with a `git commit` or `git push` in it each use up the lookup and the line. Before the next call the gate checks, run the lookup and write the line again. When the gate denies a call for the lookup or the line, do both again, even when its reason names only the line, and check both only if the deny comes back. A deny that says the turn holds more commands than the gate can read clears only in a new turn, which a background task's notice doesn't start. In the new turn, do both again before the retry.
