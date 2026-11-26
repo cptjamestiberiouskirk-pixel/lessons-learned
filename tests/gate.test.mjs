@@ -19,8 +19,13 @@ const GATE = process.env.LESSONS_GATE_SCRIPT || join(PLUGIN, 'hooks/lessons-gate
 const TEMPLATE = readFileSync(join(PLUGIN, 'templates/lessons.mjs'), 'utf8');
 const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
-const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry." + OFF;
-const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry." + OFF;
+const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>` from the repo's top folder and let it finish. Then, just before the call, write a short `Lessons checked:` line alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses both up, and so does any command with a `git commit` or `git push` in it, even one that fails or never reaches it. If this deny comes back, do both again as above. If it still comes back, check that the lookup finished before the call started and ran from the repo's top folder, with any `cd` there giving the path as its first argument (not a variable or `$(...)`), and that your reply's text starts with exactly `Lessons checked:`." + OFF;
+const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): just before the call, write a short `Lessons checked:` line naming the lessons that apply, alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses the line up, and so does any command with a `git commit` or `git push` in it, even one that fails or never reaches it. If this deny comes back, write the line again as above, starting it with exactly `Lessons checked:`." + OFF;
+// The reasons of 0.4.0. The gate knows each by its text before OFF, so a
+// result holding only that text counts too. A call 0.4.0 denied never ran.
+const OLD_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry.";
+const OLD_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry.";
+const OLD_REASONS = [['0.4.0, the lookup', OLD_LOOKUP + OFF], ['0.4.0, the line', OLD_LINE + OFF], ['0.4.0, the lookup before OFF', OLD_LOOKUP], ['0.4.0, the line before OFF', OLD_LINE]];
 const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
@@ -325,8 +330,29 @@ test('a commit refused by any hook, rule or the user does not use up the line; a
   assert.equal(edit(root, whole).deny, true, 'a commit that ran, whose output holds the whole reason, not as an error');
   const blank = (t) => ready(t).newMessage().use('toolu_c', 'Bash', {command: commit}).result('toolu_c', '[main 1a2b] x', false, {toolDenialKind: ''});
   assert.equal(edit(root, blank).deny, true, 'an empty toolDenialKind is not a refusal');
-  const old = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', REASON_LINE.slice(0, -OFF.length), true);
-  assert.equal(edit(root, old).deny, false, 'denied with an older copy\'s reason');
+  for (const [what, reason] of OLD_REASONS) {
+    const old = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', reason, true);
+    assert.equal(edit(root, old).deny, false, `denied with an older copy's reason: ${what}`);
+  }
+  // This copy's own denies, in a record with no toolDenialKind, bare or as
+  // Claude Code writes a hook's error.
+  for (const [what, reason] of [['the lookup', REASON_LOOKUP], ['the line', REASON_LINE], ['out of time', REASON_LATE]]) {
+    for (const text of [reason, `PreToolUse:Bash hook error: ${reason}`]) {
+      const own = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', text, true);
+      assert.equal(edit(root, own).deny, false, `denied with this copy's reason: ${what}${text === reason ? '' : ', with the hook error prefix'}`);
+    }
+  }
+});
+
+test("the README quotes the gate's lookup deny as this file's REASON_LOOKUP", () => {
+  // The fenced block after "The denial tells Claude what to do" in the
+  // plugin's README. Other tests check the gate's deny against REASON_LOOKUP.
+  const readme = readFileSync(join(PLUGIN, 'README.md'), 'utf8').split(/\r?\n/);
+  const at = readme.findIndex((l) => l.includes('The denial tells Claude what to do'));
+  assert.ok(at >= 0, 'the README names the denial');
+  assert.deepEqual(readme.slice(at + 1, at + 3), ['', '```'], 'a fenced block follows');
+  assert.equal(readme[at + 3], REASON_LOOKUP, 'the README quotes the lookup deny');
+  assert.equal(readme[at + 4], '```', 'the block holds one line');
 });
 
 test('compound commands are judged by the repo each commit or push runs in', () => {

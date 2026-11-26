@@ -56,6 +56,7 @@ Run it before you report a change as done, and before a commit. A claim that som
 2. A lesson's Evidence line can name a file and quote a search text after it (`search "text"`). Copy that text from the named file, character for character. After adding or changing a lesson's Evidence, run `node dev/lessons.mjs --stale` and check that its output does not list that lesson's title.
 3. A sentence in the docs (the CHANGELOG, a README, SECURITY.md or a skill) can say what `dev/lessons.mjs` prints, or whether it reads a file. It names only cases that were run. A case is one kind of input or file state, not a group of them. Quote each message from the output of that case's run.
 4. A commit's `Verified:` line states each check's result as that check's output printed it. Read the output again while writing the line.
+5. A line in `dev/release-state.md` can give a count next to the command behind it. It can say what a file or a command's output holds or does, or say "each" or "only". Write that line from the command's output, the file, or a search of every record it covers, transcripts included. Run, read or search after the last change that could alter the result. Name anything the claim leaves out.
 
 ## Running a review round
 
@@ -68,6 +69,11 @@ Run it before you report a change as done, and before a commit. A claim that som
 
 1. Start the test from the input of the probe that found the finding (the scratch script the review ran that showed it), not from the finding's summary.
 2. Run the test on the old code before trusting it: "Checking your work" step 3 says what result it needs, and "Running a test against old code" says how to get that code.
+
+## Writing a message about a result
+
+1. Before you write a message (a deny, a hint, a doc line, a step) that says what a result means or what to do after it, list every path in the code that gives that result. Search the code for each place that can give it, such as each place a hook denies, whatever its reason. Don't stop at the places your diff changes. Run a probe for each path, and check the message's claim against what it shows. Then have the message name what the reader can check, not a single cause.
+2. When the message tells the reader what to do after the result, give first a step that works whatever the cause (such as doing it all again), and list causes only for when that step fails. Probe that the step clears the result on each path step 1 found, done one part after another and done at once, as a Codex code cell can run its commands at once.
 
 ## Committing
 
@@ -102,3 +108,8 @@ Run it before you report a change as done, and before a commit. A claim that som
 3. When an output cap bounds how often a cost repeats, hold the input the same and change only the repeat count (50 messages against 1), and run that test on the old version before saying it guards the change.
 4. A budget in milliseconds is measured and recorded in `dev/release-state.md`, not asserted.
 5. Before a commit, time a parse or a search that keeps a cache or a position from one call for the next. Build one long input for each place a call can stop. For each, try every place the next call can begin, measured from the last call: after where it began, before it, and inside the text it read, with thousands of the calls that pick it up again. Work done inside one step of `tokenize` gets a timing test of its own, as the gate's deadline looks at the clock only between those steps.
+
+## Working with the lessons gate
+
+1. In this repo, just before each call the lessons gate checks (an edit, a `git commit` or a `git push`), write the `Lessons checked:` line as the only text of the message that makes the call. Text written before the line in the same message has at times been recorded in the transcript as thinking, and the line lost with it.
+2. A subagent's hand-back, another session's message, and any command with a `git commit` or `git push` in it each use up the lookup and the line. Before the next call the gate checks, run the lookup and write the line again. When the gate denies a call for the lookup or the line, do both again, even when its reason names only the line, and check both only if the deny comes back. A deny that says the turn holds more commands than the gate can read clears only in a new turn. End your turn. When the next message starts one, do both again before the retry. If the same deny comes back, end your turn again.

@@ -15,6 +15,48 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-26: Three claims in round 6's record went past the sources they named
+- What went wrong: in Q87 (e28b921), review round 7 found three lines of `dev/release-state.md` that their own sources contradict. RS-D-q87-commit-wording said "Twelve places" next to a `git grep` that prints 14 lines. The round 6 bullet said the deadline was lowered to 400 ms "as `tests/gate.test.mjs` does", and the tests lower it to 1 ms. Its F4 said "in each case on record" the thinking held no line, and transcript line 28030 is a thinking record that holds only a line. Seen again in round 8 (0e83484): round 7's record named the lint's leads for this lesson from a run made before a later change to the step one of them was against, so it answered a lead the lint no longer gives.
+- Why: CONFIRMED by rerunning the grep, reading the tests and reading line 28030. The count left out two lines the grep prints without saying so. Round 6's probe says "as tests/gate.test.mjs does" of the variable that lowers the deadline, not of its value. "Each case" was said of the cases round 6 listed, not of a search of the records. Round 8's was CONFIRMED by running `node dev/lessons.mjs --lint --leads --all` at 0e83484.
+- Rule going forward: before a record line gives a count next to the command that finds it, says what another file does, or says "each" or "only", run that command, read that file or search the records, and write the claim from what that shows, naming anything it leaves out.
+- Evidence: `dev/release-state.md`, search "besides the 0.4.0 CHANGELOG entry"
+- Status: promoted to PLAYBOOK "Quoting text that must match"
+
+## 2026-11-26: A playbook step for the gate's denies covered two of its three reasons
+- What went wrong: in Q87 (741a338), step 2 of "Working with the lessons gate" said to do the lookup and the line again after any deny, "whatever its reason names". Review round 6 found the gate's third reason, `REASON_LATE`, for a turn with more commands than it can read in time, which only a new turn clears: doing both again in the same turn was denied again. Seen again in round 7 (e28b921): the fix said only that this deny clears in a new turn, and there a retry without the lookup and the line was denied again, in both tools.
+- Why: CONFIRMED with round 6's probe and the hook, which calls `deny(` at three places. The step was written from the two reasons Q87 changed, taken from the diff, not from the hook's list of denies. Round 7's was CONFIRMED with its probe (L7a) and, in Codex, with this session's copy of it (L8a).
+- Rule going forward: before a doc line or a step says what to do after a gate deny, search the hook for each `deny(` call and check the line against each reason it can give.
+- Evidence: `PLAYBOOK.md`, search "clears only in a new turn"
+- Status: promoted to PLAYBOOK "Writing a message about a result"
+
+## 2026-11-26: Three review rounds each found a cause the deny's checks left out
+- What went wrong: in Q87, the deny's sentence for a deny that comes back named what to check. Round 1 found two causes it left out, round 2 three more, and round 3 three more: a commit that ran and failed, a subagent's report starting a turn, and `Set-Location -Path:..`. Each time the advice hung on the agent's own count of what had used up the line and the lookup. Round 4 then found a path where the step itself fails: in Codex, a lookup run at once with the call, in one code cell, doesn't count for that call, as the gate reads a Codex command only once it has ended. The same came back in PLAYBOOK "Working with the lessons gate" step 2 (Q87 rounds 6 to 8): each fix listed what starts a new turn, and each next round found one more thing that doesn't, such as a message that comes in while the session works.
+- Why: CONFIRMED from the three rounds' probes: the gate has more paths to the same deny than each round listed, and a list of causes is only as good as the paths probed.
+- Rule going forward: when a message tells the reader what to do after a result, give first a step that works whatever the cause, and list causes to check only for when that step fails. Probe that the step clears the result on each path found.
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If this deny comes back, do both again as above."
+- Status: promoted to PLAYBOOK "Writing a message about a result"
+
+## 2026-11-26: The new deny named one cause for a deny that comes back, and two others bring it back
+- What went wrong: Q87's first wording (6c00b22) told the session that a deny coming back after the lookup and the line meant the line didn't reach the reply's text. Review round 1 found two other causes, each shown with a probe: a commit or push in between uses up both, and a lookup run from a subfolder runs another `dev/lessons.mjs`, which doesn't count.
+- Why: CONFIRMED: the wording was checked against the one case that led to Q87, the denies of an Edit whose message went out as thinking, and not against each path in the gate that gives the same deny.
+- Rule going forward: before a deny, a hint or a doc tells the reader what a result means, list each path in the code that gives that result and check the claim against each one with a probe. Name what the reader can check, rather than one cause.
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If it still comes back, check that the lookup finished before the call started"
+- Status: promoted to PLAYBOOK "Writing a message about a result"
+
+## 2026-11-26: A comment named older copies of the gate that never existed
+- What went wrong: in Q87 (6c00b22), the hook's comment on `OLD_REASONS`, the tests' labels and the release state said it also covered the reasons without OFF "from the copies before" 0.4.0. Review round 1 found no such copy: all 29 commits that touch the hook, from 1ef561b on, hold OFF.
+- Why: CONFIRMED with `git log` on the hook and a search of each commit's copy for OFF. The claim came from the shape of the old list, not from the history.
+- Rule going forward: a comment or doc that names earlier versions of a file is checked against `git log -- <file>` and the text of each commit's copy before it is written.
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "0.4.0's two texts, without OFF"
+- Status: open
+
+## 2026-11-26: The release state cited transcript records by their 0-based index
+- What went wrong: Q87's release-state section (6c00b22) cited the hook's three denies as records 58293, 58337 and 58379. Those were indexes into the split lines from a `node -e` script. The file's lines are 58294, 58338 and 58380, so a reader who opens a cited line finds the record before it.
+- Why: CONFIRMED: the script printed `k`, the index, not `k + 1`.
+- Rule going forward: a transcript or log record is cited by its 1-based line number, and a script that finds one prints `k + 1`. Read each cited line back by that number before writing it down.
+- Evidence: `dev/release-state.md`, search "lines 58294, 58338 and 58380"
+- Status: open
+
 ## 2026-11-25: Round 2's here-doc lookups were timed only from places that move forward
 - What went wrong: in Q83's review round 2 fix (8e29a91), `look.brace` searched for `}` again only when a search began before the last one's start, and the timing test tried only `<<${` repeated, where each search starts past the last. Review round 3 found nested tags, whose searches start before the last one's, and a tag that failed at the line's end, which `hereDocs` scanned again from each `<<` inside it. Each kept the gate reading past the 10 second hook timeout (16 seconds at 3.45 MB, 18 seconds at 160 KB), and the release record had called the tag's other scans linear.
 - Why: CONFIRMED: the search was timed from one way its next call starts, and the scan that failed was never timed from inside the text it had read. This is the second time the rule of "Q83's first psKind read a long expression again at each escape" was seen.
@@ -23,11 +65,11 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Status: promoted to PLAYBOOK "Writing a timing test"
 
 ## 2026-11-25: A gate deny that named the lookup was for a missing line
-- What went wrong: in Q83, after round 3's code reviewer handed back its report, five Edits of the hook were denied with the gate's lookup reason. A lookup had run in that turn. The session ran it again, was denied again, and took the gate to be at fault. Its `Lessons checked:` line was in its thinking only, never in its reply's text. After this entry was written, two Edits of `PLAYBOOK.md` were denied the same way. The next one, after a line written in the reply's text, passed. Then a second commit in a row was denied with a line in text, as the commit before it had used up the lookup.
+- What went wrong: in Q83, after round 3's code reviewer handed back its report, five Edits of the hook were denied with the gate's lookup reason. A lookup had run in that turn. The session ran it again, was denied again, and took the gate to be at fault. Its `Lessons checked:` line was in its thinking only, never in its reply's text. After this entry was written, two Edits of `PLAYBOOK.md` were denied the same way. The next one, after a line written in the reply's text, passed. Then a second commit in a row was denied with a line in text, as the commit before it had used up the lookup. In Q87 round 4's fix (the Q87 session's transcript, lines 61717 to 61997), three messages that held a paragraph and then the line were recorded with the paragraph as thinking and without the line. The gate denied 9 of the first two messages' 11 calls. The line written alone, in the next message, was recorded as text, and its 9 calls and the third message's 13 passed. Q87's review round 2 had shown that a new turn, which a hand-back starts, uses up the lookup as well as the line.
 - Why: CONFIRMED from the transcript and the installed gate's code. In this repo the deny names the lookup when either the lookup or the line is missing. A subagent's hand-back starts a turn (its record's `origin.kind` is `peer`), and the gate takes only a task notification as a wake-up that goes on with the turn before, so the line was needed again. The gate's `verdict` also clears the line and the lookup after each commit or push to a gated repo.
 - Rule going forward: when the gate denies a call in this repo, check both the lookup and a `Lessons checked:` line in the reply's text just before the call, not in thinking. After a subagent's hand-back or another session's message, write the line again before the next gated call. A commit or a push uses up both, so run the lookup and write the line again before the next gated call.
 - Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "deny(needLookup ? REASON_LOOKUP : REASON_LINE);"
-- Status: open
+- Status: promoted to PLAYBOOK "Working with the lessons gate"
 
 ## 2026-11-25: A copy of the old hook went through a pipe, against a PLAYBOOK step
 - What went wrong: in Q83's round 3, the fail-before copy of 8e29a91's hook was made with `git show` piped to `Set-Content -NoNewline`, and its hash differed from the blob's. "Running a test against old code" step 1 names that very command as one not to use. Step 2's hash check caught it, and the copy was made again from a copy already checked.
