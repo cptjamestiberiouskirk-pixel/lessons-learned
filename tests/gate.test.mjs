@@ -19,8 +19,8 @@ const GATE = process.env.LESSONS_GATE_SCRIPT || join(PLUGIN, 'hooks/lessons-gate
 const TEMPLATE = readFileSync(join(PLUGIN, 'templates/lessons.mjs'), 'utf8');
 const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
-const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>` from the repo's top folder, then write a short `Lessons checked:` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. A commit or push uses both up. If this deny comes back with no commit or push since both, check that the lookup ran from the repo's top folder and that the line reached your reply's text." + OFF;
-const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a short `Lessons checked:` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. A commit or push uses the line up. If this deny comes back with no commit or push since your new line, that line didn't reach your reply's text: write it again." + OFF;
+const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>` from the repo's top folder, then write a short `Lessons checked:` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. A new turn, a commit or a push uses both up. If this deny comes back in the same turn with no commit or push since both, check that the lookup ran from the repo's top folder, with any `cd` to it naming a plain path (not a variable or `$(...)`), and that a line of your reply's text starts with exactly `Lessons checked:`." + OFF;
+const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a short `Lessons checked:` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. A new turn, a commit or a push uses the line up. If this deny comes back in the same turn with no commit or push since your new line, the gate didn't find that line: write it again in your reply's text, on a line that starts with exactly `Lessons checked:`." + OFF;
 // The reasons of 0.4.0. The gate knows each by its text before OFF, so a
 // result holding only that text counts too. A call 0.4.0 denied never ran.
 const OLD_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry.";
@@ -342,6 +342,17 @@ test('a commit refused by any hook, rule or the user does not use up the line; a
       assert.equal(edit(root, own).deny, false, `denied with this copy's reason: ${what}${text === reason ? '' : ', with the hook error prefix'}`);
     }
   }
+});
+
+test("the README quotes the gate's lookup deny as this file's REASON_LOOKUP, which the gate gives", () => {
+  // The fenced block after "The denial tells Claude what to do" in the
+  // plugin's README. Other tests check the gate's deny against REASON_LOOKUP.
+  const readme = readFileSync(join(PLUGIN, 'README.md'), 'utf8').split(/\r?\n/);
+  const at = readme.findIndex((l) => l.includes('The denial tells Claude what to do'));
+  assert.ok(at >= 0, 'the README names the denial');
+  assert.deepEqual(readme.slice(at + 1, at + 3), ['', '```'], 'a fenced block follows');
+  assert.equal(readme[at + 3], REASON_LOOKUP, 'the README quotes the lookup deny');
+  assert.equal(readme[at + 4], '```', 'the block holds one line');
 });
 
 test('compound commands are judged by the repo each commit or push runs in', () => {

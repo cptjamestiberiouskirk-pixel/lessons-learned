@@ -19,7 +19,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: Q87's first wording (6c00b22) told the session that a deny coming back after the lookup and the line meant the line didn't reach the reply's text. Review round 1 found two other causes, each shown with a probe: a commit or push in between uses up both, and a lookup run from a subfolder runs another `dev/lessons.mjs`, which doesn't count.
 - Why: CONFIRMED: the wording was checked against the one case that led to Q87, the denies of an Edit whose message went out as thinking, and not against each path in the gate that gives the same deny.
 - Rule going forward: before a deny, a hint or a doc tells the reader what a result means, list each path in the code that gives that result and check the claim against each one with a probe. Name what the reader can check, rather than one cause.
-- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If this deny comes back with no commit or push since both"
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If this deny comes back in the same turn with no commit or push since both"
 - Status: open
 
 ## 2026-11-26: A comment named older copies of the gate that never existed
