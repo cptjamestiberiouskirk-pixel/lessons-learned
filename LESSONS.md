@@ -15,6 +15,27 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-26: The new deny named one cause for a deny that comes back, and two others bring it back
+- What went wrong: Q87's first wording (6c00b22) told the session that a deny coming back after the lookup and the line meant the line didn't reach the reply's text. Review round 1 found two other causes, each shown with a probe: a commit or push in between uses up both, and a lookup run from a subfolder runs another `dev/lessons.mjs`, which doesn't count.
+- Why: CONFIRMED: the wording was checked against the one case that led to Q87, the denies of an Edit whose message went out as thinking, and not against each path in the gate that gives the same deny.
+- Rule going forward: before a deny, a hint or a doc tells the reader what a result means, list each path in the code that gives that result and check the claim against each one with a probe. Name what the reader can check, rather than one cause.
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If this deny comes back with no commit or push since both"
+- Status: open
+
+## 2026-11-26: A comment named older copies of the gate that never existed
+- What went wrong: in Q87 (6c00b22), the hook's comment on `OLD_REASONS`, the tests' labels and the release state said it also covered the reasons without OFF "from the copies before" 0.4.0. Review round 1 found no such copy: all 29 commits that touch the hook, from 1ef561b on, hold OFF.
+- Why: CONFIRMED with `git log` on the hook and a search of each commit's copy for OFF. The claim came from the shape of the old list, not from the history.
+- Rule going forward: a comment or doc that names earlier versions of a file is checked against `git log -- <file>` and the text of each commit's copy before it is written.
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "0.4.0's two texts, without OFF"
+- Status: open
+
+## 2026-11-26: The release state cited transcript records by their 0-based index
+- What went wrong: Q87's release-state section (6c00b22) cited the hook's three denies as records 58293, 58337 and 58379. Those were indexes into the split lines from a `node -e` script. The file's lines are 58294, 58338 and 58380, so a reader who opens a cited line finds the record before it.
+- Why: CONFIRMED: the script printed `k`, the index, not `k + 1`.
+- Rule going forward: a transcript or log record is cited by its 1-based line number, and a script that finds one prints `k + 1`. Read each cited line back by that number before writing it down.
+- Evidence: `dev/release-state.md`, search "lines 58294, 58338 and 58380"
+- Status: open
+
 ## 2026-11-25: Round 2's here-doc lookups were timed only from places that move forward
 - What went wrong: in Q83's review round 2 fix (8e29a91), `look.brace` searched for `}` again only when a search began before the last one's start, and the timing test tried only `<<${` repeated, where each search starts past the last. Review round 3 found nested tags, whose searches start before the last one's, and a tag that failed at the line's end, which `hereDocs` scanned again from each `<<` inside it. Each kept the gate reading past the 10 second hook timeout (16 seconds at 3.45 MB, 18 seconds at 160 KB), and the release record had called the tag's other scans linear.
 - Why: CONFIRMED: the search was timed from one way its next call starts, and the scan that failed was never timed from inside the text it had read. This is the second time the rule of "Q83's first psKind read a long expression again at each escape" was seen.
