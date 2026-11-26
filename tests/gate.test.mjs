@@ -2086,9 +2086,11 @@ test('a turn start for another prompt_id fails open, and without prompt_id an ol
 // Runs the hook with a preload that reports, on stderr, when the hook first
 // reads the transcript, so the test can act after that read whatever Node's
 // start cost, and, as the hook exits, how long it ran after that read, timed
-// inside the hook so the exit itself isn't counted. Returns {done, looked,
-// waited}: looked resolves at that first read, or with null if the hook exits
-// without one; waited() is the time the hook reported, or null.
+// inside the hook so the exit itself isn't counted. With GATE_CLOCK_STEP in
+// extra, the wall clock (Date.now) steps that many ms at that first read, as
+// a time sync can step it. Returns {done, looked, waited}: looked resolves at
+// that first read, or with null if the hook exits without one; waited() is
+// the time the hook reported, or null.
 function watched(p, extra = {}) {
   const dir = scratch();
   const preload = join(dir, 'signal.mjs');
@@ -2102,6 +2104,9 @@ function watched(p, extra = {}) {
       'const read = fs.readSync;',
       'let fd = null;',
       'let told = null;',
+      'const step = Number(process.env.GATE_CLOCK_STEP || 0);',
+      'const now = Date.now;',
+      'Date.now = () => now.call(Date) + (told === null ? 0 : step);',
       'fs.openSync = function (p, ...rest) { const f = open.call(this, p, ...rest); if (String(p) === want) fd = f; return f; };',
       "fs.readSync = function (f, ...rest) { const n = read.call(this, f, ...rest); if (f === fd && told === null) { told = performance.now(); process.stderr.write('looked\\n'); } return n; };",
       "process.on('exit', () => { if (told !== null) process.stderr.write(`waited ${performance.now() - told}\\n`); });",
@@ -2165,6 +2170,28 @@ test('the hook waits for the current call to reach the transcript, then judges i
   assert.equal(reasonOf((await three.done).stdout), REASON_UNSEEN, 'a call never written is denied');
   const waited = three.waited();
   assert.ok(waited !== null && waited >= 1280, `denied ${Math.round(waited)} ms after its first look, before the 1.3 s wait was over`);
+});
+
+// The wait is timed on performance.now, as the deadline is, so a step of the
+// wall clock, as a time sync makes, doesn't change it (review round 6). On a
+// hook that times it with Date.now (7efa4c0 and before), a step a minute
+// ahead ends the wait at its next look, and the call is denied as not found
+// though its record comes 300 ms later. A step a minute back makes the wait
+// run on to the deadline, and the call is denied as late.
+test('a step of the wall clock during the wait for the current call neither ends it nor stretches it', {timeout: 60_000}, async () => {
+  const root = makeRepo();
+  const t = new Transcript(root).prompt();
+  t.lookup();
+  const path = t.write();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const ahead = watched(payload(t, path, 'Write', input, 'toolu_ahead', {cwd: root}), {GATE_CLOCK_STEP: '60000'});
+  assert.notEqual(await ahead.looked, null, 'the hook exited without reading the transcript');
+  await pause(300);
+  appendFileSync(path, lateCall(t, root, 'toolu_ahead', input));
+  assert.equal(reasonOf((await ahead.done).stdout), REASON_LOOKUP, 'the wall clock stepped a minute ahead, and the call that came 300 ms later was judged');
+  const back = watched(payload(t, path, 'Write', input, 'toolu_back', {cwd: root}), {GATE_CLOCK_STEP: '-60000'});
+  assert.notEqual(await back.looked, null, 'the hook exited without reading the transcript');
+  assert.equal(reasonOf((await back.done).stdout), REASON_UNSEEN, 'the wall clock stepped a minute back, and a call never written was denied as not found after the 1.3 s wait');
 });
 
 test('a lowered deadline also ends the wait for the current call, which is then denied as late', {timeout: 60_000}, async () => {
