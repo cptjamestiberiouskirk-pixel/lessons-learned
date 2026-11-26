@@ -21,11 +21,23 @@ const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
 const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>` from the repo's top folder and let it finish. Then, just before the call, write a short `Lessons checked:` line alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses both up, and so does any command with a `git commit` or `git push` in it, even one that fails or never reaches it. If this deny comes back, do both again as above. If it still comes back, check that the lookup finished before the call started and ran from the repo's top folder, with any `cd` there giving the path as its first argument (not a variable or `$(...)`), and that your reply's text starts with exactly `Lessons checked:`." + OFF;
 const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): just before the call, write a short `Lessons checked:` line naming the lessons that apply, alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses the line up, and so does any command with a `git commit` or `git push` in it, even one that fails or never reaches it. If this deny comes back, write the line again as above, starting it with exactly `Lessons checked:`." + OFF;
-// The reasons of 0.4.0. The gate knows each by its text before OFF, so a
-// result holding only that text counts too. A call 0.4.0 denied never ran.
+// The reasons of 0.4.0, and the out-of-time reason main had from Q82
+// (735b245) until Q93. No release holds that one, but copies installed from
+// the marketplace in that time do. The gate knows each by its text before
+// OFF, so a result holding only that text counts too. A call an older copy
+// denied never ran.
 const OLD_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry.";
 const OLD_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry.";
-const OLD_REASONS = [['0.4.0, the lookup', OLD_LOOKUP + OFF], ['0.4.0, the line', OLD_LINE + OFF], ['0.4.0, the lookup before OFF', OLD_LOOKUP], ['0.4.0, the line before OFF', OLD_LINE]];
+const OLD_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.";
+const OLD_REASONS = [
+  ['0.4.0, the lookup', OLD_LOOKUP + OFF],
+  ['0.4.0, the line', OLD_LINE + OFF],
+  ['0.4.0, the lookup before OFF', OLD_LOOKUP],
+  ['0.4.0, the line before OFF', OLD_LINE],
+  ['main before Q93, out of time', OLD_LATE + OFF],
+  ['main before Q93, out of time before OFF', OLD_LATE],
+  ['main before Q93, out of time, with the hook error prefix', `PreToolUse:Bash hook error: ${OLD_LATE}${OFF}`],
+];
 const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): the gate ran out of time before it could read this turn up to the call, so it denies the call rather than let it through unread. Retry it in the next turn. If this deny keeps coming back, tell the user that the gate runs out of time in this session." + OFF;
 const REASON_UNSEEN = "Lessons check (PLAYBOOK.md, 'The lessons check'): the gate didn't find this call in the session's transcript in time, so it denies the call rather than let it through unread. Retry it as the only call in your next reply. If this deny keeps coming back, tell the user that the gate can't find calls in this session's transcript." + OFF;
 const LINE = 'Lessons checked: none apply';
@@ -1906,18 +1918,43 @@ test('a record cut at the start of the full window is skipped, and the call afte
   const root = makeRepo();
   const input = {file_path: join(root, 'x.txt'), content: 'x'};
   const id = 'toolu_cut';
-  const WINDOW = 32 * 1024 * 1024;
   const t = new Transcript(root).prompt();
   t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
-  const flowAt = t.lines.reduce((n, l) => n + l.length + 1, 0);
   t.push({type: 'data-flow-records', sessionId: 'sess-1', v: 1, records: [{pad: 'p'.repeat(2000), toolUseId: id}]});
-  const flow = t.lines.at(-1);
-  const idAt = flowAt + flow.indexOf(JSON.stringify(id));
+  const flow = t.lines.length - 1;
   current(t, 'Write', input, {id});
+  // The window starts halfway into the data-flow line, before the id.
+  const {path, lineAt, start} = windowAt(t, flow, Math.floor(t.lines[flow].length / 2));
+  const idAt = lineAt + t.lines[flow].indexOf(JSON.stringify(id));
+  assert.ok(lineAt < start && start < idAt, `the window starts at ${start}, not between the data-flow line's start ${lineAt} and the id ${idAt}`);
+  assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
+
+// The call's own record starting at the full window's first byte, right
+// after a line feed, is whole. The look reads the byte before the window to
+// tell, and judges the call. It fails on d9dbe1b and 134d106, which took the
+// record as cut and denied the call as not found, and on 0.4.0, which let it
+// through unread (review round 3, cutcases.mjs "exact").
+test('a record that starts at the first byte of the full window is read as whole', {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_edge';
+  const t = new Transcript(root).prompt();
+  t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
+  current(t, 'Write', input, {id});
+  const {path, lineAt, start} = windowAt(t, t.lines.length - 1, 0);
+  assert.equal(start, lineAt, "the window doesn't start at the call's own record");
+  assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
+
+// Writes `t`, then later records with no id, so that the file's last 32 MB
+// (the gate's whole window) start `into` bytes into the record t.lines[at].
+// Returns the path, where that record starts, and where the window starts.
+function windowAt(t, at, into) {
+  const WINDOW = 32 * 1024 * 1024;
   const path = t.write();
-  // Later records, so that the window starts halfway into the data-flow
-  // line, before the id.
-  const tail = flowAt + Math.floor(flow.length / 2) + WINDOW - lstatSync(path).size;
+  const lineAt = t.lines.slice(0, at).reduce((n, l) => n + l.length + 1, 0);
+  const tail = lineAt + into + WINDOW - lstatSync(path).size;
   const line = `${JSON.stringify({type: 'y', p: 'q'.repeat(200)})}\n`;
   const n = Math.floor(tail / line.length);
   appendFileSync(path, `${JSON.stringify({type: 'y', p: 'q'.repeat(200 + tail - n * line.length)})}\n`);
@@ -1925,10 +1962,8 @@ test('a record cut at the start of the full window is skipped, and the call afte
   let left = n - 1;
   for (; left >= 1024; left -= 1024) appendFileSync(path, block);
   appendFileSync(path, line.repeat(left));
-  const start = lstatSync(path).size - WINDOW;
-  assert.ok(flowAt < start && start < idAt, `the window starts at ${start}, not between the data-flow line's start ${flowAt} and the id ${idAt}`);
-  assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
-});
+  return {path, lineAt, start: lstatSync(path).size - WINDOW};
+}
 
 test('a malformed transcript, a cut first line, invalid UTF-8 and an unknown format fail open', () => {
   const root = makeRepo();
@@ -2294,6 +2329,39 @@ const growth = (small, full, fixed) => {
   const ratio = Math.max(0, b - base) / Math.max(FLOOR, a - base);
   return {ratio, shown: `quarter ${Math.round(a)} ms, full ${Math.round(b)} ms, fixed cost ${Math.round(base)} ms, ratio past it ${ratio.toFixed(1)}`};
 };
+
+// A record cut at the start of the full window that names the call's id many
+// times after the cut, as a data-flow-records line can. The last look skips
+// to the record's end at the first of them, so its cost doesn't grow with
+// their count. The fixed cost is the same transcript with one. Fails on a
+// hook that skips one id at a time (review round 3's nojump mutant, where
+// each id scans back to the window's start: 33 s at 100,000 ids, past
+// Claude Code's 10 s timeout). The full input holds 20,000, so that hook's
+// full run stays well under the gate's 6 s deadline, which would cap it and
+// the ratio with it on a slow machine.
+test('time: a cut record at the start of the full window that names the call many times is skipped in linear time', {timeout: 180_000}, (t2) => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_cut';
+  const build = (n) => {
+    const t = new Transcript(root).prompt();
+    t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
+    t.push({type: 'data-flow-records', sessionId: 'sess-1', v: 1, pad: 'p'.repeat(2000), records: Array.from({length: n}, () => ({toolUseId: id}))});
+    const flow = t.lines.length - 1;
+    current(t, 'Write', input, {id});
+    const w = windowAt(t, flow, 1000);
+    assert.ok(w.lineAt < w.start && w.start < w.lineAt + t.lines[flow].indexOf(JSON.stringify(id)), `${n}: the window doesn't start in the pad`);
+    return {t, path: w.path};
+  };
+  const run = (b) => () => gate(payload(b.t, b.path, 'Write', input, id, {cwd: root})).ms;
+  const one = build(1);
+  const quarter = build(5_000);
+  const full = build(20_000);
+  const g = growth(run(quarter), run(full), run(one));
+  t2.diagnostic(g.shown);
+  assert.ok(g.ratio < 8, g.shown);
+  assert.equal(gate(payload(full.t, full.path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
 
 // Fails on round 2's reviewed gate, whose here-string regex ran from every
 // unclosed @' to the end of the command.

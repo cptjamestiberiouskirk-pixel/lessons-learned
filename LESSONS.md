@@ -54,7 +54,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - What went wrong: in Q87 (6c00b22), the hook's comment on `OLD_REASONS`, the tests' labels and the release state said it also covered the reasons without OFF "from the copies before" 0.4.0. Review round 1 found no such copy: all 29 commits that touch the hook, from 1ef561b on, hold OFF.
 - Why: CONFIRMED with `git log` on the hook and a search of each commit's copy for OFF. The claim came from the shape of the old list, not from the history.
 - Rule going forward: a comment or doc that names earlier versions of a file is checked against `git log -- <file>` and the text of each commit's copy before it is written.
-- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "0.4.0's two texts, without OFF"
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "0.4.0's two texts, and the out-of-time text main had from Q82"
 - Status: open
 
 ## 2026-11-26: The release state cited transcript records by their 0-based index

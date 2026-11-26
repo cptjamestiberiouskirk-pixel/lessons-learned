@@ -12,9 +12,10 @@
 // and the session transcript (Claude Code's, or Codex's rollout file). It
 // writes nothing, starts no program and opens no network connection. Every
 // error lets the call through, and so does anything it doesn't recognise,
-// except running out of time (past DEADLINE it stops reading and denies) and,
-// in Claude Code, a current call it can't find within POLL_FOR in a
-// transcript that holds this session's records, which it denies too.
+// except running out of time (past DEADLINE, at its next look at the clock,
+// it stops reading and denies) and, in Claude Code, a current call it can't
+// find within POLL_FOR in a transcript that holds this session's records,
+// which it denies too.
 // LESSONS_GATE=off in its environment turns it off.
 
 import {closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync} from 'node:fs';
@@ -63,11 +64,14 @@ const REASON_LINE = `${DENY_MARK}, 'The lessons check'): just before the call, w
 const REASON_LATE = `${DENY_MARK}, 'The lessons check'): the gate ran out of time before it could read this turn up to the call, so it denies the call rather than let it through unread. Retry it in the next turn. If this deny keeps coming back, tell the user that the gate runs out of time in this session.${OFF}`;
 const REASON_UNSEEN = `${DENY_MARK}, 'The lessons check'): the gate didn't find this call in the session's transcript in time, so it denies the call rather than let it through unread. Retry it as the only call in your next reply. If this deny keeps coming back, tell the user that the gate can't find calls in this session's transcript.${OFF}`;
 // Earlier wording of the reasons, so a call denied by an older copy is known:
-// 0.4.0's two texts, without OFF. Each 0.4.0 reason is one of them followed
-// by OFF, so matching by includes finds it.
+// 0.4.0's two texts, and the out-of-time text main had from Q82 until Q93
+// (no release holds it, but copies installed from the marketplace then do),
+// each without OFF. Each such reason is one of them followed by OFF, so
+// matching by includes finds it.
 const OLD_REASONS = [
   `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\`, write a visible \`Lessons checked:\` line, then retry.`,
   `${DENY_MARK}, 'The lessons check'): write a visible \`Lessons checked:\` line naming the lessons that apply, then retry.`,
+  `${DENY_MARK}, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.`,
 ];
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
@@ -1525,13 +1529,15 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 // whole window, for a record that over a chunk of later records follows (the
 // large results of earlier calls of the same message). What comes after the
 // record is not read. A record cut at the start of the window read (a large
-// Write) widens the window, and at the whole window it is skipped. Past the
-// deadline it stops (inTime). An assistant record that holds the call's id,
-// but not as the id of a tool_use block in its message content, may be the
-// call in a shape the gate doesn't read: when the last look finds one and not
-// the call, it returns UNREAD. The id in a record of any other type is no
-// sign the call is on disk, as Claude Code writes data-flow-records lines
-// that name a call's id before the call's own record.
+// Write) widens the window, and at the whole window it is skipped. A first
+// line that a line feed right before the window ends is whole, not cut. An
+// assistant record that holds the call's id, but not as the id of a tool_use
+// block in its message content, may be the call in a shape the gate doesn't
+// read: when the last look finds one and not the call, it returns UNREAD.
+// The id in a record of any other type is no sign the call is on disk, as
+// Claude Code writes data-flow-records lines that name a call's id before
+// the call's own record. Past the deadline, a look that found neither stops
+// the wait (inTime); a look under way then still finishes first.
 const UNREAD = -1;
 async function waitForCall(fd, id) {
   const needle = Buffer.from(JSON.stringify(id));
@@ -1547,7 +1553,7 @@ async function waitForCall(fd, id) {
       let grow = from > 0 && buf.lastIndexOf(10, buf.length - 2) < 0;
       for (let i = buf.indexOf(needle); i >= 0 && !grow; i = buf.indexOf(needle, i + 1)) {
         const a = buf.lastIndexOf(10, i) + 1;
-        if (a === 0 && from > 0) {
+        if (a === 0 && from > 0 && readAt(fd, Buffer.alloc(1), from - 1)[0] !== 10) {
           if (win < MAX_WINDOW) {
             grow = true;
             break;
