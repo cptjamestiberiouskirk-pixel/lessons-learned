@@ -1537,9 +1537,10 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 // and not the call, it returns UNREAD. The id in a record of any other type
 // is no sign the call is on disk, as Claude Code writes data-flow-records
 // lines that name a call's id before the call's own record. The clock is
-// read only after a look that found neither (inTime): past the deadline that
-// stops the wait, but a look under way still finishes, and so does the next
-// one when the deadline passes in the pause before it.
+// read after each look that didn't find the call, but for a last look that
+// returns UNREAD (inTime): past the deadline that stops the wait, but a look
+// under way still finishes, and so does the next one when the deadline
+// passes in the pause before it.
 const UNREAD = -1;
 async function waitForCall(fd, id) {
   const needle = Buffer.from(JSON.stringify(id));
