@@ -27,6 +27,7 @@ const OLD_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node 
 const OLD_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry.";
 const OLD_REASONS = [['0.4.0, the lookup', OLD_LOOKUP + OFF], ['0.4.0, the line', OLD_LINE + OFF], ['0.4.0, the lookup before OFF', OLD_LOOKUP], ['0.4.0, the line before OFF', OLD_LINE]];
 const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
+const REASON_UNSEEN = "Lessons check (PLAYBOOK.md, 'The lessons check'): the gate didn't find this call in the session's transcript in time, so it denies the call rather than let it through unread. Retry it as the only call in your next reply. If this deny keeps coming back, tell the user that the gate can't find calls in this session's transcript." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
 const WIN = process.platform === 'win32';
@@ -336,7 +337,7 @@ test('a commit refused by any hook, rule or the user does not use up the line; a
   }
   // This copy's own denies, in a record with no toolDenialKind, bare or as
   // Claude Code writes a hook's error.
-  for (const [what, reason] of [['the lookup', REASON_LOOKUP], ['the line', REASON_LINE], ['out of time', REASON_LATE]]) {
+  for (const [what, reason] of [['the lookup', REASON_LOOKUP], ['the line', REASON_LINE], ['out of time', REASON_LATE], ['not found in time', REASON_UNSEEN]]) {
     for (const text of [reason, `PreToolUse:Bash hook error: ${reason}`]) {
       const own = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', text, true);
       assert.equal(edit(root, own).deny, false, `denied with this copy's reason: ${what}${text === reason ? '' : ', with the hook error prefix'}`);
@@ -1961,7 +1962,7 @@ test('a turn start for another prompt_id fails open, and without prompt_id an ol
 // inside the hook so the exit itself isn't counted. Returns {done, looked,
 // waited}: looked resolves at that first read, or with null if the hook exits
 // without one; waited() is the time the hook reported, or null.
-function watched(p) {
+function watched(p, extra = {}) {
   const dir = scratch();
   const preload = join(dir, 'signal.mjs');
   writeFileSync(
@@ -1981,7 +1982,7 @@ function watched(p) {
       '',
     ].join('\n'),
   );
-  const env = {...process.env, GATE_TRANSCRIPT: p.transcript_path};
+  const env = {...process.env, ...extra, GATE_TRANSCRIPT: p.transcript_path};
   delete env.LESSONS_GATE;
   const {child, done} = spawn(process.execPath, ['--import', pathToFileURL(preload).href, GATE], {env});
   let err = '';
@@ -2000,29 +2001,79 @@ function watched(p) {
   return {done, looked, waited};
 }
 
-test('the hook waits for the current call to reach the transcript, then judges it', {timeout: 120_000}, async () => {
+const pause = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const reasonOf = (stdout) => (stdout.trim() ? JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason : null);
+// The record of a Write call `id`, to append to a transcript after `t`'s.
+function lateCall(t, root, id, input) {
+  const late = new Transcript(root);
+  late.n = t.n;
+  late.msg = 99;
+  late.use(id, 'Write', input);
+  return `${late.lines[0]}\n`;
+}
+
+// Claude Code can write the current call's record after its hook starts: in
+// Q92's tests, up to 5.9 s after the record's own time. The hook waits 1.3 s
+// for it (before this change it waited 300 ms, then let the call through).
+test('the hook waits for the current call to reach the transcript, then judges it, and denies a call that never comes', {timeout: 120_000}, async () => {
   const root = makeRepo();
   const t = new Transcript(root).prompt();
   t.lookup();
   const path = t.write();
   const input = {file_path: join(root, 'x.txt'), content: 'x'};
-  const late = new Transcript(root);
-  late.n = t.n;
-  late.msg = 99;
-  late.use('toolu_late', 'Write', input);
   // The call is appended only after the hook's first look found nothing.
   const one = watched(payload(t, path, 'Write', input, 'toolu_late', {cwd: root}));
   assert.notEqual(await one.looked, null, 'the hook exited without reading the transcript');
-  appendFileSync(path, `${late.lines[0]}\n`);
-  const {stdout} = await one.done;
-  assert.match(stdout, /"permissionDecision":"deny"/, 'the call came after the first look and was judged');
-  // Never written: allowed only after the wait.
-  const two = watched(payload(t, path, 'Write', input, 'toolu_never', {cwd: root}));
+  appendFileSync(path, lateCall(t, root, 'toolu_late', input));
+  assert.equal(reasonOf((await one.done).stdout), REASON_LOOKUP, 'the call came after the first look and was judged');
+  // Appended 700 ms after the first look: past the old 300 ms wait.
+  const two = watched(payload(t, path, 'Write', input, 'toolu_later', {cwd: root}));
   assert.notEqual(await two.looked, null, 'the hook exited without reading the transcript');
-  const r = await two.done;
-  assert.equal(r.stdout, '');
-  const waited = two.waited();
-  assert.ok(waited !== null && waited >= 280, `allowed ${Math.round(waited)} ms after its first look, before the 300 ms wait was over`);
+  await pause(700);
+  appendFileSync(path, lateCall(t, root, 'toolu_later', input));
+  assert.equal(reasonOf((await two.done).stdout), REASON_LOOKUP, 'the call came 700 ms after the first look and was judged');
+  // Never written: denied, and only after the wait.
+  const three = watched(payload(t, path, 'Write', input, 'toolu_never', {cwd: root}));
+  assert.notEqual(await three.looked, null, 'the hook exited without reading the transcript');
+  assert.equal(reasonOf((await three.done).stdout), REASON_UNSEEN, 'a call never written is denied');
+  const waited = three.waited();
+  assert.ok(waited !== null && waited >= 1280, `denied ${Math.round(waited)} ms after its first look, before the 1.3 s wait was over`);
+});
+
+test('a lowered deadline also ends the wait for the current call, which is then denied', {timeout: 60_000}, async () => {
+  const root = makeRepo();
+  const t = new Transcript(root).prompt();
+  ready(t);
+  const path = t.write();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  // The deadline is 600 ms after Node's start. The call reaches the
+  // transcript 900 ms after the hook's first look: inside the 1.3 s wait,
+  // past the deadline. Found then, it would pass, as the turn is ready.
+  const one = watched(payload(t, path, 'Write', input, 'toolu_slow', {cwd: root}), {LESSONS_GATE_DEADLINE_MS: '600'});
+  assert.notEqual(await one.looked, null, 'the hook exited without reading the transcript');
+  await pause(900);
+  appendFileSync(path, lateCall(t, root, 'toolu_slow', input));
+  assert.equal(reasonOf((await one.done).stdout), REASON_UNSEEN, 'the wait ended at the deadline');
+});
+
+// A call never written is denied only where the gate can tie the transcript
+// to the session; any other transcript lets it through, as before.
+test('a call never written is denied only in a transcript that holds a user or assistant record of this session', {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const t = new Transcript(root).prompt();
+  ready(t);
+  const p = (file, extra = {}) => payload(t, file, 'Write', input, 'toolu_never', {cwd: root, ...extra});
+  const path = t.write();
+  assert.equal(gate(p(path)).reason, REASON_UNSEEN, "this session's records");
+  assert.equal(gate(p(t.write(undefined, {respace: true}))).reason, REASON_UNSEEN, "this session's records, written with spaces");
+  assert.equal(gate(p(path, {session_id: 'sess-2'})).deny, false, "another session's records");
+  const named = new Transcript(root).prompt().text('sess-9');
+  ready(named);
+  assert.equal(gate(p(named.write(), {session_id: 'sess-9'})).deny, false, "another session's records, one naming this session in its text");
+  assert.equal(gate(p(path, {session_id: ''})).deny, false, 'no session in the payload');
+  const noise = new Transcript(root).attachment().attachment();
+  assert.equal(gate(p(noise.write())).deny, false, 'only records that carry the session but are not user or assistant records');
 });
 
 test('the hook imports only fs, path and crypto, and calls no write, spawn or network function', () => {
