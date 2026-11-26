@@ -257,6 +257,25 @@ test('codex: a lookup that ran earlier counts, and one in the current command be
   assert.equal(command(makeRepo({check: false}), 'git push', () => {}).deny, false, 'a repo without the check');
 });
 
+// Q83: the hook read a call only when its text held "git" (tests/gate.test.mjs,
+// "git spelled with quotes"): the payload's command, and a command that ran.
+test('codex: git spelled with quotes or capitals is read', () => {
+  const root = makeRepo();
+  assert.equal(command(root, "g'i't push", () => {}).deny, true, 'quotes in the payload');
+  assert.equal(command(root, 'GIT push', () => {}).deny, true, 'capitals in the payload');
+  assert.equal(patch(root, (r) => ready(r).ran("g'i't commit -m x", {argv: ['/bin/bash', '-lc', "g'i't commit -m x"]})).deny, true, 'quotes in one that ran');
+  assert.equal(patch(root, (r) => ready(r).ran('GIT commit -m x', {argv: ['GIT', 'commit', '-m', 'x']})).deny, true, 'capitals in one that ran');
+  // The rollout writes the line feed as JSON's \n, so the text holds git
+  // only once that is dropped. (A Claude Code record always holds git, in
+  // its gitBranch field.)
+  assert.equal(patch(root, (r) => ready(r).ran('gi\\\nt commit -m x', {argv: ['/bin/bash', '-lc', 'gi\\\nt commit -m x']})).deny, true, 'a line join in one that ran');
+  // JSON's escapes are read from the left, so in g\r\\it the \\ is one escape
+  // and the i a letter: Git's sh.exe drops the CR and runs git push. And a \
+  // before a line join (Q83 review round 1, scratch q83/review1-code/codex-probe.mjs).
+  assert.equal(patch(root, (r) => ready(r).ran("sh -c 'g\r\\it push'", {argv: [PWSH_EXE, '-NoProfile', '-Command', "sh -c 'g\r\\it push'"]})).deny, true, 'a CR and an escape in one that ran');
+  assert.equal(patch(root, (r) => ready(r).ran('g\\i\\\nt push', {argv: ['/bin/bash', '-lc', 'g\\i\\\nt push']})).deny, true, 'an escape and a line join in one that ran');
+});
+
 test('codex: the payload\'s command is read as PowerShell on Windows and as sh elsewhere', () => {
   const root = makeRepo({script: 'other'});
   // PowerShell skips an assignment before git; sh reads `$out` as the program.
@@ -382,8 +401,9 @@ const onlyJson = (run, what) => {
   return JSON.parse(run.stdout.trim()).hookSpecificOutput.permissionDecisionReason;
 };
 
-// The gate stops at its own deadline and denies, as Claude Code lets a call
-// through once the hook's timeout ends it (tests/gate.test.mjs). At 1 ms the
+// The gate stops at its own deadline and denies, as Codex, like Claude Code,
+// runs a call once the hook's timeout ends it (0.172.0, in a live run; see
+// tests/gate.test.mjs for Claude Code). At 1 ms the
 // deadline has passed before the gate reads its first command.
 test('codex: a gate out of time denies the call', () => {
   const root = makeRepo();

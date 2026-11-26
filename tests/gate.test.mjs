@@ -1101,6 +1101,234 @@ test('a CR inside a folder name is part of it', {skip: process.platform === 'win
   assert.equal(command(root, 'cd a\rb && git push', () => {}).deny, true, 'cd');
 });
 
+// Q83: the gate read a call only when its text held "git". The shells drop
+// quotes and escapes, join lines at an escape and decode $'\x67' or `u{67},
+// bash reads $"git" as "git", and Windows and macOS find GIT too. Each push
+// ran in WSL bash 5.2 with a stub git, in Git Bash 5.3 (real git, outside a
+// repo), or in pwsh 7.7's parser (scratch q83/probe-sh.mjs, probe-ps.mjs).
+test('git spelled with quotes, escapes, a line join or capitals is read', () => {
+  const root = makeRepo();
+  const sh = ["g'i't push", 'g""it push', 'gi\\\nt push', 'GIT push', "g$'i't push", "g$'\\x69't push", "$'\\147\\151\\164' push", "$'\\u0067'it push", '$"git" push', 'g\\it push'];
+  for (const cmd of sh) assert.equal(command(root, cmd, () => {}).deny, true, JSON.stringify(cmd));
+  const ps = ["g'i't push", 'Git push', '& "g`u{69}t" push'];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  // An earlier call is read too: its push uses up the line.
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'Bash', {command: "g'i't push"})).deny, true, 'an earlier call with quotes');
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'Bash', {command: 'gi\\\nt push'})).deny, true, 'an earlier line join');
+  assert.equal(edit(root, (t) => ready(t).call('toolu_p', 'PowerShell', {command: 'GIT push'})).deny, true, 'an earlier GIT');
+});
+
+// Q83: bash reads a here-doc's tag as a word: quotes and escapes come off, and
+// any other character is kept, a CR too in bash on Linux. The gate's tag ended
+// at the first character outside [A-Za-z0-9_.-], so the body ended at another
+// line, or no here-doc opened and a quote in its body hid the push. Each push
+// ran in WSL bash 5.2 (scratch q83/probe-sh.mjs).
+test('a here-doc tag is read as bash reads the word', () => {
+  const root = makeRepo();
+  const sh = [
+    'cat <<E+F\nx\nE+F\ngit push\nE\n',
+    "cat <<E'F'\nx\nEF\ngit push\nE\n",
+    'cat <<E\\F\nx\nEF\ngit push\nE\n',
+    'cat <<"E"F\nx\nEF\ngit push\nE\n',
+    "cat <<$x\nit's\n$x\ngit push\n# '\n",
+    "cat <<E$'\\x2b'F\nx\nE+F\ngit push\nE\n",
+    // bash on Linux keeps the CR, so only a line ending in one ends the body.
+    "cat <<EOF\r\nEOF\nit's\nEOF\r\ngit push\n",
+  ];
+  for (const cmd of sh) assert.equal(command(root, cmd, () => {}).deny, true, JSON.stringify(cmd));
+  // The body is still text.
+  assert.equal(command(root, 'cat <<E+F\ngit push\nE+F\n', () => {}).deny, false, 'a body');
+});
+
+// Q83: pwsh reads U+0085, U+00A0, U+2028, U+3000 and the other Unicode spaces
+// as a space, and U+FEFF, U+180E and U+200B as part of a word. bash reads only
+// a space or a tab. The gate read JavaScript's \s, so a # after U+FEFF, or in
+// bash after U+00A0, started a comment, and pwsh's git, U+0085, push was one
+// word. Each push ran in pwsh 7.7's parser or WSL bash 5.2 (scratch
+// q83/probe-ps.mjs, probe-sh.mjs).
+test('a space is what each shell reads as one', () => {
+  const root = makeRepo();
+  const ps = ['echo a\ufeff#b; git push', 'git\u0085push', 'git\u2028push', 'echo a\ufeff#b <# x #>; git push'];
+  // A # after U+0085 starts a comment, so the @' after it opens no
+  // here-string (scratch q83/probe-codeat.mjs).
+  ps.push("echo a\u0085#b @'\ngit push\n'@'");
+  // And in a $( ), so its ) is no end (scratch q83/verify-more.mjs).
+  ps.push("$m = $(echo a\u0085#)'\ngit push\n)#'");
+  // U+2000 to U+200A and U+2028 are spaces too. The legacy reading reads
+  // them so as well, so each follows a git only the other readings decode.
+  ps.push('g`u{69}t\u2002push', 'g`u{69}t\u2028push');
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  const sh = ['echo a\u00a0#b; git push', 'echo a\u000b#b; git push', 'echo a\u000c#b; git push', 'echo a\ufeff#b; git push', 'echo a\u2028#b; git push', 'echo a\u0085#b; git push', 'echo a\u3000#b; git push'];
+  // A # after U+00A0 is no comment, so the << after it opens a here-doc.
+  sh.push("echo a\u00a0#b <<E\nit's\nE\ngit push\n");
+  for (const cmd of sh) assert.equal(command(root, cmd, () => {}).deny, true, JSON.stringify(cmd));
+  // pwsh reads U+00A0 as a space, so the # starts a comment there.
+  assert.equal(command(root, 'echo a\u00a0#b; git push', () => {}, {tool: 'PowerShell'}).deny, false, 'pwsh: U+00A0 is a space');
+});
+
+// Q83: pwsh reads `n, `r, `t, `0, `a, `b, `e, `f, `v and `u{..} in a bareword
+// and in double quotes, and keeps a newline after ` in double quotes. The gate
+// read the letter, so a script given to pwsh -Command that way was one line.
+// Each inner push ran in pwsh 7.7 with a stub git (scratch
+// q83/probe-ps-run.mjs).
+test('a PowerShell escape is read as pwsh reads it', () => {
+  const root = makeRepo();
+  const ps = [
+    'pwsh -Command "echo a`ngit push"',
+    'pwsh -Command echo a`ngit push',
+    'pwsh -Command "echo a`rgit push"',
+    'pwsh -Command "echo a`u{a}git push"',
+    'pwsh -Command "echo a`u{0D}git push"',
+    'pwsh -Command "echo a`\ngit push"',
+  ];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  // In a word, `n is a line feed inside it: echo's word, no push.
+  assert.equal(command(root, 'echo a`ngit push', () => {}, {tool: 'PowerShell'}).deny, false, 'a line feed in a word');
+});
+
+// Q83: bash's $'..' reads \n, \r, \t, octal, \x, \u, \U, \c and the rest, and
+// an escape it doesn't know keeps its backslash. The gate read the letter
+// alone, so a script given to bash -c that way was one line. Each push ran in
+// WSL bash 5.2 (scratch q83/probe-sh.mjs).
+test("a bash $'..' escape is read as bash reads it", () => {
+  const root = makeRepo();
+  const sh = [
+    "bash -c $'echo a\\ngit push'",
+    "bash -c $'echo a\\012git push'",
+    "bash -c $'echo a\\x0agit push'",
+    "bash -c $'echo a\\cJgit push'",
+    "bash -c $'echo a\\u000agit push'",
+    "bash -c $'echo a\\U0000000Agit push'",
+    // Git Bash drops the CR the outer bash makes.
+    "bash -c $'git pu\\rsh'",
+  ];
+  for (const cmd of sh) assert.equal(command(root, cmd, () => {}).deny, true, JSON.stringify(cmd));
+  // A NUL ends the string: bash runs echo a.
+  assert.equal(command(root, "bash -c $'echo a\\0\\ngit push'", () => {}).deny, false, 'a NUL');
+});
+
+// Q83: pwsh decides how it reads ` and a newline by the word before it
+// (scratch q83/probe-ps.mjs, probe-ps2.mjs). Inside a plain word the newline
+// is part of it, or with CR LF the CR is and the LF ends the command. After an
+// index or a member ($x[0], $x.y, "a".Length) it is a space. After a
+// parameter (-a, :a, or a letter past ASCII) the ` is part of it and the
+// newline ends the command. The gate read each word it couldn't place one way
+// in a reading, so a command with two kinds was misread in each. And a quoted
+// string or a $( ) that starts an argument ends it, unless an index or a
+// member follows: git "push"x runs git push x (scratch q83/probe-after*.ps1).
+// Each push ran in pwsh 7.7, its parser or with a stub git.
+test('a PowerShell escape before a newline is read by the word before it', () => {
+  const root = makeRepo();
+  const ps = [
+    "echo $x[0]`\n#'\necho a`\r\ngit push\n#'",
+    "echo -a`\n#'\necho a`\r\ngit push\n#'",
+    "echo \"a\".Length`\n#'\necho a`\r\ngit push\n#'",
+    "echo $x.y-z`\n#'\necho a`\r\ngit push\n#'",
+    "echo :a`\n#'\necho a`\r\ngit push\n#'",
+    "echo -\u00e9`\n#'\necho a`\r\ngit push\n#'",
+    "echo 'a'.Length`\n#'\necho a`\r\ngit push\n#'",
+    "echo $(1).x`\n#'\necho a`\r\ngit push\n#'",
+    "echo $x.y(1)`\n#'\necho a`\r\ngit push\n#'",
+    // A word right after a ) goes on with the value before it, so these end
+    // in an expression, where a(1) is a and (1).
+    "echo $x.y(1).z`\n#'\necho a`\r\ngit push\n#'",
+    "echo $x.y(1)[0]`\n#'\necho a`\r\ngit push\n#'",
+    "echo (1).z`\n#'\necho a`\r\ngit push\n#'",
+    "echo a(1).z`\n#'\necho a`\r\ngit push\n#'",
+    "$m = $(echo $x.y(1).z`\n#'\necho a`\n#'\n)\n'\n)\ngit push",
+    // Inside a $( ), too.
+    "$m = $(echo $x[0]`\n#)'\necho a`\r\ngit push\n#'\n)",
+    // There after a plain word the LF is part of it, so its # is text and
+    // its quote holds the first ).
+    "$m = $(echo $x[0]`\n#'\necho a`\n#'\n)\n'\n)\ngit push",
+    // After a $( ) inside a word in a $( ), the word goes on, so the # is
+    // text and the quote holds the first ). The #" after "a" is a comment.
+    "$m = $(echo x$(echo a)#'\n)\n'\n)\necho \"a\"#\"\ngit push",
+    // A # after a quoted string that starts a word starts a comment, so the
+    // ) after it is not the $( )'s end, and the quote after that no quote.
+    "$m = $(echo \"a\"#)'\ngit push\n)#'",
+    // The gate keeps its place in a word from one escape to the next, so
+    // these go on past an escape inside the word: in an index two deep, in
+    // the first of two indexes, and in a ${ } name (scratch q83/mut2.mjs,
+    // verify-q83f.mjs).
+    "echo $x[$y[`\n0]]`\n#'\necho a`\r\ngit push\n#'",
+    "echo $x[`\n0][`\n0]`\n#'\necho a`\r\ngit push\n#'",
+    "echo ${a`\nb}.c`\n#'\necho a`\r\ngit push\n#'",
+    'git "push"x',
+    "git 'push'x",
+    '& "git"push',
+  ];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  // A plain word after an index is a new word: its newline is part of it, so
+  // the # is text and the quote hides the push from pwsh too. The gate leaves
+  // a word after an index to each reading (the next test), so it denies this
+  // call, as main did.
+  assert.equal(command(root, "echo $x[0]a`\n#'\ngit push\n#'", () => {}, {tool: 'PowerShell'}).deny, true, 'a word after an index');
+  // The same after a ( ), in a $( ) or not (scratch q83/verify-q83d.mjs). In
+  // the $( ) the gate can't place the word either, so it denies, as main did.
+  assert.equal(command(root, "echo (1)z`\n#'\necho a`\r\ngit push\n#'", () => {}, {tool: 'PowerShell'}).deny, false, 'a word after a ( )');
+  assert.equal(command(root, "$m = $(echo (1)z`\n#'\n)\ngit push\n#'\n)", () => {}, {tool: 'PowerShell'}).deny, true, 'a word after a ( ) in a $( )');
+  assert.equal(command(root, 'git a"push"', () => {}, {tool: 'PowerShell'}).deny, false, 'a quote inside a word');
+  // After -a: they are a space, so git is -a's value; and a # after a $( )
+  // inside a word is part of the word, so the ) ends the $( ) and the quote
+  // after it is a quote (scratch q83/verify-more.mjs).
+  assert.equal(command(root, 'echo -a:`\ngit push', () => {}, {tool: 'PowerShell'}).deny, false, 'after -a:');
+  // The same after a dash pwsh reads as - (PS_DASH): git is the value, and
+  // after git -c, push is git's (pwsh passes git -c, U+2013 a:, push). Q83
+  // review round 2: these fail on a mutant that reads only - there
+  // (scratch q83/review2-code/mut/colon.mjs), and the second on round 1's
+  // reviewed gate.
+  assert.equal(command(root, 'echo –a:`\ngit push', () => {}, {tool: 'PowerShell'}).deny, false, 'after U+2013 a:');
+  assert.equal(command(root, 'git -c –a:`\npush', () => {}, {tool: 'PowerShell'}).deny, true, 'git -c U+2013 a: push');
+  assert.equal(command(root, "echo $(echo x$(echo a)#) '\ngit push\n'", () => {}, {tool: 'PowerShell'}).deny, false, 'a # after a $( ) in a word');
+});
+
+// After a parameter, a ` and a carriage return with no line feed after it end
+// the line too, as pwsh reads a lone CR as a line end (Q82). Each push ran in
+// pwsh 7.7 with a stub git, at a statement's start, after echo and in a script
+// block; main let each through (Q83 review round 2, scratch
+// q83/verify/r2/fd3.json).
+test('a PowerShell parameter before a backtick and a lone carriage return ends the line', () => {
+  const root = makeRepo();
+  for (const cmd of ['-a$x`\rgit push', 'echo -a$x`\rgit push', 'echo –a$x`\rgit push', '& { -a$x`\rgit push\r}']) {
+    assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  }
+});
+
+// Q83 review round 1: where the gate couldn't place the word before a ` and a
+// newline, it read the newline as part of the word in both PowerShell
+// readings, so neither found the push pwsh runs on the next line, and main
+// did. Such a word is now left to each reading. And pwsh reads an en dash, an
+// em dash or a horizontal bar as a parameter's dash. Each push ran in pwsh 7.7
+// with a stub git (scratch q83/verify/r1-cases.mjs, dash.mjs).
+test('a PowerShell word the gate cannot place before an escape is read each way', () => {
+  const root = makeRepo();
+  const T = '`';
+  const tail = `${T}\n#'\ngit push\n#'`;
+  const ps = [
+    `echo a,-a${tail}`,
+    `$m = $x${tail}`,
+    `$x+$y${tail}`,
+    `echo $x[']']${tail}`,
+    `$x["["]${tail}`,
+    `(1)[']']${tail}`,
+    `$h = @{'a"b'='v'}; echo $h."a${T}"b"${tail}`,
+    `echo $('a', ')')[0]${tail}`,
+    `echo $x[(1)]${tail}`,
+    `echo $x.$(1)${tail}`,
+    `echo @{a=1}.y${tail}`,
+    `echo -a:$x.y${tail}`,
+    `echo $(echo $x[']']${T}\n#)'\ngit push\n)`,
+    `echo $(echo (1).y$((2))${T}\n#)'\ngit push\n)`,
+    `$x=@{']'='.'}; git -C $x[']']${T}\npush`,
+    `& –a${T}\ngit push`,
+    `echo —a${T}\ngit push`,
+    `―a${T}\ngit push`,
+    `echo a,–a${tail}`,
+  ];
+  for (const cmd of ps) assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+});
+
 // A random PowerShell expression from `byte`: quotes, ( ), $( ) inside double
 // quotes, and comments in a $( ) outside them, nested. A <# #> is on one line,
 // as the check for an @' opener reads one line at a time (SECURITY.md, known
@@ -1202,6 +1430,153 @@ test('property: a git push after a word that ends in an escape and CR LF is read
     const sh = `x=${shWord(byte)}\\\r\ngit push`;
     assert.equal(command(root, sh, () => {}).deny, true, `${JSON.stringify(sh)}, GATE_SEED=${seed}`);
     const ps = `echo ${psWord(byte)}\`\r\ngit push`;
+    assert.equal(command(root, ps, () => {}, {tool: 'PowerShell'}).deny, true, `${JSON.stringify(ps)}, GATE_SEED=${seed}`);
+  }
+});
+
+// Q83's generators: each takes `byte` and returns the text of one call that
+// runs a git push in its shell. Each input from seeds 1 to 5 ran its push in
+// WSL bash and Git Bash, or in pwsh 7 (scratch q83/gen-verify.mjs), twice.
+const ch = (n) => String.fromCharCode(n);
+const BS = ch(92);
+
+// git and push, each letter written as bash or pwsh reads it as itself.
+function spellSh(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  const oct = (c) => c.charCodeAt(0).toString(8);
+  const hex = (c) => c.charCodeAt(0).toString(16);
+  const letter = (c) => pick([c, `'${c}'`, `"${c}"`, `${BS}${c}`, `$'${c}'`, `$"${c}"`, `$'${BS}x${hex(c)}'`, `$'${BS}${oct(c)}'`]);
+  const join = () => pick(['', '', "''", '""', `${BS}\n`]);
+  const word = (w) => [...w].map((c) => letter(c)).join(join());
+  return `${word('git')} ${word('push')}`;
+}
+function spellPs(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  // pwsh ends a word at a quote that starts it, and reads '' or "" inside
+  // one as a quote, so a word starts bare and no two quotes of a kind meet.
+  // A ` before a letter of no escape stands for it (not t, a tab, or u).
+  // pwsh finds git in any case, but push is git's own word.
+  const word = (w, caps) => {
+    let out = '';
+    for (const c of w) {
+      const forms = [c, `'${c}'`, `"${c}"`, `"\`u{${c.charCodeAt(0).toString(16)}}"`];
+      if (caps) forms.push(c.toUpperCase());
+      if (c !== 't' && c !== 'u') forms.push(`\`${c}`);
+      out += pick(forms.filter((f) => !`'"`.includes(f[0]) || (out !== '' && f[0] !== out.at(-1))));
+    }
+    return out;
+  };
+  const git = word('git', true);
+  return `${git[0] === '`' ? '& ' : ''}${git} ${word('push', false)}`;
+}
+
+// A here-doc tag with quotes and characters past a name's, its body, the line
+// that ends it as bash reads the tag, then the push.
+function hereTag(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  const pieces = [
+    ['E', 'E'], ['F', 'F'], ['+', '+'], ['.', '.'], ['-', '-'], [':', ':'], ['@', '@'], ['%', '%'], [',', ','], ['=', '='], ['#', '#'],
+    ["'+'", '+'], ['"F+"', 'F+'], [`${BS}+`, '+'], [`${BS}E`, 'E'], [`$'${BS}x2b'`, '+'], ["$'F'", 'F'], ['$"F"', 'F'],
+  ];
+  let raw = 'E';
+  let tag = 'E';
+  for (let k = 1 + (byte() % 4); k > 0; k--) {
+    const [r, t] = pick(pieces);
+    raw += r;
+    tag += t;
+  }
+  return `cat <<${raw}\nx\n${tag}\ngit push\n`;
+}
+
+// A # after a character one shell reads as part of a word, where the other
+// reads a space (bash: none but a space and a tab; pwsh: not U+FEFF, U+180E
+// or U+200B), so the push after it runs; and a # after each character pwsh
+// reads as a space, a comment that hides an @' opener.
+const SH_NOT_SPACE = [0x0b, 0x0c, 0x0d, 0xa0, 0x1680, 0x2000, 0x2005, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff];
+const PS_NOT_SPACE = [0xfeff, 0x180e, 0x200b];
+const PS_SPACE = [0x09, 0x0b, 0x0c, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2006, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000];
+function hashSh(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  return `echo a${ch(pick(SH_NOT_SPACE))}#b; git push`;
+}
+function hashPs(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  return byte() % 2 ? `echo a${ch(pick(PS_NOT_SPACE))}#b; git push` : `echo a${ch(pick(PS_SPACE))}#b @'\ngit push\n'@'`;
+}
+
+// An escape that makes a line end in an inner shell's script: bash's $'...'
+// and pwsh's ` escapes.
+function lineSh(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  const lf = pick([`${BS}n`, `${BS}012`, `${BS}12`, `${BS}x0a`, `${BS}xA`, `${BS}cJ`, `${BS}cj`, `${BS}u000a`, `${BS}u0A`, `${BS}U0000000a`]);
+  return `bash -c $'echo ${pick(['a', 'a b', "a\\'b\\'"])}${lf}git push'`;
+}
+function linePs(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  const nl = pick(['`n', '`r', '`u{a}', '`u{0A}', '`u{00000a}', '`u{d}', '`u{D}']);
+  return pick([`pwsh -NoProfile -Command "echo a${nl}git push"`, `pwsh -NoProfile -Command echo a${nl}git push`]);
+}
+
+// A pwsh word, then a ` and a LF: an expression, where they are a space, or a
+// parameter, where the line ends. Then a #' and a line whose word is a plain
+// one, where an escaped CR is part of it and the LF ends the command.
+function psLeadWord(byte) {
+  const pick = (xs) => xs[byte() % xs.length];
+  const head = pick(['$x', '"a"', "'a'", '$(1)', '(1)', 'a(1)', '@(1)', '$x.y(1)', '$env:x']);
+  const n = (head === '$x' || head === '$env:x' ? 1 : 0) + (byte() % 3);
+  let w = head;
+  for (let k = 0; k < n; k++) w += pick(['.y', '[0]', '::y', '."y"', '.y(1)', '[1][2]']);
+  const word = pick([w, w, w, pick(['-a', '-ab', ':a', '-a$x'])]);
+  return `echo ${word}\`\n#'\necho a\`\r\ngit push\n#'`;
+}
+
+test('property: git spelled any way a shell reads it is read', (t) => {
+  const root = makeRepo();
+  const {seed, byte} = seeded(t);
+  for (let i = 0; i < 10; i++) {
+    const sh = spellSh(byte);
+    assert.equal(command(root, sh, () => {}).deny, true, `${JSON.stringify(sh)}, GATE_SEED=${seed}`);
+    const ps = spellPs(byte);
+    assert.equal(command(root, ps, () => {}, {tool: 'PowerShell'}).deny, true, `${JSON.stringify(ps)}, GATE_SEED=${seed}`);
+  }
+});
+
+test('property: a here-doc tag with any characters bash reads is read', (t) => {
+  const root = makeRepo();
+  const {seed, byte} = seeded(t);
+  for (let i = 0; i < 10; i++) {
+    const sh = hereTag(byte);
+    assert.equal(command(root, sh, () => {}).deny, true, `${JSON.stringify(sh)}, GATE_SEED=${seed}`);
+  }
+});
+
+test('property: a # starts a comment only after what the shell reads as a space', (t) => {
+  const root = makeRepo();
+  const {seed, byte} = seeded(t);
+  for (let i = 0; i < 10; i++) {
+    const sh = hashSh(byte);
+    assert.equal(command(root, sh, () => {}).deny, true, `${JSON.stringify(sh)}, GATE_SEED=${seed}`);
+    const ps = hashPs(byte);
+    assert.equal(command(root, ps, () => {}, {tool: 'PowerShell'}).deny, true, `${JSON.stringify(ps)}, GATE_SEED=${seed}`);
+  }
+});
+
+test('property: an escape that makes a line end in an inner shell is read', (t) => {
+  const root = makeRepo();
+  const {seed, byte} = seeded(t);
+  for (let i = 0; i < 10; i++) {
+    const sh = lineSh(byte);
+    assert.equal(command(root, sh, () => {}).deny, true, `${JSON.stringify(sh)}, GATE_SEED=${seed}`);
+    const ps = linePs(byte);
+    assert.equal(command(root, ps, () => {}, {tool: 'PowerShell'}).deny, true, `${JSON.stringify(ps)}, GATE_SEED=${seed}`);
+  }
+});
+
+test('property: a ` and a newline after any pwsh expression or parameter are read by it', (t) => {
+  const root = makeRepo();
+  const {seed, byte} = seeded(t);
+  for (let i = 0; i < 10; i++) {
+    const ps = psLeadWord(byte);
     assert.equal(command(root, ps, () => {}, {tool: 'PowerShell'}).deny, true, `${JSON.stringify(ps)}, GATE_SEED=${seed}`);
   }
 });
@@ -1747,6 +2122,109 @@ test('time: many here-docs opened on one line are read in linear time', (t2) => 
   const g = growth(run(40_000), run(160_000), run(1));
   t2.diagnostic(g.shown);
   assert.ok(g.ratio < 8, g.shown);
+});
+
+// Fails on Q83's first psKind (scratch q83/v1-gate.mjs), whose cache read
+// the last expression of a word again from its start at each ` and newline
+// when it had stopped at a ., a [ or a :, so a long member chain, quoted
+// string, $( ) or variable name was read once for each escape after it. Each
+// word here is such a head, then n escapes the word goes on through.
+test('time: a PowerShell word with many escapes after an expression is read in linear time', (t2) => {
+  const root = makeRepo();
+  const esc = (n, piece) => `\`\n${piece}`.repeat(n);
+  const words = {
+    'a member chain': (n) => `$x${'.a'.repeat(n)}.${esc(n, 'a.')}`,
+    'a chain after a ( )': (n) => `(1)${'.a'.repeat(n)}.${esc(n, 'a.')}`,
+    'a chain before an open [': (n) => `$x${'.a'.repeat(n)}[${esc(n, 'a')}`,
+    'an open index': (n) => `$x[${'a'.repeat(2 * n)}${esc(n, 'a')}`,
+    'a double-quoted string': (n) => `"${'a'.repeat(2 * n)}".${esc(n, 'a.')}`,
+    'a $( )': (n) => `$(${'a'.repeat(2 * n)}).${esc(n, 'a.')}`,
+    'a variable name': (n) => `$${'a'.repeat(2 * n)}.${esc(n, 'a.')}`,
+  };
+  for (const [name, word] of Object.entries(words)) {
+    const run = (n) => () => command(root, `echo ${word(n)}\ngit commit -m x`, () => {}, {tool: 'PowerShell'}).ms;
+    const g = growth(run(2_000), run(8_000), run(1));
+    t2.diagnostic(`${name}: ${g.shown}`);
+    assert.ok(g.ratio < 8, `${name}: ${g.shown}`);
+  }
+});
+
+// Fails on Q83 review round 1's reviewed gate (scratch q83/review1-state),
+// whose psKind started its cache afresh at each $( ) in a word and read the
+// word again from its start at each ), so a word holding many $( ) was read
+// once for each.
+test('time: a PowerShell word holding many $( ) is read in linear time', (t2) => {
+  const root = makeRepo();
+  const run = (n) => () => command(root, `echo $(echo $x[${'$(c`\n)`\n'.repeat(n)}])\ngit commit -m x`, () => {}, {tool: 'PowerShell'}).ms;
+  const g = growth(run(3_000), run(12_000), run(1));
+  t2.diagnostic(g.shown);
+  assert.ok(g.ratio < 8, g.shown);
+});
+
+// Fails on Q83 review round 2's reviewed gate (scratch q83/review2-state),
+// whose psHead found the end of a $( ) that starts a word by counting
+// parentheses to the end of the command, so a quoted ( in it made each such
+// word's head a scan to the end, once for each word.
+test('time: PowerShell words that start with a $( ) holding a quoted ( are read in linear time', (t2) => {
+  const root = makeRepo();
+  const word = "$(echo '(').y`\n ";
+  const shapes = {
+    'at the top': (n) => `echo ${word.repeat(n)}\ngit commit -m x`,
+    'in a $( )': (n) => `echo $(echo ${word.repeat(n)})\ngit commit -m x`,
+  };
+  for (const [name, cmd] of Object.entries(shapes)) {
+    const run = (n) => () => command(root, cmd(n), () => {}, {tool: 'PowerShell'}).ms;
+    const g = growth(run(2_000), run(8_000), run(1));
+    t2.diagnostic(`${name}: ${g.shown}`);
+    assert.ok(g.ratio < 8, `${name}: ${g.shown}`);
+  }
+});
+
+// Fails on Q83 review round 1's reviewed gate, which looked for the end of a
+// here-doc tag whose $( ) or ${ } isn't closed to the line's end, once for
+// each <<, and on round 2's, which denied such a call as out of time past a
+// budget instead of reading it. A } is looked for with indexOf, fast enough
+// that it takes a longer line to show (scratch q83/verify/r2/growth5-old.txt).
+// The last three fail on round 3's reviewed gate (scratch q83/review3-state,
+// q83/verify/r3). Nested tags looked for a } again from each tag's ${, which
+// was before the last search's start; one U+2013 keeps that text two bytes a
+// character, where the search is slower. And a tag whose word failed at the
+// line's end was read again, as far, from each << inside it: inside closed
+// ${ }, or between $( and ${ pairs that end in an unclosed quote.
+test('time: here-doc tags that never close are read in linear time', (t2) => {
+  const root = makeRepo();
+  const shapes = [
+    ['<<$(', 2_000, (n) => `echo ${'<<$('.repeat(n)}`],
+    ['<<${', 40_000, (n) => `echo ${'<<${'.repeat(n)}`],
+    ['nested', 15_000, (n) => 'echo ' + '<<$('.repeat(n) + 'x' + ')${'.repeat(n) + 'a'.repeat(8 * n) + String.fromCharCode(0x2013)],
+    ['in ${ }', 3_000, (n) => 'echo <<' + '${<<}'.repeat(n) + '${'],
+    ['pairs', 10_000, (n) => 'echo ' + '<<$(<<${'.repeat(n) + "}'" + ')${'.repeat(n)],
+  ];
+  for (const [name, quarter, line] of shapes) {
+    const cmd = (n) => `git push\n${line(n)}`;
+    const run = (n) => () => command(root, cmd(n), () => {}).ms;
+    const g = growth(run(quarter), run(4 * quarter), run(1));
+    t2.diagnostic(`${name}: ${g.shown}`);
+    assert.ok(g.ratio < 8, `${name}: ${g.shown}`);
+    assert.equal(command(root, cmd(4 * quarter), () => {}).reason, REASON_LOOKUP, `${name}: denied for its push`);
+  }
+});
+
+// Q83 review round 2: round 2's budget for such tags denied the call outside
+// a gated repo, and every later call of the turn (scratch
+// q83/review2-code/turn-late.mjs). Both fail on round 2's reviewed gate.
+const neverClosed = `echo ${'<<$('.repeat(2_000)}`;
+test('here-doc tags that never close deny nothing outside a gated repo', () => {
+  const plain = makeRepo({check: false});
+  assert.equal(command(plain, `git push\n${neverClosed}`, () => {}).deny, false);
+});
+test('here-doc tags that never close in an earlier call deny no later call', () => {
+  const root = makeRepo();
+  const after = edit(root, (t) => {
+    ready(t);
+    t.call('toolu_tags', 'Bash', {command: neverClosed, description: 'Run it'});
+  });
+  assert.equal(after.deny, false);
 });
 
 test('time: finding the line grows linearly with the text before a mention in backticks', (t2) => {
