@@ -1947,13 +1947,42 @@ test('a record that starts at the first byte of the full window is read as whole
   assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
 });
 
+// The call's own record as the only line of the full window: it starts right
+// after a line feed, at the window's first byte, and its line feed is the
+// file's last byte. It is whole, so the call is judged. It fails on 1c2495b,
+// which took a window with no line feed but its last byte as one cut line,
+// whatever the byte before it, and so stopped before reading the record and
+// denied the call as not found (review round 4, oneline.mjs).
+test("a call's record that is the full window's only line is read as whole", {timeout: 60_000}, () => {
+  const WINDOW = 32 * 1024 * 1024;
+  const root = makeRepo();
+  const id = 'toolu_only';
+  const build = (pad) => {
+    const t = new Transcript(root).prompt();
+    t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
+    current(t, 'Write', {file_path: join(root, 'x.txt'), content: 'x'.repeat(pad)}, {id});
+    return t;
+  };
+  const t = build(WINDOW - (Buffer.byteLength(build(0).lines.at(-1)) + 1));
+  const path = t.write();
+  const bytes = readFileSync(path);
+  const start = bytes.length - WINDOW;
+  assert.ok(start > 0 && bytes[start - 1] === 10, 'a line feed right before the window');
+  assert.equal(bytes.indexOf(10, start), bytes.length - 1, 'one line in the window');
+  assert.ok(bytes.subarray(start).equals(Buffer.from(`${t.lines.at(-1)}\n`)), "the window is the call's own record");
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
+
 // Writes `t`, then later records with no id, so that the file's last 32 MB
 // (the gate's whole window) start `into` bytes into the record t.lines[at].
+// It counts bytes, as paths in the records can hold other characters, and
+// checks the file: a line feed, then that record, at the place it returns.
 // Returns the path, where that record starts, and where the window starts.
 function windowAt(t, at, into) {
   const WINDOW = 32 * 1024 * 1024;
   const path = t.write();
-  const lineAt = t.lines.slice(0, at).reduce((n, l) => n + l.length + 1, 0);
+  const lineAt = t.lines.slice(0, at).reduce((n, l) => n + Buffer.byteLength(l) + 1, 0);
   const tail = lineAt + into + WINDOW - lstatSync(path).size;
   const line = `${JSON.stringify({type: 'y', p: 'q'.repeat(200)})}\n`;
   const n = Math.floor(tail / line.length);
@@ -1962,7 +1991,12 @@ function windowAt(t, at, into) {
   let left = n - 1;
   for (; left >= 1024; left -= 1024) appendFileSync(path, block);
   appendFileSync(path, line.repeat(left));
-  return {path, lineAt, start: lstatSync(path).size - WINDOW};
+  const bytes = readFileSync(path);
+  const record = Buffer.from(t.lines[at]);
+  assert.ok(bytes[lineAt - 1] === 10 && bytes.subarray(lineAt, lineAt + record.length).equals(record), `t.lines[${at}] isn't at byte ${lineAt}, after a line feed`);
+  const start = bytes.length - WINDOW;
+  assert.equal(start, lineAt + into, `the window starts at byte ${start}, not ${into} into the record`);
+  return {path, lineAt, start};
 }
 
 test('a malformed transcript, a cut first line, invalid UTF-8 and an unknown format fail open', () => {
@@ -2336,9 +2370,9 @@ const growth = (small, full, fixed) => {
 // their count. The fixed cost is the same transcript with one. Fails on a
 // hook that skips one id at a time (review round 3's nojump mutant, where
 // each id scans back to the window's start: 33 s at 100,000 ids, past
-// Claude Code's 10 s timeout). The full input holds 20,000, so that hook's
-// full run stays well under the gate's 6 s deadline, which would cap it and
-// the ratio with it on a slow machine.
+// Claude Code's 10 s timeout). The counts, 5,000 and 20,000, keep that hook's
+// runs short: its full run took about 3.4 s on a Windows PC. The deadline
+// doesn't cap it, as a look that finds the call doesn't look at the clock.
 test('time: a cut record at the start of the full window that names the call many times is skipped in linear time', {timeout: 180_000}, (t2) => {
   const root = makeRepo();
   const input = {file_path: join(root, 'x.txt'), content: 'x'};

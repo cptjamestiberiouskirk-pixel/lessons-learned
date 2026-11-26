@@ -1530,14 +1530,16 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 // large results of earlier calls of the same message). What comes after the
 // record is not read. A record cut at the start of the window read (a large
 // Write) widens the window, and at the whole window it is skipped. A first
-// line that a line feed right before the window ends is whole, not cut. An
-// assistant record that holds the call's id, but not as the id of a tool_use
-// block in its message content, may be the call in a shape the gate doesn't
-// read: when the last look finds one and not the call, it returns UNREAD.
-// The id in a record of any other type is no sign the call is on disk, as
-// Claude Code writes data-flow-records lines that name a call's id before
-// the call's own record. Past the deadline, a look that found neither stops
-// the wait (inTime); a look under way then still finishes first.
+// line is whole, not cut, when the byte before the window is a line feed,
+// even as the window's only line. An assistant record that holds the call's
+// id, but not as the id of a tool_use block in its message content, may be
+// the call in a shape the gate doesn't read: when the last look finds one
+// and not the call, it returns UNREAD. The id in a record of any other type
+// is no sign the call is on disk, as Claude Code writes data-flow-records
+// lines that name a call's id before the call's own record. The clock is
+// read only after a look that found neither (inTime): past the deadline that
+// stops the wait, but a look under way still finishes, and so does the next
+// one when the deadline passes in the pause before it.
 const UNREAD = -1;
 async function waitForCall(fd, id) {
   const needle = Buffer.from(JSON.stringify(id));
@@ -1550,10 +1552,11 @@ async function waitForCall(fd, id) {
     for (;;) {
       const from = Math.max(0, size - win);
       const buf = readAt(fd, Buffer.alloc(size - from), from);
-      let grow = from > 0 && buf.lastIndexOf(10, buf.length - 2) < 0;
+      const cut = from > 0 && readAt(fd, Buffer.alloc(1), from - 1)[0] !== 10;
+      let grow = cut && buf.lastIndexOf(10, buf.length - 2) < 0;
       for (let i = buf.indexOf(needle); i >= 0 && !grow; i = buf.indexOf(needle, i + 1)) {
         const a = buf.lastIndexOf(10, i) + 1;
-        if (a === 0 && from > 0 && readAt(fd, Buffer.alloc(1), from - 1)[0] !== 10) {
+        if (a === 0 && cut) {
           if (win < MAX_WINDOW) {
             grow = true;
             break;
