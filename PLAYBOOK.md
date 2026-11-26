@@ -72,7 +72,7 @@ Run it before you report a change as done, and before a commit. A claim that som
 ## Writing a message about a result
 
 1. Before you write a message (a deny, a hint, a doc line) that says what a result means, list every path in the code that gives that result. Run a probe that reaches the result by each path, and check the message's claim against it. Then have the message name what the reader can check, not a single cause.
-2. When the message tells the reader what to do after the result, give first a step that works whatever the cause (such as doing it all again), and list causes only for when that step fails. Probe that the step clears the result on each path found, done one part after another and done at once, as Codex runs the commands of one code cell together.
+2. When the message tells the reader what to do after the result, give first a step that works whatever the cause (such as doing it all again), and list causes only for when that step fails. Probe that the step clears the result on each path found, done one part after another and done at once, as a Codex code cell can run its commands at once.
 
 ## Committing
 
@@ -110,5 +110,5 @@ Run it before you report a change as done, and before a commit. A claim that som
 
 ## Working with the lessons gate
 
-1. In this repo, just before each call the lessons gate checks (an edit, a `git commit` or a `git push`), write the `Lessons checked:` line as the only text of the message that makes the call. A line written after other text has been recorded in the transcript as thinking, which the gate doesn't read.
-2. A subagent's hand-back, another session's message, a commit and a push each use up the lookup and the line. Before the next call the gate checks, run the lookup and write the line again. When the gate denies a call, check both, whatever its reason names.
+1. In this repo, just before each call the lessons gate checks (an edit, a `git commit` or a `git push`), write the `Lessons checked:` line as the only text of the message that makes the call. A line in the reply's text has at times been recorded in the transcript as thinking, which the gate doesn't read.
+2. A subagent's hand-back, another session's message, and any command with a `git commit` or `git push` in it each use up the lookup and the line. Before the next call the gate checks, run the lookup and write the line again. When the gate denies a call, do both again, whatever its reason names, and check both only if the deny comes back.
