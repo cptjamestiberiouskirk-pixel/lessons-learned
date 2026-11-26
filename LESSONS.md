@@ -15,6 +15,41 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-25: Round 2's here-doc lookups were timed only from places that move forward
+- What went wrong: in Q83's review round 2 fix (8e29a91), `look.brace` searched for `}` again only when a search began before the last one's start, and the timing test tried only `<<${` repeated, where each search starts past the last. Review round 3 found nested tags, whose searches start before the last one's, and a tag that failed at the line's end, which `hereDocs` scanned again from each `<<` inside it. Each kept the gate reading past the 10 second hook timeout (16 seconds at 3.45 MB, 18 seconds at 160 KB), and the release record had called the tag's other scans linear.
+- Why: CONFIRMED: the search was timed from one way its next call starts, and the scan that failed was never timed from inside the text it had read. This is the second time the rule of "Q83's first psKind read a long expression again at each escape" was seen.
+- Rule going forward: a parse or a search that goes on across calls is timed before the commit, with one long input for each place it can stop and each place its next call can start from: past the last start, before it, and inside what the last call read. Each is followed by thousands of the calls that resume it.
+- Evidence: `tests/gate.test.mjs`, search "The last three fail on round 3's reviewed gate"
+- Status: promoted to PLAYBOOK "Writing a timing test"
+
+## 2026-11-25: A gate deny that named the lookup was for a missing line
+- What went wrong: in Q83, after round 3's code reviewer handed back its report, five Edits of the hook were denied with the gate's lookup reason. A lookup had run in that turn. The session ran it again, was denied again, and took the gate to be at fault. Its `Lessons checked:` line was in its thinking only, never in its reply's text. After this entry was written, two Edits of `PLAYBOOK.md` were denied the same way. The next one, after a line written in the reply's text, passed. Then a second commit in a row was denied with a line in text, as the commit before it had used up the lookup.
+- Why: CONFIRMED from the transcript and the installed gate's code. In this repo the deny names the lookup when either the lookup or the line is missing. A subagent's hand-back starts a turn (its record's `origin.kind` is `peer`), and the gate takes only a task notification as a wake-up that goes on with the turn before, so the line was needed again. The gate's `verdict` also clears the line and the lookup after each commit or push to a gated repo.
+- Rule going forward: when the gate denies a call in this repo, check both the lookup and a `Lessons checked:` line in the reply's text just before the call, not in thinking. After a subagent's hand-back or another session's message, write the line again before the next gated call. A commit or a push uses up both, so run the lookup and write the line again before the next gated call.
+- Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "deny(needLookup ? REASON_LOOKUP : REASON_LINE);"
+- Status: open
+
+## 2026-11-25: A copy of the old hook went through a pipe, against a PLAYBOOK step
+- What went wrong: in Q83's round 3, the fail-before copy of 8e29a91's hook was made with `git show` piped to `Set-Content -NoNewline`, and its hash differed from the blob's. "Running a test against old code" step 1 names that very command as one not to use. Step 2's hash check caught it, and the copy was made again from a copy already checked.
+- Why: CONFIRMED: PowerShell splits a native command's output into lines, and `-NoNewline` joins them with nothing between. The lookup before the work used words about editing the hook, so it never printed that section.
+- Rule going forward: as "Running a test against old code" steps 1 and 2 say, copy an old file with a byte-exact redirect, or from a copy already checked, and check its hash before using it.
+- Evidence: `PLAYBOOK.md`, search "Not `| Set-Content -NoNewline`, which joins the lines"
+- Status: promoted to PLAYBOOK "Running a test against old code"
+
+## 2026-11-25: A saved review state made with git archive lacked 27 of 62 files
+- What went wrong: in Q83, round 4's saved review state was first made with `git archive` of 10ee20c. It lacked 27 of the 62 tracked files: `dev/`, `tests/`, `CLAUDE.md` and the others only development uses. A check of each file's blob hash found them missing, and the state was written again from each blob.
+- Why: CONFIRMED: `git archive` leaves out the paths `.gitattributes` marks `export-ignore`, and here those are the files a reviewer needs most.
+- Rule going forward: save a review state by writing each file that `git ls-tree -r <rev>` lists from its blob, as bytes (`git cat-file blob`, read by Node), not with `git archive`. Then check each file as "Running a test against old code" step 2 says, and count the files against the tree.
+- Evidence: `.gitattributes`, search "/tests export-ignore"
+- Status: open
+
+## 2026-11-25: Two inline scripts with backslash quotes broke in the PowerShell tool
+- What went wrong: in Q83's round 3, a `node -e` script given in a double-quoted PowerShell string and holding `\"` failed before node ran it, and a `gh --jq` filter holding `\"\"` in a single-quoted string failed to parse. Each was redone: the script as a file written with the Write tool, the filter without the backslashes.
+- Why: CONFIRMED in pwsh 7.7.0: a backslash escapes nothing there. In a double-quoted string the `"` after it ends the string ("The string is missing the terminator"), and in a single-quoted one the backslash is passed on as typed.
+- Rule going forward: in the PowerShell tool, write a `"` inside single quotes as it is, with no backslash. A script that needs both kinds of quote, for `node -e` or `--jq`, goes in a scratch file written with the Write tool.
+- Evidence: `PLAYBOOK.md`, search "In the PowerShell tool, give a commit message with"
+- Status: open
+
 ## 2026-11-25: A mutant script read every mutant as passing, as Node 26 prints spec into a pipe
 - What went wrong: in Q83, `mut2.mjs --tests` ran the gate tests on six mutants of the new `psKind` and reported that each passed them all. The script counted TAP's `not ok` lines, and Node 26 prints the spec reporter even into a pipe, so it found none. One of those mutants, run alone through its nearest test, failed it.
 - Why: CONFIRMED: `node --test` in Node 26.13.1, piped, printed the spec reporter's lines and no `not ok` line. The script had no check that it found a result at all.
@@ -27,7 +62,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: CONFIRMED: the cache kept where the expression started, not how far it had read. The gate's 6 second deadline looks at the clock between steps of `tokenize`, and this cost was inside one step.
 - Rule going forward: a parse that goes on across calls is timed before the commit, with one long input for each place it can stop (here a `.`, a `[`, a `:`, a quoted string, a `$( )`, a variable name), each followed by thousands of the calls that resume it. A cost inside one step of `tokenize` gets its own timing test, since the deadline doesn't bound it.
 - Evidence: `tests/gate.test.mjs`, search "a PowerShell word with many escapes after an expression is read in linear time"
-- Status: open
+- Status: promoted to PLAYBOOK "Writing a timing test"
 
 ## 2026-11-25: A check chain ran none of its steps and exited 0
 - What went wrong: after the desktop app restart, Q83's heavy checks were rerun with `pwsh -File chain.ps1 -Only mut2-tests,mut-final,...`, the command the hand-over note gave. It finished in a second with exit code 0 and ran no step. Read as a result, it would have looked like every check passed.
