@@ -60,7 +60,7 @@ const DENY_MARK = 'Lessons check (PLAYBOOK.md';
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
 const REASON_LOOKUP = `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\` from the repo's top folder and let it finish. Then, just before the call, write a short \`Lessons checked:\` line alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses both up, and so does any command with a \`git commit\` or \`git push\` in it, even one that fails or never reaches it. If this deny comes back, do both again as above. If it still comes back, check that the lookup finished before the call started and ran from the repo's top folder, with any \`cd\` there giving the path as its first argument (not a variable or \`$(...)\`), and that your reply's text starts with exactly \`Lessons checked:\`.${OFF}`;
 const REASON_LINE = `${DENY_MARK}, 'The lessons check'): just before the call, write a short \`Lessons checked:\` line naming the lessons that apply, alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses the line up, and so does any command with a \`git commit\` or \`git push\` in it, even one that fails or never reaches it. If this deny comes back, write the line again as above, starting it with exactly \`Lessons checked:\`.${OFF}`;
-const REASON_LATE = `${DENY_MARK}, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.${OFF}`;
+const REASON_LATE = `${DENY_MARK}, 'The lessons check'): the gate ran out of time before it could read this turn up to the call, so it denies the call rather than let it through unread. Retry it in the next turn. If this deny keeps coming back, tell the user that the gate runs out of time in this session.${OFF}`;
 const REASON_UNSEEN = `${DENY_MARK}, 'The lessons check'): the gate didn't find this call in the session's transcript in time, so it denies the call rather than let it through unread. Retry it as the only call in your next reply. If this deny keeps coming back, tell the user that the gate can't find calls in this session's transcript.${OFF}`;
 // Earlier wording of the reasons, so a call denied by an older copy is known:
 // 0.4.0's two texts, without OFF. Each 0.4.0 reason is one of them followed
@@ -1524,12 +1524,14 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 // POLL_FOR. Each look reads the file's last chunk, and the last look reads the
 // whole window, for a record that over a chunk of later records follows (the
 // large results of earlier calls of the same message). What comes after the
-// record is not read. A record longer than the window read (a large Write)
-// widens the window. Past the deadline it stops (inTime). An assistant record
-// that holds the call's id outside a tool_use block is the call in a shape
-// the gate doesn't read: then it returns UNREAD. The id in any other record
-// is no sign the call is on disk, as Claude Code writes data-flow-records
-// lines that name a call's id before the call's own record.
+// record is not read. A record cut at the start of the window read (a large
+// Write) widens the window, and at the whole window it is skipped. Past the
+// deadline it stops (inTime). An assistant record that holds the call's id,
+// but not as the id of a tool_use block in its message content, may be the
+// call in a shape the gate doesn't read: when the last look finds one and not
+// the call, it returns UNREAD. The id in a record of any other type is no
+// sign the call is on disk, as Claude Code writes data-flow-records lines
+// that name a call's id before the call's own record.
 const UNREAD = -1;
 async function waitForCall(fd, id) {
   const needle = Buffer.from(JSON.stringify(id));
@@ -1546,8 +1548,13 @@ async function waitForCall(fd, id) {
       for (let i = buf.indexOf(needle); i >= 0 && !grow; i = buf.indexOf(needle, i + 1)) {
         const a = buf.lastIndexOf(10, i) + 1;
         if (a === 0 && from > 0) {
-          grow = true;
-          break;
+          if (win < MAX_WINDOW) {
+            grow = true;
+            break;
+          }
+          i = buf.indexOf(10, i);
+          if (i < 0) break;
+          continue;
         }
         const b = buf.indexOf(10, i);
         const r = parse(buf.subarray(a, b < 0 ? buf.length : b));
@@ -1558,7 +1565,7 @@ async function waitForCall(fd, id) {
       if (!grow || win >= MAX_WINDOW) break;
       win = Math.min(win * 4, MAX_WINDOW);
     }
-    if (odd) return UNREAD;
+    if (odd && last) return UNREAD;
     inTime();
     if (last) return null;
     await sleep(POLL_EVERY);
@@ -2110,8 +2117,8 @@ async function main() {
       return deny(needLookup ? REASON_LOOKUP : REASON_LINE);
     }
     const size = await waitForCall(fd, id);
-    // On disk in a shape the gate doesn't read: it passes, as any record the
-    // gate can't read does.
+    // Maybe on disk in a shape the gate doesn't read: it passes, as any
+    // record the gate can't read does.
     if (size === UNREAD) return;
     // Not found in time. In this session's own transcript the record is late
     // (or in a record type the gate doesn't read), and the turn can't be read

@@ -26,7 +26,7 @@ const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): just befo
 const OLD_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry.";
 const OLD_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry.";
 const OLD_REASONS = [['0.4.0, the lookup', OLD_LOOKUP + OFF], ['0.4.0, the line', OLD_LINE + OFF], ['0.4.0, the lookup before OFF', OLD_LOOKUP], ['0.4.0, the line before OFF', OLD_LINE]];
-const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
+const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): the gate ran out of time before it could read this turn up to the call, so it denies the call rather than let it through unread. Retry it in the next turn. If this deny keeps coming back, tell the user that the gate runs out of time in this session." + OFF;
 const REASON_UNSEEN = "Lessons check (PLAYBOOK.md, 'The lessons check'): the gate didn't find this call in the session's transcript in time, so it denies the call rather than let it through unread. Retry it as the only call in your next reply. If this deny keeps coming back, tell the user that the gate can't find calls in this session's transcript." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
@@ -1895,6 +1895,41 @@ test('a call with over 1 MB of later records after its own is found and judged',
   assert.equal(gate(payload(t2, t2.write(), 'Write', input, id2, {cwd: root})).deny, false, 'judged: the turn is ready');
 });
 
+// The last look reads the whole 32 MB window. A record cut at the window's
+// start can't be read there, even when its part inside the window holds the
+// call's id, as a data-flow-records line does (Claude Code writes one before
+// the call's own record). The look skips it and finds the call's own record
+// after it, which is judged. It fails on 134d106, which stopped at the cut
+// record and denied the call as not found, and on 0.4.0, which let it
+// through unread (review round 2, cutline.mjs).
+test('a record cut at the start of the full window is skipped, and the call after it is judged', {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_cut';
+  const WINDOW = 32 * 1024 * 1024;
+  const t = new Transcript(root).prompt();
+  t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
+  const flowAt = t.lines.reduce((n, l) => n + l.length + 1, 0);
+  t.push({type: 'data-flow-records', sessionId: 'sess-1', v: 1, records: [{pad: 'p'.repeat(2000), toolUseId: id}]});
+  const flow = t.lines.at(-1);
+  const idAt = flowAt + flow.indexOf(JSON.stringify(id));
+  current(t, 'Write', input, {id});
+  const path = t.write();
+  // Later records, so that the window starts halfway into the data-flow
+  // line, before the id.
+  const tail = flowAt + Math.floor(flow.length / 2) + WINDOW - lstatSync(path).size;
+  const line = `${JSON.stringify({type: 'y', p: 'q'.repeat(200)})}\n`;
+  const n = Math.floor(tail / line.length);
+  appendFileSync(path, `${JSON.stringify({type: 'y', p: 'q'.repeat(200 + tail - n * line.length)})}\n`);
+  const block = line.repeat(1024);
+  let left = n - 1;
+  for (; left >= 1024; left -= 1024) appendFileSync(path, block);
+  appendFileSync(path, line.repeat(left));
+  const start = lstatSync(path).size - WINDOW;
+  assert.ok(flowAt < start && start < idAt, `the window starts at ${start}, not between the data-flow line's start ${flowAt} and the id ${idAt}`);
+  assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
+
 test('a malformed transcript, a cut first line, invalid UTF-8 and an unknown format fail open', () => {
   const root = makeRepo();
   const file = join(root, 'src.txt');
@@ -2072,15 +2107,16 @@ test('a lowered deadline also ends the wait for the current call, which is then 
   const path = t.write();
   const input = {file_path: join(root, 'x.txt'), content: 'x'};
   // The deadline is 600 ms after Node's start. The call reaches the
-  // transcript 900 ms after the hook's first look: inside the 1.3 s wait,
+  // transcript 1,100 ms after the hook's first look: inside the 1.3 s wait,
   // past the deadline. The gate is out of time then, so it denies the call
   // as late, in this session's transcript and in another session's, where a
-  // call it can't find would pass.
+  // call it can't find would pass. A hook whose wait ignores the deadline
+  // finds the call and lets it through.
   for (const [session, where] of [['sess-1', "this session's transcript"], ['sess-2', "another session's transcript"]]) {
     const id = `toolu_slow_${session}`;
     const one = watched(payload(t, path, 'Write', input, id, {cwd: root, session_id: session}), {LESSONS_GATE_DEADLINE_MS: '600'});
     assert.notEqual(await one.looked, null, 'the hook exited without reading the transcript');
-    await pause(900);
+    await pause(1100);
     appendFileSync(path, lateCall(t, root, id, input));
     assert.equal(reasonOf((await one.done).stdout), REASON_LATE, `the wait ended at the deadline, in ${where}`);
   }
@@ -2106,15 +2142,17 @@ test('a call never written is denied only in a transcript that holds a user or a
   assert.equal(gate(p(noise.write())).deny, false, 'only records that carry the session but are not user or assistant records');
 });
 
-// In this session's transcript, an assistant record that holds the call's id
-// outside a tool_use block is the call, on disk in a shape the gate doesn't
-// read, so it passes as such a record does (review round 1, F1: the probe's
-// unknownShape). The call's id anywhere else is no sign it is on disk:
-// Claude Code writes data-flow-records lines that name a call's id before
-// the call's own record. Those, and a tool_use block in a user record, are
-// denied as unseen. The turn has no line, so a call judged would be denied
-// for the lookup.
-test("in this session's transcript, a call's id in an assistant record outside a tool_use block passes, and elsewhere is denied", {timeout: 60_000}, () => {
+// In this session's transcript, an assistant record that holds the call's
+// id, but not as the id of a tool_use block in its message content, may be
+// the call on disk in a shape the gate doesn't read. When the wait ends with
+// no record of the call in its own shape, the call passes, as such a record
+// does (review round 1, F1: the probe's unknownShape). The call's id in a
+// record of any other type is no sign it is on disk: Claude Code writes
+// data-flow-records lines that name a call's id before the call's own
+// record. Those, and a tool_use block in a user record, are denied as
+// unseen. The turn has no line, so a call judged would be denied for the
+// lookup.
+test("in this session's transcript, an assistant record that holds a call's id but not as a tool_use block's id lets it through, and other records do not", {timeout: 60_000}, () => {
   const root = makeRepo();
   const input = {file_path: join(root, 'x.txt'), content: 'x'};
   const id = 'toolu_odd';
@@ -2127,16 +2165,38 @@ test("in this session's transcript, a call's id in an assistant record outside a
   const asst = (content) => (t) => t.base('assistant', {message: {id: 'msg-odd', type: 'message', role: 'assistant', content}});
   assert.equal(run(asst(id)).deny, false, 'content as a string');
   assert.equal(run(asst([{type: 'tool_call', id, name: 'Write', input}])).deny, false, 'a block of another type');
+  assert.equal(run(asst([{type: 'tool_use', id: 'toolu_other', name: 'Bash', input: {command: 'echo', ref: id}}])).deny, false, "another call's input");
   assert.equal(run((t) => t.base('user', {message: {role: 'user', content: [{type: 'tool_use', id, name: 'Write', input}]}})).reason, REASON_UNSEEN, 'a tool_use block in a user record');
   assert.equal(run(() => ({type: 'data-flow-records', sessionId: 'sess-1', v: 1, records: [{toolUseId: id}]})).reason, REASON_UNSEEN, 'a data-flow-records line');
 });
 
+// Such a record lets the call through only when the wait ends. Here the
+// call's own record comes 500 ms after the hook's first look, after one: it
+// is judged. It fails on 134d106, which let the call through at the first
+// look that found the other record, and on 0.4.0, whose 300 ms wait was
+// over (review round 2).
+test('a record that holds the call in a shape the gate does not read lets it through only when the wait ends', {timeout: 60_000}, async () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_odd_first';
+  const t = new Transcript(root).prompt();
+  t.newMessage();
+  t.push(t.base('assistant', {message: {id: 'msg-odd', type: 'message', role: 'assistant', content: id}}));
+  const path = t.write();
+  const one = watched(payload(t, path, 'Write', input, id, {cwd: root}));
+  assert.notEqual(await one.looked, null, 'the hook exited without reading the transcript');
+  await pause(500);
+  appendFileSync(path, lateCall(t, root, id, input));
+  assert.equal(reasonOf((await one.done).stdout), REASON_LOOKUP, 'the call in its own shape came later and was judged');
+});
+
 // The look for this session's records checks the deadline too. A 33 MB
 // transcript of short lines that pass its quick text test and fail to parse
-// takes it seconds (3.5 s on the PC this was written on). With the deadline
-// 2.5 s after Node's start, the 1.3 s wait ends before it, and the look stops
-// there and denies. It fails on 1f68aba, which read all 32 MB and let the
-// call through.
+// takes it seconds (3.5 s on the PC this was written on, and over 1.1 s on
+// each CI system at 134d106). With the deadline 1.8 s after Node's start,
+// the 1.3 s wait ends before it (about 1.36 s after the start here), and the
+// look stops there and denies. It fails on 1f68aba, which read all 32 MB and
+// let the call through.
 test("the look for this session's records stops at the deadline", {timeout: 60_000}, () => {
   const root = makeRepo();
   const input = {file_path: join(root, 'x.txt'), content: 'x'};
@@ -2147,7 +2207,7 @@ test("the look for this session's records stops at the deadline", {timeout: 60_0
   writeFileSync(path, `${JSON.stringify({sessionId: 'sess-1', type: 'user', message: {role: 'user', content: 'x'}})}\n`);
   for (let n = 0; n < 33; n++) appendFileSync(path, block);
   const p = {session_id: 'sess-1', transcript_path: path, cwd: root, prompt_id: 'prompt-1', hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: input, tool_use_id: 'toolu_never'};
-  assert.equal(gate(p, {LESSONS_GATE_DEADLINE_MS: '2500'}).reason, REASON_LATE);
+  assert.equal(gate(p, {LESSONS_GATE_DEADLINE_MS: '1800'}).reason, REASON_LATE);
 });
 
 test('the hook imports only fs, path and crypto, and calls no write, spawn or network function', () => {
