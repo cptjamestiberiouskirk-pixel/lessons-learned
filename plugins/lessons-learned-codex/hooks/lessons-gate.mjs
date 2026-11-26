@@ -287,7 +287,7 @@ const HERE_DOC = /<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|\\?([A-Za-z0-9_.-]+))/y
 // is kept, $ ` { } and + included; a $( ), ${ } or backticks are kept whole.
 // A CR ends it, but bash on Linux (`linux`) keeps one. Null where no word
 // follows, or a quote or a $( ) isn't closed on the line. `look` finds where
-// a $( ) or ${ } closes (hereDocs).
+// a $( ) or ${ } closes, and marks where a scan failed from (hereDocs).
 function hereTag(line, at, linux, look) {
   let i = at + 2;
   const tabs = line[i] === '-';
@@ -295,18 +295,31 @@ function hereTag(line, at, linux, look) {
   while (line[i] === ' ' || line[i] === '\t') i++;
   let tag = '';
   const start = i;
+  // From each place the scan passes between a word's pieces, it goes on the
+  // same way whatever came before, so a scan that failed would fail again
+  // from each of them. hereDocs tries each << inside a word whose scan
+  // failed, and each would read the rest of it again (Q83 review round 3),
+  // so those places are marked, and a scan that comes to one stops there.
+  const dead = look.dead();
+  const passed = [];
+  const fail = () => {
+    for (const k of passed) dead[k] = 1;
+    return null;
+  };
   while (i < line.length) {
+    if (dead[i]) return fail();
+    passed.push(i);
     const c = line[i];
     if (' \t;&|()<>'.includes(c) || (c === '\r' && !linux)) break;
     if (c === "'") {
       const k = line.indexOf("'", i + 1);
-      if (k < 0) return null;
+      if (k < 0) return fail();
       tag += line.slice(i + 1, k);
       i = k + 1;
     } else if (c === '$' && line[i + 1] === "'") {
       let k = i + 2;
       while (k < line.length && line[k] !== "'") k += line[k] === '\\' ? 2 : 1;
-      if (k >= line.length) return null;
+      if (k >= line.length) return fail();
       tag += ansiC(line.slice(i + 2, k));
       i = k + 1;
     } else if (c === '"' || (c === '$' && line[i + 1] === '"')) {
@@ -315,19 +328,19 @@ function hereTag(line, at, linux, look) {
         if (line[k] === '\\' && '$`"\\'.includes(line[k + 1] ?? '')) k++;
         tag += line[k];
       }
-      if (k >= line.length) return null;
+      if (k >= line.length) return fail();
       i = k + 1;
     } else if (c === '\\') {
       if (i + 1 < line.length) tag += line[i + 1];
       i += 2;
     } else if (c === '$' && (line[i + 1] === '(' || line[i + 1] === '{')) {
       const k = line[i + 1] === '(' ? look.parens(i + 1) : look.brace(i + 2);
-      if (k < 0 || k >= line.length) return null;
+      if (k < 0 || k >= line.length) return fail();
       tag += line.slice(i, k + 1);
       i = k + 1;
     } else if (c === '`') {
       const k = line.indexOf('`', i + 1);
-      if (k < 0) return null;
+      if (k < 0) return fail();
       tag += line.slice(i, k + 1);
       i = k + 1;
     } else {
@@ -343,21 +356,18 @@ function hereDocs(line, state) {
   const st = state.stack;
   // A tag whose $( ) or ${ } isn't closed on its line is looked for to the
   // line's end, and each << after it looks as far again (Q83 review round 1),
-  // so the ends are found once for the line: each ( in one pass (parenEnds),
-  // and the next } from where the last search began, as each search starts
-  // past the last.
-  let table = null;
-  let braceFrom = Infinity;
-  let braceAt = -1;
+  // so the ends are found once for the line, each in one pass: where each (
+  // is balanced (parenEnds), and the next } from each place (braceNexts).
+  // Nested tags look from places that go back and forth, so neither is a
+  // search that goes on from the last (Q83 review round 3). `dead` marks
+  // where a tag's scan failed from (hereTag).
+  let parenTable = null;
+  let braceTable = null;
+  let deadTable = null;
   const look = {
-    parens: (open) => (table ??= parenEnds(line))[open],
-    brace: (from) => {
-      if (from < braceFrom || (braceAt >= 0 && from > braceAt)) {
-        braceFrom = from;
-        braceAt = line.indexOf('}', from);
-      }
-      return braceAt;
-    },
+    parens: (open) => (parenTable ??= parenEnds(line))[open],
+    brace: (from) => (braceTable ??= braceNexts(line))[from],
+    dead: () => (deadTable ??= new Uint8Array(line.length)),
   };
   let arith = 0;
   let brackets = 0;
@@ -442,6 +452,19 @@ function parenEnds(text) {
     else if (text[j] === ')' && open.length) ends[open.pop()] = j;
   }
   return ends;
+}
+
+// For each place in `text`, its end included, what text.indexOf('}', from)
+// gives: the first } at or after it, or -1. Found in one pass from the end.
+function braceNexts(text) {
+  const next = new Int32Array(text.length + 1);
+  let at = -1;
+  next[text.length] = -1;
+  for (let j = text.length - 1; j >= 0; j--) {
+    if (text[j] === '}') at = j;
+    next[j] = at;
+  }
+  return next;
 }
 
 // The characters pwsh reads as a space between words, as its tokenizer's

@@ -2185,15 +2185,28 @@ test('time: PowerShell words that start with a $( ) holding a quoted ( are read 
 // each <<, and on round 2's, which denied such a call as out of time past a
 // budget instead of reading it. A } is looked for with indexOf, fast enough
 // that it takes a longer line to show (scratch q83/verify/r2/growth5-old.txt).
+// The last three fail on round 3's reviewed gate (scratch q83/review3-state,
+// q83/verify/r3). Nested tags looked for a } again from each tag's ${, which
+// was before the last search's start; one U+2013 keeps that text two bytes a
+// character, where the search is slower. And a tag whose word failed at the
+// line's end was read again, as far, from each << inside it: inside closed
+// ${ }, or between $( and ${ pairs that end in an unclosed quote.
 test('time: here-doc tags that never close are read in linear time', (t2) => {
   const root = makeRepo();
-  for (const [opener, quarter] of [['<<$(', 2_000], ['<<${', 40_000]]) {
-    const cmd = (n) => `git push\necho ${opener.repeat(n)}`;
+  const shapes = [
+    ['<<$(', 2_000, (n) => `echo ${'<<$('.repeat(n)}`],
+    ['<<${', 40_000, (n) => `echo ${'<<${'.repeat(n)}`],
+    ['nested', 15_000, (n) => 'echo ' + '<<$('.repeat(n) + 'x' + ')${'.repeat(n) + 'a'.repeat(8 * n) + String.fromCharCode(0x2013)],
+    ['in ${ }', 3_000, (n) => 'echo <<' + '${<<}'.repeat(n) + '${'],
+    ['pairs', 10_000, (n) => 'echo ' + '<<$(<<${'.repeat(n) + "}'" + ')${'.repeat(n)],
+  ];
+  for (const [name, quarter, line] of shapes) {
+    const cmd = (n) => `git push\n${line(n)}`;
     const run = (n) => () => command(root, cmd(n), () => {}).ms;
     const g = growth(run(quarter), run(4 * quarter), run(1));
-    t2.diagnostic(`${opener}: ${g.shown}`);
-    assert.ok(g.ratio < 8, `${opener}: ${g.shown}`);
-    assert.equal(command(root, cmd(4 * quarter), () => {}).reason, REASON_LOOKUP, `${opener}: denied for its push`);
+    t2.diagnostic(`${name}: ${g.shown}`);
+    assert.ok(g.ratio < 8, `${name}: ${g.shown}`);
+    assert.equal(command(root, cmd(4 * quarter), () => {}).reason, REASON_LOOKUP, `${name}: denied for its push`);
   }
 });
 
