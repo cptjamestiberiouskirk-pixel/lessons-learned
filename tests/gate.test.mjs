@@ -1273,7 +1273,26 @@ test('a PowerShell escape before a newline is read by the word before it', () =>
   // inside a word is part of the word, so the ) ends the $( ) and the quote
   // after it is a quote (scratch q83/verify-more.mjs).
   assert.equal(command(root, 'echo -a:`\ngit push', () => {}, {tool: 'PowerShell'}).deny, false, 'after -a:');
+  // The same after a dash pwsh reads as - (PS_DASH): git is the value, and
+  // after git -c, push is git's (pwsh passes git -c, U+2013 a:, push). Q83
+  // review round 2: these fail on a mutant that reads only - there
+  // (scratch q83/review2-code/mut/colon.mjs), and the second on round 1's
+  // reviewed gate.
+  assert.equal(command(root, 'echo –a:`\ngit push', () => {}, {tool: 'PowerShell'}).deny, false, 'after U+2013 a:');
+  assert.equal(command(root, 'git -c –a:`\npush', () => {}, {tool: 'PowerShell'}).deny, true, 'git -c U+2013 a: push');
   assert.equal(command(root, "echo $(echo x$(echo a)#) '\ngit push\n'", () => {}, {tool: 'PowerShell'}).deny, false, 'a # after a $( ) in a word');
+});
+
+// After a parameter, a ` and a carriage return with no line feed after it end
+// the line too, as pwsh reads a lone CR as a line end (Q82). Each push ran in
+// pwsh 7.7 with a stub git, at a statement's start, after echo and in a script
+// block; main let each through (Q83 review round 2, scratch
+// q83/verify/r2/fd3.json).
+test('a PowerShell parameter before a backtick and a lone carriage return ends the line', () => {
+  const root = makeRepo();
+  for (const cmd of ['-a$x`\rgit push', 'echo -a$x`\rgit push', 'echo –a$x`\rgit push', '& { -a$x`\rgit push\r}']) {
+    assert.equal(command(root, cmd, () => {}, {tool: 'PowerShell'}).deny, true, JSON.stringify(cmd));
+  }
 });
 
 // Q83 review round 1: where the gate couldn't place the word before a ` and a
@@ -2142,18 +2161,57 @@ test('time: a PowerShell word holding many $( ) is read in linear time', (t2) =>
   assert.ok(g.ratio < 8, g.shown);
 });
 
+// Fails on Q83 review round 2's reviewed gate (scratch q83/review2-state),
+// whose psHead found the end of a $( ) that starts a word by counting
+// parentheses to the end of the command, so a quoted ( in it made each such
+// word's head a scan to the end, once for each word.
+test('time: PowerShell words that start with a $( ) holding a quoted ( are read in linear time', (t2) => {
+  const root = makeRepo();
+  const word = "$(echo '(').y`\n ";
+  const shapes = {
+    'at the top': (n) => `echo ${word.repeat(n)}\ngit commit -m x`,
+    'in a $( )': (n) => `echo $(echo ${word.repeat(n)})\ngit commit -m x`,
+  };
+  for (const [name, cmd] of Object.entries(shapes)) {
+    const run = (n) => () => command(root, cmd(n), () => {}, {tool: 'PowerShell'}).ms;
+    const g = growth(run(2_000), run(8_000), run(1));
+    t2.diagnostic(`${name}: ${g.shown}`);
+    assert.ok(g.ratio < 8, `${name}: ${g.shown}`);
+  }
+});
+
 // Fails on Q83 review round 1's reviewed gate, which looked for the end of a
-// here-doc tag whose $( ) isn't closed to the line's end, once for each <<.
-// Past a budget that grows with the command, the gate denies the call as out
-// of time instead.
+// here-doc tag whose $( ) or ${ } isn't closed to the line's end, once for
+// each <<, and on round 2's, which denied such a call as out of time past a
+// budget instead of reading it. A } is looked for with indexOf, fast enough
+// that it takes a longer line to show (scratch q83/verify/r2/growth5-old.txt).
 test('time: here-doc tags that never close are read in linear time', (t2) => {
   const root = makeRepo();
-  const cmd = (n) => `git push\necho ${'<<$('.repeat(n)}`;
-  const run = (n) => () => command(root, cmd(n), () => {}).ms;
-  const g = growth(run(2_000), run(8_000), run(1));
-  t2.diagnostic(g.shown);
-  assert.ok(g.ratio < 8, g.shown);
-  assert.equal(command(root, cmd(8_000), () => {}).reason, REASON_LATE, 'denied as out of time');
+  for (const [opener, quarter] of [['<<$(', 2_000], ['<<${', 40_000]]) {
+    const cmd = (n) => `git push\necho ${opener.repeat(n)}`;
+    const run = (n) => () => command(root, cmd(n), () => {}).ms;
+    const g = growth(run(quarter), run(4 * quarter), run(1));
+    t2.diagnostic(`${opener}: ${g.shown}`);
+    assert.ok(g.ratio < 8, `${opener}: ${g.shown}`);
+    assert.equal(command(root, cmd(4 * quarter), () => {}).reason, REASON_LOOKUP, `${opener}: denied for its push`);
+  }
+});
+
+// Q83 review round 2: round 2's budget for such tags denied the call outside
+// a gated repo, and every later call of the turn (scratch
+// q83/review2-code/turn-late.mjs). Both fail on round 2's reviewed gate.
+const neverClosed = `echo ${'<<$('.repeat(2_000)}`;
+test('here-doc tags that never close deny nothing outside a gated repo', () => {
+  const plain = makeRepo({check: false});
+  assert.equal(command(plain, `git push\n${neverClosed}`, () => {}).deny, false);
+});
+test('here-doc tags that never close in an earlier call deny no later call', () => {
+  const root = makeRepo();
+  const after = edit(root, (t) => {
+    ready(t);
+    t.call('toolu_tags', 'Bash', {command: neverClosed, description: 'Run it'});
+  });
+  assert.equal(after.deny, false);
 });
 
 test('time: finding the line grows linearly with the text before a mention in backticks', (t2) => {

@@ -260,7 +260,7 @@ function dropBodies(command, dialect, legacy, cr = false, linux = false) {
   // the closing line; the other readings take a CR at the line's end off.
   const waiting = [];
   let next = 0;
-  const state = {stack: [], legacy, linux, work: 0, budget: 4 * command.length + 4096};
+  const state = {stack: [], legacy, linux};
   for (const raw of command.split('\n')) {
     if (next < waiting.length) {
       const line = linux ? raw : raw.replace(/\r$/, '');
@@ -286,8 +286,9 @@ const HERE_DOC = /<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|\\?([A-Za-z0-9_.-]+))/y
 // decoded, and every other character up to a space, a tab or one of ;&|()<>
 // is kept, $ ` { } and + included; a $( ), ${ } or backticks are kept whole.
 // A CR ends it, but bash on Linux (`linux`) keeps one. Null where no word
-// follows, or a quote or a $( ) isn't closed on the line.
-function hereTag(line, at, linux) {
+// follows, or a quote or a $( ) isn't closed on the line. `look` finds where
+// a $( ) or ${ } closes (hereDocs).
+function hereTag(line, at, linux, look) {
   let i = at + 2;
   const tabs = line[i] === '-';
   if (tabs) i++;
@@ -320,7 +321,7 @@ function hereTag(line, at, linux) {
       if (i + 1 < line.length) tag += line[i + 1];
       i += 2;
     } else if (c === '$' && (line[i + 1] === '(' || line[i + 1] === '{')) {
-      const k = line[i + 1] === '(' ? parens(line, i + 2) : line.indexOf('}', i + 2);
+      const k = line[i + 1] === '(' ? look.parens(i + 1) : look.brace(i + 2);
       if (k < 0 || k >= line.length) return null;
       tag += line.slice(i, k + 1);
       i = k + 1;
@@ -340,6 +341,24 @@ function hereTag(line, at, linux) {
 function hereDocs(line, state) {
   const found = [];
   const st = state.stack;
+  // A tag whose $( ) or ${ } isn't closed on its line is looked for to the
+  // line's end, and each << after it looks as far again (Q83 review round 1),
+  // so the ends are found once for the line: each ( in one pass (parenEnds),
+  // and the next } from where the last search began, as each search starts
+  // past the last.
+  let table = null;
+  let braceFrom = Infinity;
+  let braceAt = -1;
+  const look = {
+    parens: (open) => (table ??= parenEnds(line))[open],
+    brace: (from) => {
+      if (from < braceFrom || (braceAt >= 0 && from > braceAt)) {
+        braceFrom = from;
+        braceAt = line.indexOf('}', from);
+      }
+      return braceAt;
+    },
+  };
   let arith = 0;
   let brackets = 0;
   for (let i = 0; i < line.length; i++) {
@@ -377,13 +396,7 @@ function hereDocs(line, state) {
         continue;
       }
       if (!state.legacy) {
-        const t = hereTag(line, i, state.linux);
-        // A tag whose quote or $( ) isn't closed on its line was looked for
-        // to the line's end, and the next << may look as far again: past a
-        // budget that grows with the command, the gate denies the call
-        // rather than read on (scratch q83/verify/time.mjs).
-        state.work += (t ? t.end : line.length) - i;
-        if (state.work > state.budget) throw LATE;
+        const t = hereTag(line, i, state.linux, look);
         if (!t) {
           i++;
           continue;
@@ -415,6 +428,20 @@ function parens(text, from) {
     else if (text[j] === ')' && --depth === 0) return j;
   }
   return text.length;
+}
+
+// For each ( in `text`, what parens() gives for the text after it: the index
+// of the ) that balances it, or text.length. Found in one pass, so a text
+// whose parentheses are looked up again and again is read once (Q83 review
+// round 2: psHead and hereTag looked from many places to the same end).
+function parenEnds(text) {
+  const ends = new Int32Array(text.length).fill(text.length);
+  const open = [];
+  for (let j = 0; j < text.length; j++) {
+    if (text[j] === '(') open.push(j);
+    else if (text[j] === ')' && open.length) ends[open.pop()] = j;
+  }
+  return ends;
 }
 
 // The characters pwsh reads as a space between words, as its tokenizer's
@@ -486,10 +513,11 @@ function psEscape(s, k) {
 // a member or an index after it ($x[0], $x.y.z, $env:x.y, $x::y). null with
 // none. It reads as far as the text goes, so a word's head is found once; an
 // escape that cuts the word before the head's end leaves it no expression
-// yet. $?, $$ and $^ take none in an argument.
+// yet. $?, $$ and $^ take none in an argument. `ends` gives parenEnds(s),
+// found once for s, so a $( ) head costs no scan of its own.
 const PS_VAR = /\$(?:\{[^}]*\}|(?:[\p{L}_][\p{L}\p{N}_]*:(?!:))?[\p{L}\p{N}_][\p{L}\p{N}_?]*)/uy;
 const PS_NAME = /[\p{L}\p{N}_]+/uy;
-function psHead(s, k) {
+function psHead(s, k, ends) {
   let e;
   if (s[k] === "'") {
     for (e = k + 1; ; e += 2) {
@@ -501,14 +529,14 @@ function psHead(s, k) {
   if (s[k] === '"') {
     for (e = k + 1; e < s.length; ) {
       if (s[e] === '`') e += 2;
-      else if (s[e] === '$' && s[e + 1] === '(') e = parens(s, e + 2) + 1;
+      else if (s[e] === '$' && s[e + 1] === '(') e = ends()[e + 1] + 1;
       else if (s[e] === '"' && s[e + 1] === '"') e += 2;
       else if (s[e] === '"') return [e + 1, true];
       else e++;
     }
     return null;
   }
-  if (s[k] === '$' && s[k + 1] === '(') return [parens(s, k + 2) + 1, true];
+  if (s[k] === '$' && s[k + 1] === '(') return [ends()[k + 1] + 1, true];
   PS_VAR.lastIndex = k;
   return PS_VAR.exec(s) ? [PS_VAR.lastIndex, false] : null;
 }
@@ -569,10 +597,10 @@ function psStep(s, e, to, st) {
 // whether that alone makes an expression. A . or [ where `to` cut it is read
 // again from there, and a [ from where its scan got to.
 // pwsh reads U+2013, U+2014 and U+2015 as a parameter's dash wherever it reads
-// - (scratch q83/verify/dash.mjs).
+// - (scratch q83/verify/dash.mjs). `ends` is psHead's.
 const PS_DASH = `-${String.fromCharCode(0x2013, 0x2014, 0x2015)}`;
 const PS_PARAM = new RegExp(`(?:[${PS_DASH}][\\p{L}_?]|:[\\p{L}\\p{N}_?])[\\p{L}\\p{N}_?$-]*:?`, 'uy');
-function psKind(s, from, to, c, lead = false) {
+function psKind(s, from, to, c, lead, ends) {
   if (from >= to) return null;
   if (c.from !== from || to < c.to) {
     c.from = from;
@@ -589,7 +617,7 @@ function psKind(s, from, to, c, lead = false) {
   let cut = false;
   while (!c.rest) {
     if (c.e < 0) {
-      if (c.h === undefined) c.h = psHead(s, c.k);
+      if (c.h === undefined) c.h = psHead(s, c.k, ends);
       if (!c.h) {
         c.rest = true;
         break;
@@ -719,6 +747,9 @@ function tokenize(input, dialect, legacy = false, split = null) {
   const cr = Boolean(split) && dialect === 'ps';
   const linux = Boolean(split) && dialect === 'sh' && split.sh === 'linux';
   const s = dropBodies(drop ? input.replace(/\r/g, '') : input, dialect, legacy, cr, linux);
+  // psKind's table of where each ( in s is balanced, found when first needed.
+  let parenTable = null;
+  const psEnds = () => (parenTable ??= parenEnds(s));
   const isNl = (k) => s[k] === '\n' || (cr && s[k] === '\r' && s[k + 1] !== '\n');
   // A space between words, as the shell reads one (see psSpace). A CR is
   // one but in bash on Linux. The legacy reading and cmd read \s.
@@ -849,7 +880,7 @@ function tokenize(input, dialect, legacy = false, split = null) {
         // as a space, or as a parameter's end and a newline (see psKind), a
         // # after it starts a comment.
         if (isNl(j + 1) && cr) {
-          if ((start || whole === j ? 'start' : (psKind(s, wordAt, j, kc, wordAt === after) ?? split.ps)) !== 'in') start = true;
+          if ((start || whole === j ? 'start' : (psKind(s, wordAt, j, kc, wordAt === after, psEnds) ?? split.ps)) !== 'in') start = true;
         } else if (!isNl(j + 1)) {
           if (start || ends(j)) wordAt = j;
           start = false;
@@ -952,7 +983,7 @@ function tokenize(input, dialect, legacy = false, split = null) {
     if (c === esc && dialect !== 'cmd') {
       const nl = isNl(i + 1) ? 1 : s[i + 1] === '\r' && s[i + 2] === '\n' ? 2 : 0;
       if (nl && cr) {
-        const kind = tokenStart(i) || whole === i ? 'start' : ((w ? psKind(s, wAt, i, kinds, wAt === after) : null) ?? split.ps);
+        const kind = tokenStart(i) || whole === i ? 'start' : ((w ? psKind(s, wAt, i, kinds, wAt === after, psEnds) : null) ?? split.ps);
         if (kind === 'start') {
           end();
           i += nl + 1;
