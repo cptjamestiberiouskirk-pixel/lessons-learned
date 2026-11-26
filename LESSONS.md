@@ -58,11 +58,11 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Status: open
 
 ## 2026-11-26: The release state cited transcript records by their 0-based index
-- What went wrong: Q87's release-state section (6c00b22) cited the hook's three denies as records 58293, 58337 and 58379. Those were indexes into the split lines from a `node -e` script. The file's lines are 58294, 58338 and 58380, so a reader who opens a cited line finds the record before it.
-- Why: CONFIRMED: the script printed `k`, the index, not `k + 1`.
-- Rule going forward: a transcript or log record is cited by its 1-based line number, and a script that finds one prints `k + 1`. Read each cited line back by that number before writing it down.
+- What went wrong: Q87's release-state section (6c00b22) cited the hook's three denies as records 58293, 58337 and 58379. Those were indexes into the split lines from a `node -e` script. The file's lines are 58294, 58338 and 58380, so a reader who opens a cited line finds the record before it. Seen again in Q93 review round 2 (134d106): `dev/release-state.md` gave lines 1 to 66,728 for a read of 66,727 lines, as its script counted the empty piece after the last line feed. Two of round 1's probes split the transcript with Node's readline, which also ends a line at CR, U+2028 and U+2029, where the gate ends one at LF only, so the first probe's 114 unparsed lines were pieces of such records.
+- Why: CONFIRMED: the script printed `k`, the index, not `k + 1`. Round 2's were CONFIRMED by the reviewer's recount, and by `node -e` on Node v26.13.1, where readline gives six lines for `a`, U+2028, `b`, U+2029, `c`, LF, `d`, CR, `e`, CR LF, `f`.
+- Rule going forward: a transcript or log record is cited by its 1-based line number, counted as the gate reads the file: split on LF only, never with readline, and with no line for the empty piece after the last LF. A script that finds one prints `k + 1`. Read each cited line back by that number before writing it down.
 - Evidence: `dev/release-state.md`, search "lines 58294, 58338 and 58380"
-- Status: open
+- Status: promoted to PLAYBOOK "Quoting text that must match"
 
 ## 2026-11-25: Round 2's here-doc lookups were timed only from places that move forward
 - What went wrong: in Q83's review round 2 fix (8e29a91), `look.brace` searched for `}` again only when a search began before the last one's start, and the timing test tried only `<<${` repeated, where each search starts past the last. Review round 3 found nested tags, whose searches start before the last one's, and a tag that failed at the line's end, which `hereDocs` scanned again from each `<<` inside it. Each kept the gate reading past the 10 second hook timeout (16 seconds at 3.45 MB, 18 seconds at 160 KB), and the release record had called the tag's other scans linear.
