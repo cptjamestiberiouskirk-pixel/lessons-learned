@@ -57,7 +57,7 @@ Run it before you report a change as done, and before a commit. A claim that som
 3. A sentence in the docs (the CHANGELOG, a README, SECURITY.md or a skill) can say what `dev/lessons.mjs` prints, or whether it reads a file. It names only cases that were run. A case is one kind of input or file state, not a group of them. Quote each message from the output of that case's run.
 4. A commit's `Verified:` line states each check's result as that check's output printed it. Read the output again while writing the line.
 5. A line in `dev/release-state.md` can give a count next to the command behind it. It can say what a file or a command's output holds or does, or say "each" or "only". Write that line from the command's output, the file, or a search of every record it covers, transcripts included. Run, read or search after the last change that could alter the result. Name anything the claim leaves out.
-6. A transcript or log record is cited by its 1-based line number, counted as the gate reads the file: split on LF only, never with Node's readline, which also ends a line at CR, U+2028 and U+2029, and with no line for the empty piece after the last LF. A script that finds a record prints `k + 1`. Read each cited line back by that number before writing it down.
+6. A script that reads a transcript or log splits it on LF only, as the gate does, never with Node's readline, which also ends a line at CR, U+2028 and U+2029. A record it finds is cited by its 1-based line number, with no line for the empty piece after the last LF: the script prints `k + 1`. Read each cited line back by that number before writing it down.
 
 ## Running a review round
 
