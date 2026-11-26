@@ -19,13 +19,13 @@ const GATE = process.env.LESSONS_GATE_SCRIPT || join(PLUGIN, 'hooks/lessons-gate
 const TEMPLATE = readFileSync(join(PLUGIN, 'templates/lessons.mjs'), 'utf8');
 const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
-const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, then write a short `Lessons checked:` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back after both, the line didn't reach your reply's text: write it again." + OFF;
-const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a short `Lessons checked:` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back, the line didn't reach your reply's text: write it again." + OFF;
-// The reasons of 0.4.0, which end with OFF, and of the copies before it,
-// which don't. A call an older copy denied in the same turn never ran.
+const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>` from the repo's top folder, then write a short `Lessons checked:` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. A commit or push uses both up. If this deny comes back with no commit or push since both, check that the lookup ran from the repo's top folder and that the line reached your reply's text." + OFF;
+const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a short `Lessons checked:` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. A commit or push uses the line up. If this deny comes back with no commit or push since your new line, that line didn't reach your reply's text: write it again." + OFF;
+// The reasons of 0.4.0. The gate knows each by its text before OFF, so a
+// result holding only that text counts too. A call 0.4.0 denied never ran.
 const OLD_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry.";
 const OLD_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry.";
-const OLD_REASONS = [['0.4.0, the lookup', OLD_LOOKUP + OFF], ['0.4.0, the line', OLD_LINE + OFF], ['before 0.4.0, the lookup', OLD_LOOKUP], ['before 0.4.0, the line', OLD_LINE]];
+const OLD_REASONS = [['0.4.0, the lookup', OLD_LOOKUP + OFF], ['0.4.0, the line', OLD_LINE + OFF], ['0.4.0, the lookup before OFF', OLD_LOOKUP], ['0.4.0, the line before OFF', OLD_LINE]];
 const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
@@ -333,6 +333,14 @@ test('a commit refused by any hook, rule or the user does not use up the line; a
   for (const [what, reason] of OLD_REASONS) {
     const old = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', reason, true);
     assert.equal(edit(root, old).deny, false, `denied with an older copy's reason: ${what}`);
+  }
+  // This copy's own denies, in a record with no toolDenialKind, bare or as
+  // Claude Code writes a hook's error.
+  for (const [what, reason] of [['the lookup', REASON_LOOKUP], ['the line', REASON_LINE], ['out of time', REASON_LATE]]) {
+    for (const text of [reason, `PreToolUse:Bash hook error: ${reason}`]) {
+      const own = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', text, true);
+      assert.equal(edit(root, own).deny, false, `denied with this copy's reason: ${what}${text === reason ? '' : ', with the hook error prefix'}`);
+    }
   }
 });
 

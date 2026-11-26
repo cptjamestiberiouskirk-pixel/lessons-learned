@@ -52,12 +52,12 @@ const HEADING = '## The lessons check';
 // Fixed text, so nothing from the repo reaches the agent through the hook.
 const DENY_MARK = 'Lessons check (PLAYBOOK.md';
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
-const REASON_LOOKUP = `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\`, then write a short \`Lessons checked:\` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back after both, the line didn't reach your reply's text: write it again.${OFF}`;
-const REASON_LINE = `${DENY_MARK}, 'The lessons check'): write a short \`Lessons checked:\` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back, the line didn't reach your reply's text: write it again.${OFF}`;
+const REASON_LOOKUP = `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\` from the repo's top folder, then write a short \`Lessons checked:\` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. A commit or push uses both up. If this deny comes back with no commit or push since both, check that the lookup ran from the repo's top folder and that the line reached your reply's text.${OFF}`;
+const REASON_LINE = `${DENY_MARK}, 'The lessons check'): write a short \`Lessons checked:\` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. A commit or push uses the line up. If this deny comes back with no commit or push since your new line, that line didn't reach your reply's text: write it again.${OFF}`;
 const REASON_LATE = `${DENY_MARK}, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.${OFF}`;
 // Earlier wording of the reasons, so a call denied by an older copy is known:
-// 0.4.0's, and the same text without OFF from the copies before it. Each
-// 0.4.0 reason holds the shorter text, so matching it covers both.
+// 0.4.0's two texts, without OFF. Each 0.4.0 reason is one of them followed
+// by OFF, so matching by includes finds it.
 const OLD_REASONS = [
   `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\`, write a visible \`Lessons checked:\` line, then retry.`,
   `${DENY_MARK}, 'The lessons check'): write a visible \`Lessons checked:\` line naming the lessons that apply, then retry.`,
@@ -2002,8 +2002,9 @@ async function main() {
   } else return;
 
   if (!codex && (typeof id !== 'string' || !id)) return;
-  // The lookup is asked for only in the session's own repo, where the deny
-  // reason's `node dev/lessons.mjs` runs the script whose hash was checked.
+  // The lookup is asked for only in the session's own repo. The deny asks
+  // for it from the repo's top folder, where `node dev/lessons.mjs` runs
+  // the script whose hash was checked.
   const home = cwd && gatedRoot(cwd);
   const needLookup = home !== null && home !== undefined && roots.has(home) && scriptMatches(home);
   // Whether a command of the turn reads otherwise in a split reading. Judging
