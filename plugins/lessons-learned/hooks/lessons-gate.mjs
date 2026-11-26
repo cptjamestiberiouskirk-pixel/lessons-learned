@@ -1521,15 +1521,24 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 // Waits until the transcript holds the assistant record of the current call,
 // and returns where that record's line ends; null if it isn't there within
-// POLL_FOR, or by the deadline. What comes after it (later calls of the same
-// message, already on disk) is not read. A record longer than the window read
-// (a large Write) widens the window.
+// POLL_FOR. Each look reads the file's last chunk, and the last look reads the
+// whole window, for a record that over a chunk of later records follows (the
+// large results of earlier calls of the same message). What comes after the
+// record is not read. A record longer than the window read (a large Write)
+// widens the window. Past the deadline it stops (inTime). An assistant record
+// that holds the call's id outside a tool_use block is the call in a shape
+// the gate doesn't read: then it returns UNREAD. The id in any other record
+// is no sign the call is on disk, as Claude Code writes data-flow-records
+// lines that name a call's id before the call's own record.
+const UNREAD = -1;
 async function waitForCall(fd, id) {
   const needle = Buffer.from(JSON.stringify(id));
   const start = Date.now();
   for (;;) {
+    const last = Date.now() - start >= POLL_FOR;
     const size = Number(fstatSync(fd).size);
-    let win = CHUNK;
+    let win = last ? MAX_WINDOW : CHUNK;
+    let odd = false;
     for (;;) {
       const from = Math.max(0, size - win);
       const buf = readAt(fd, Buffer.alloc(size - from), from);
@@ -1542,25 +1551,32 @@ async function waitForCall(fd, id) {
         }
         const b = buf.indexOf(10, i);
         const r = parse(buf.subarray(a, b < 0 ? buf.length : b));
-        if (r && r.type === 'assistant' && blocks(r).some((x) => x.type === 'tool_use' && x.id === id)) return from + (b < 0 ? buf.length : b + 1);
+        if (!r || r.type !== 'assistant') continue;
+        if (blocks(r).some((x) => x.type === 'tool_use' && x.id === id)) return from + (b < 0 ? buf.length : b + 1);
+        odd = true;
       }
       if (!grow || win >= MAX_WINDOW) break;
       win = Math.min(win * 4, MAX_WINDOW);
     }
-    if (Date.now() - start >= POLL_FOR || performance.now() >= LIMIT) return null;
+    if (odd) return UNREAD;
+    inTime();
+    if (last) return null;
     await sleep(POLL_EVERY);
   }
 }
 
 // Whether the transcript holds a user or assistant record of this session
 // (its sessionId is the payload's session_id), read back from its end. Then
-// it is the file Claude Code writes for the session, and a call not in it is
-// late, not in a shape the gate can't read.
+// it is the file Claude Code writes for the session, and a call not found in
+// it is late, or in a record type the gate doesn't read the call from (a new
+// type, or a user record), which it can't tell apart. Past the deadline it
+// stops.
 function ownTranscript(fd, sessionId) {
   if (typeof sessionId !== 'string' || sessionId === '') return false;
   const quoted = JSON.stringify(sessionId);
   let found = false;
   readBack(fd, Number(fstatSync(fd).size), (line) => {
+    inTime();
     if (!line.includes('"sessionId"') || !line.includes(quoted)) return false;
     const r = parse(line);
     found = r !== null && (r.type === 'user' || r.type === 'assistant') && r.sessionId === sessionId;
@@ -2094,10 +2110,13 @@ async function main() {
       return deny(needLookup ? REASON_LOOKUP : REASON_LINE);
     }
     const size = await waitForCall(fd, id);
-    // Not on disk in time. In this session's own transcript the record is
-    // late, and the turn can't be read up to the call: deny. A transcript
-    // the gate can't tie to the session lets the call through, as any
-    // transcript it can't read does.
+    // On disk in a shape the gate doesn't read: it passes, as any record the
+    // gate can't read does.
+    if (size === UNREAD) return;
+    // Not found in time. In this session's own transcript the record is late
+    // (or in a record type the gate doesn't read), and the turn can't be read
+    // up to the call: deny. A transcript the gate can't tie to the session
+    // lets the call through, as any transcript it can't read does.
     if (size === null) {
       if (ownTranscript(fd, p.session_id)) deny(REASON_UNSEEN);
       return;
