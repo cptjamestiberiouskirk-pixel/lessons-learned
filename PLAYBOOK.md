@@ -110,5 +110,5 @@ Run it before you report a change as done, and before a commit. A claim that som
 
 ## Working with the lessons gate
 
-1. In this repo, just before each call the lessons gate checks (an edit, a `git commit` or a `git push`), write the `Lessons checked:` line as the only text of the message that makes the call. A line in the reply's text has at times been recorded in the transcript as thinking, which the gate doesn't read.
-2. A subagent's hand-back, another session's message, and any command with a `git commit` or `git push` in it each use up the lookup and the line. Before the next call the gate checks, run the lookup and write the line again. When the gate denies a call, do both again, whatever its reason names, and check both only if the deny comes back.
+1. In this repo, just before each call the lessons gate checks (an edit, a `git commit` or a `git push`), write the `Lessons checked:` line as the only text of the message that makes the call. Text written before the line in the same message has at times been recorded in the transcript as thinking, and the line lost with it.
+2. A subagent's hand-back, another session's message, and any command with a `git commit` or `git push` in it each use up the lookup and the line. Before the next call the gate checks, run the lookup and write the line again. When the gate denies a call for the lookup or the line, do both again, whichever one its reason names, and check both only if the deny comes back. A deny that says the turn holds more commands than the gate can read clears only in a new turn.
