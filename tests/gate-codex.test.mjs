@@ -20,8 +20,8 @@ const GATE = process.env.LESSONS_GATE_SCRIPT || join(PLUGIN, 'hooks/lessons-gate
 const TEMPLATE = readFileSync(join(PLUGIN, 'templates/lessons.mjs'), 'utf8');
 const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
-const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry." + OFF;
-const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry." + OFF;
+const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, then write a short `Lessons checked:` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back after both, the line didn't reach your reply's text: write it again." + OFF;
+const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a short `Lessons checked:` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back, the line didn't reach your reply's text: write it again." + OFF;
 const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';

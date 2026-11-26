@@ -19,8 +19,13 @@ const GATE = process.env.LESSONS_GATE_SCRIPT || join(PLUGIN, 'hooks/lessons-gate
 const TEMPLATE = readFileSync(join(PLUGIN, 'templates/lessons.mjs'), 'utf8');
 const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
-const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry." + OFF;
-const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry." + OFF;
+const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, then write a short `Lessons checked:` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back after both, the line didn't reach your reply's text: write it again." + OFF;
+const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a short `Lessons checked:` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back, the line didn't reach your reply's text: write it again." + OFF;
+// The reasons of 0.4.0, which end with OFF, and of the copies before it,
+// which don't. A call an older copy denied in the same turn never ran.
+const OLD_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry.";
+const OLD_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry.";
+const OLD_REASONS = [['0.4.0, the lookup', OLD_LOOKUP + OFF], ['0.4.0, the line', OLD_LINE + OFF], ['before 0.4.0, the lookup', OLD_LOOKUP], ['before 0.4.0, the line', OLD_LINE]];
 const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
@@ -325,8 +330,10 @@ test('a commit refused by any hook, rule or the user does not use up the line; a
   assert.equal(edit(root, whole).deny, true, 'a commit that ran, whose output holds the whole reason, not as an error');
   const blank = (t) => ready(t).newMessage().use('toolu_c', 'Bash', {command: commit}).result('toolu_c', '[main 1a2b] x', false, {toolDenialKind: ''});
   assert.equal(edit(root, blank).deny, true, 'an empty toolDenialKind is not a refusal');
-  const old = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', REASON_LINE.slice(0, -OFF.length), true);
-  assert.equal(edit(root, old).deny, false, 'denied with an older copy\'s reason');
+  for (const [what, reason] of OLD_REASONS) {
+    const old = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', reason, true);
+    assert.equal(edit(root, old).deny, false, `denied with an older copy's reason: ${what}`);
+  }
 });
 
 test('compound commands are judged by the repo each commit or push runs in', () => {

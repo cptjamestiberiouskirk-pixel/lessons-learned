@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The lessons gate's deny now says where the `Lessons checked:` line goes: on its own line in the reply's text just before the call. A line in thinking or a quoted mention doesn't count. If the same deny comes back, the line didn't reach the reply's text, so write it again. What the gate allows and denies is unchanged. Before, the deny said only "write a visible `Lessons checked:` line". In one Claude Code session it denied an edit three times in a row, as each message reached the model's API with no text block, only thinking and the call, so the line never reached the reply. A call that 0.4.0 denied in the same turn still counts as one that didn't run.
 - The lessons gate missed a `git commit` or `git push` that a shell reads in a way the gate didn't:
   - `git` written with quotes, escapes, a line join or capitals, or made by an escape (`g'i't push`, `g\it push`, `gi\`, a line feed, `t push`, `$"git" push`, `GIT push`, `$'\x67it' push`, and in PowerShell `` & "g`u{69}t" push ``). The gate read a call only when its text held `git`. It now reads one whose text may name git in any of these ways;
   - in bash, a here-doc tag with a quote or a character other than a letter, a digit, `_`, `.` or `-`, which bash reads as part of the tag (`cat <<E+F`, then `x`, then `E+F`, then `git push`, then `E`). The gate ended the tag there, so it ended the body at the wrong line. It now reads the tag as bash reads the word after `<<`;

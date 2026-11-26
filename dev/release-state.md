@@ -4,6 +4,16 @@ Where each release's review stands: the review rounds run, and what was found an
 
 Labels: CONFIRMED (reproduced), INFERRED (read from code), HYPOTHESIZED, RULED OUT (checked and fine).
 
+## Unreleased: the gate's deny says where the line goes (Q87)
+
+Base: main 3ba7a88 (PR 23 merged). The Supervisor's Q87: the two deny reasons only, so Q93 (what the gate does with a call whose record lands late) can go on top. The wait, and what the gate allows and denies, are as they were.
+
+- **Why.** In the Q83 session the gate denied one Edit three times in a row (its transcript's records 58293, 58337 and 58379). Each message reached the API as two thinking blocks and the call, with no text block (records 58295, 58339 and 58381), so the line written for it never reached the reply's text. 0.4.0's reason said only "write a visible `Lessons checked:` line", which the session believed it had done.
+- **Change.** `REASON_LINE` and `REASON_LOOKUP` in both hook copies say the line goes on its own line in the reply's text just before the call, that a line in thinking or a quoted mention doesn't count, and that a deny that comes back means the line didn't reach the reply's text. `OLD_REASONS` now holds 0.4.0's two texts without OFF, written out, so a call that 0.4.0 or a copy before it denied in the same turn still counts as not run. The README's quoted deny and the CHANGELOG follow. The template PLAYBOOK step, the setup skills and the fingerprints are unchanged.
+- **Test first.** Both test files' `REASON_LOOKUP` and `REASON_LINE` are the new texts, and "a commit refused by any hook, rule or the user does not use up the line; a commit that ran does" checks all four earlier texts. On main's hook (blob dd89a47; scratch `q87/before.tap`, 01:36 local), 16 of 127 tests in `tests/gate.test.mjs` and `tests/gate-codex.test.mjs` failed, each on the wording: 15 expected the new reason, and "a denied commit" counted a commit denied with the new reason as one that ran. The old-texts test passed there, as main's texts are 0.4.0's.
+- **The changed gate, run once** (scratch `q87/deny-once.mjs`, 01:38): in this worktree, which has `dev/lessons.mjs`, it gave the new `REASON_LOOKUP`, and in a scratch gated repo with none, the new `REASON_LINE`. The README's line 90 equals the first, character for character.
+- **Checks** (01:39 to 01:45). `node dev/release-check.mjs`: 8 of 9 passed, with "versions agree" failing as expected while the CHANGELOG top is Unreleased. `node --test` on Linux under WSL (v18.19.1): 488 pass, 0 fail, 20 skipped. On Windows (`q87/after.tap`): 508 tests, 498 pass, 0 fail, 10 skipped, six for symbolic links and one each for a case-only folder, a CR in a file name, 8.3 names and a FIFO. The two hook copies are the same blob (abca6c4) with no byte past ASCII, and the added lines hold no em or en dash.
+
 ## Unreleased: six forms the gate's reading missed, read as each shell does (Q83)
 
 Base: main ef7c97d (PR 22 merged). The Supervisor's Q83: the six forms Q82 left in SECURITY.md's known limits, each with a failing test on main first, and, added to it, how Codex treats a hook it times out.

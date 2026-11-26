@@ -52,11 +52,16 @@ const HEADING = '## The lessons check';
 // Fixed text, so nothing from the repo reaches the agent through the hook.
 const DENY_MARK = 'Lessons check (PLAYBOOK.md';
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
-const REASON_LOOKUP = `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\`, write a visible \`Lessons checked:\` line, then retry.${OFF}`;
-const REASON_LINE = `${DENY_MARK}, 'The lessons check'): write a visible \`Lessons checked:\` line naming the lessons that apply, then retry.${OFF}`;
+const REASON_LOOKUP = `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\`, then write a short \`Lessons checked:\` line on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back after both, the line didn't reach your reply's text: write it again.${OFF}`;
+const REASON_LINE = `${DENY_MARK}, 'The lessons check'): write a short \`Lessons checked:\` line naming the lessons that apply, on its own line in your reply's text just before the call (a line in thinking or a quoted mention doesn't count), then retry. If this deny comes back, the line didn't reach your reply's text: write it again.${OFF}`;
 const REASON_LATE = `${DENY_MARK}, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.${OFF}`;
-// Earlier wording of the reasons, so a call denied by an older copy is known.
-const OLD_REASONS = [REASON_LOOKUP.slice(0, -OFF.length), REASON_LINE.slice(0, -OFF.length)];
+// Earlier wording of the reasons, so a call denied by an older copy is known:
+// 0.4.0's, and the same text without OFF from the copies before it. Each
+// 0.4.0 reason holds the shorter text, so matching it covers both.
+const OLD_REASONS = [
+  `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\`, write a visible \`Lessons checked:\` line, then retry.`,
+  `${DENY_MARK}, 'The lessons check'): write a visible \`Lessons checked:\` line naming the lessons that apply, then retry.`,
+];
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
 const LIMIT = (() => {
