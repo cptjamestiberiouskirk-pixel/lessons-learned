@@ -15,6 +15,13 @@ Format, checked by `node dev/lessons.mjs --check`. A field's text may go on over
 
 A good entry: its rule says what to do next time, and someone who wasn't in the session can follow it. It is about this project, not general advice. Its evidence can be checked later: a commit, a test's name, or a file in backticks by its path from the repo root, with `, search "text"` for text the file holds on one line, at most 200 UTF-16 units, where an emoji counts as two (`node dev/lessons.mjs --stale` checks both). A name counts as a file only if it holds a `/` or ends in an extension that starts with a letter (`.md`, not `.7z`), and has only letters, digits, `.`, `_`, `-` and `/`: `Makefile` alone, or `app/[id]/page.tsx`, is skipped. And no open lesson covers it already: look it up first. If one does, that lesson has now been seen a second time, so promote it (`PLAYBOOK.md`, "The lessons check", step 5).
 
+## 2026-11-26: A playbook step for the gate's denies covered two of its three reasons
+- What went wrong: in Q87 (741a338), step 2 of "Working with the lessons gate" said to do the lookup and the line again after any deny, "whatever its reason names". Review round 6 found the gate's third reason, `REASON_LATE`, for a turn with more commands than it can read in time, which only a new turn clears: doing both again in the same turn was denied again.
+- Why: CONFIRMED with round 6's probe and the hook, which calls `deny(` at three places. The step was written from the two reasons Q87 changed, taken from the diff, not from the hook's list of denies.
+- Rule going forward: before a doc line or a step says what to do after a gate deny, search the hook for each `deny(` call and check the line against each reason it can give.
+- Evidence: `PLAYBOOK.md`, search "clears only in a new turn"
+- Status: open
+
 ## 2026-11-26: Three review rounds each found a cause the deny's checks left out
 - What went wrong: in Q87, the deny's sentence for a deny that comes back named what to check. Round 1 found two causes it left out, round 2 three more, and round 3 three more: a commit that ran and failed, a subagent's report starting a turn, and `Set-Location -Path:..`. Each time the advice hung on the agent's own count of what had used up the line and the lookup. Round 4 then found a path where the step itself fails: in Codex, a lookup run at once with the call, in one code cell, doesn't count for that call, as the gate reads a Codex command only once it has ended.
 - Why: CONFIRMED from the three rounds' probes: the gate has more paths to the same deny than each round listed, and a list of causes is only as good as the paths probed.
