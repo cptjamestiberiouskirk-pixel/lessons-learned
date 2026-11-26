@@ -2177,8 +2177,8 @@ test('the hook waits for the current call to reach the transcript, then judges i
 // 7efa4c0's hook, which timed it with Date.now, a step a minute ahead ends
 // the wait at its next look, and the call is denied as not found though its
 // record comes 300 ms later. A step a minute back makes the wait run on to
-// the deadline, and the call is denied as late. On main's, whose wait doesn't
-// look at the clock, the first call passes unread, and a step back keeps the
+// the deadline, and the call is denied as late. On main's, whose wait has no
+// deadline check, the first call passes unread, and a step back keeps the
 // hook waiting past Claude Code's 10 s timeout (review round 7).
 test('a step of the wall clock during the wait for the current call neither ends it nor stretches it', {timeout: 60_000}, async () => {
   const root = makeRepo();
