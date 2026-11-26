@@ -51,9 +51,9 @@ const MAX_PATH = 4096; // characters of a path looked at; a longer one passes
 const MAX_PARTS = 512; // names in a path looked at; a deeper one passes
 const MAX_DEPTH = 4; // shells inside shells (bash -c "pwsh -c ...") read
 // ms after Node's start past which the gate denies the call at its next look
-// at the clock (inTime); what it is reading then still finishes. Claude Code
-// ends a hook at its timeout (10 s in hooks.json) and then runs the call, so
-// a gate still reading then would let it through unread.
+// at the clock (inTime); a look for the call under way then still finishes.
+// Claude Code ends a hook at its timeout (10 s in hooks.json) and then runs
+// the call, so a gate still reading then would let it through unread.
 // LESSONS_GATE_DEADLINE_MS can lower it (the tests do), never raise it.
 const DEADLINE = 6000;
 const HEADING = '## The lessons check';
