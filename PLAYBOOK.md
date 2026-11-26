@@ -69,6 +69,10 @@ Run it before you report a change as done, and before a commit. A claim that som
 1. Start the test from the input of the probe that found the finding (the scratch script the review ran that showed it), not from the finding's summary.
 2. Run the test on the old code before trusting it: "Checking your work" step 3 says what result it needs, and "Running a test against old code" says how to get that code.
 
+## Writing a message about a result
+
+1. Before you write a message (a deny, a hint, a doc line) that says what a result means, list every path in the code that gives that result. Run a probe that reaches the result by each path, and check the message's claim against it. Then have the message name what the reader can check, not a single cause.
+
 ## Committing
 
 1. In the PowerShell tool, give a commit message with `-m @'...'@`.

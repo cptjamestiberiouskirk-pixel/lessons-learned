@@ -20,7 +20,7 @@ A good entry: its rule says what to do next time, and someone who wasn't in the 
 - Why: CONFIRMED: the wording was checked against the one case that led to Q87, the denies of an Edit whose message went out as thinking, and not against each path in the gate that gives the same deny.
 - Rule going forward: before a deny, a hint or a doc tells the reader what a result means, list each path in the code that gives that result and check the claim against each one with a probe. Name what the reader can check, rather than one cause.
 - Evidence: `plugins/lessons-learned/hooks/lessons-gate.mjs`, search "If this deny comes back in the same turn with no commit or push since both"
-- Status: open
+- Status: promoted to PLAYBOOK "Writing a message about a result"
 
 ## 2026-11-26: A comment named older copies of the gate that never existed
 - What went wrong: in Q87 (6c00b22), the hook's comment on `OLD_REASONS`, the tests' labels and the release state said it also covered the reasons without OFF "from the copies before" 0.4.0. Review round 1 found no such copy: all 29 commits that touch the hook, from 1ef561b on, hold OFF.
