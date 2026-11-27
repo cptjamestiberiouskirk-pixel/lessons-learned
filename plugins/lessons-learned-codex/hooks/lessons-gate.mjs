@@ -52,8 +52,8 @@ const MAX_PARTS = 512; // names in a path looked at; a deeper one passes
 const MAX_DEPTH = 4; // shells inside shells (bash -c "pwsh -c ...") read
 // ms after Node's start past which the gate denies the call at its next look
 // at the clock (inTime); until that look its reading goes on. Claude Code
-// ends a hook at its timeout (10 s in hooks.json) and then runs the call, so a
-// gate still reading then would let it through unread.
+// and Codex end a hook at its timeout (10 s in each hooks.json) and then run
+// the call, so a gate still reading then would let it through unread.
 // LESSONS_GATE_DEADLINE_MS can lower it (the tests do), never raise it.
 const DEADLINE = 6000;
 const HEADING = '## The lessons check';
@@ -82,7 +82,9 @@ const LIMIT = (() => {
   return Number.isFinite(ms) && ms >= 0 && ms < DEADLINE ? ms : DEADLINE;
 })();
 const LATE = new Error('out of time');
-// Called as the gate reads commands and the transcript. Past the deadline it
+// Called as the gate reads commands, as it waits for the call's record in
+// Claude Code's transcript, and as it looks there for the session's records;
+// not as it reads the turn there or in a Codex rollout. Past the deadline it
 // throws, and main() denies the call.
 const inTime = () => {
   if (performance.now() > LIMIT) throw LATE;
