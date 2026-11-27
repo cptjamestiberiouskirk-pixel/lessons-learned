@@ -12,7 +12,10 @@
 // and the session transcript (Claude Code's, or Codex's rollout file). It
 // writes nothing, starts no program and opens no network connection. Every
 // error lets the call through, and so does anything it doesn't recognise,
-// except running out of time: past DEADLINE it stops reading and denies.
+// except running out of time (past DEADLINE, at its next look at the clock,
+// it stops reading and denies) and, in Claude Code, a current call it can't
+// find within POLL_FOR in a transcript that holds this session's records,
+// which it denies too.
 // LESSONS_GATE=off in its environment turns it off.
 
 import {closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync} from 'node:fs';
@@ -38,14 +41,19 @@ const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const CHUNK = 1024 * 1024; // bytes of transcript read at a time
 const MAX_WINDOW = 32 * 1024 * 1024; // bytes of transcript read back at most
 const POLL_EVERY = 15; // ms between looks for the current call
-const POLL_FOR = 300; // ms to wait for the current call to be on disk
+// ms to wait for the current call to be on disk. Claude Code can write its
+// record after the hook starts (in one test 5.9 s after the record's own
+// time), so a call still not there, in a transcript that holds this
+// session's records (ownTranscript), is denied with REASON_UNSEEN.
+const POLL_FOR = 1300;
 const MAX_FILE = 1024 * 1024; // bytes of PLAYBOOK.md or dev/lessons.mjs read
 const MAX_PATH = 4096; // characters of a path looked at; a longer one passes
 const MAX_PARTS = 512; // names in a path looked at; a deeper one passes
 const MAX_DEPTH = 4; // shells inside shells (bash -c "pwsh -c ...") read
-// ms after Node's start past which the gate stops reading and denies the
-// call. Claude Code ends a hook at its timeout (10 s in hooks.json) and then
-// runs the call, so a gate still reading then would let it through unread.
+// ms after Node's start past which the gate denies the call at its next look
+// at the clock (inTime); until that look its reading goes on. Claude Code
+// ends a hook at its timeout (10 s in hooks.json) and then runs the call, so a
+// gate still reading then would let it through unread.
 // LESSONS_GATE_DEADLINE_MS can lower it (the tests do), never raise it.
 const DEADLINE = 6000;
 const HEADING = '## The lessons check';
@@ -54,13 +62,17 @@ const DENY_MARK = 'Lessons check (PLAYBOOK.md';
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
 const REASON_LOOKUP = `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\` from the repo's top folder and let it finish. Then, just before the call, write a short \`Lessons checked:\` line alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses both up, and so does any command with a \`git commit\` or \`git push\` in it, even one that fails or never reaches it. If this deny comes back, do both again as above. If it still comes back, check that the lookup finished before the call started and ran from the repo's top folder, with any \`cd\` there giving the path as its first argument (not a variable or \`$(...)\`), and that your reply's text starts with exactly \`Lessons checked:\`.${OFF}`;
 const REASON_LINE = `${DENY_MARK}, 'The lessons check'): just before the call, write a short \`Lessons checked:\` line naming the lessons that apply, alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses the line up, and so does any command with a \`git commit\` or \`git push\` in it, even one that fails or never reaches it. If this deny comes back, write the line again as above, starting it with exactly \`Lessons checked:\`.${OFF}`;
-const REASON_LATE = `${DENY_MARK}, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.${OFF}`;
+const REASON_LATE = `${DENY_MARK}, 'The lessons check'): the gate ran out of time before it could read this turn up to the call, so it denies the call rather than let it through unread. Retry it in the next turn. If this deny keeps coming back, tell the user that the gate runs out of time in this session.${OFF}`;
+const REASON_UNSEEN = `${DENY_MARK}, 'The lessons check'): the gate didn't find this call in the session's transcript in time, so it denies the call rather than let it through unread. Retry it as the only call in your next reply. If this deny keeps coming back, tell the user that the gate can't find calls in this session's transcript.${OFF}`;
 // Earlier wording of the reasons, so a call denied by an older copy is known:
-// 0.4.0's two texts, without OFF. Each 0.4.0 reason is one of them followed
-// by OFF, so matching by includes finds it.
+// 0.4.0's two texts, and the out-of-time text main had from Q82 until Q93
+// (no release holds it, but copies installed from the marketplace then do),
+// each without OFF. Each such reason is one of them followed by OFF, so
+// matching by includes finds it.
 const OLD_REASONS = [
   `${DENY_MARK}, 'The lessons check'): run \`node dev/lessons.mjs <2-4 topic words>\`, write a visible \`Lessons checked:\` line, then retry.`,
   `${DENY_MARK}, 'The lessons check'): write a visible \`Lessons checked:\` line naming the lessons that apply, then retry.`,
+  `${DENY_MARK}, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.`,
 ];
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
@@ -70,8 +82,8 @@ const LIMIT = (() => {
   return Number.isFinite(ms) && ms >= 0 && ms < DEADLINE ? ms : DEADLINE;
 })();
 const LATE = new Error('out of time');
-// Called as the gate reads commands. Past the deadline it stops, and main()
-// denies the call.
+// Called as the gate reads commands and the transcript. Past the deadline it
+// throws, and main() denies the call.
 const inTime = () => {
   if (performance.now() > LIMIT) throw LATE;
 };
@@ -1513,35 +1525,84 @@ const blocks = (r) => (r.message && Array.isArray(r.message.content) ? r.message
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 // Waits until the transcript holds the assistant record of the current call,
-// and returns where that record's line ends; null if it never comes. What
-// comes after it (later calls of the same message, already on disk) is not
-// read. A record longer than the window read (a large Write) widens the window.
+// and returns where that record's line ends; null if it isn't there within
+// POLL_FOR. Each look reads the file's last chunk, and the last look reads the
+// whole window, for a record that over a chunk of later records follows (the
+// large results of earlier calls of the same message). What comes after the
+// record is not read. A record cut at the start of the window read (a large
+// Write) widens the window, and at the whole window it is skipped. A first
+// line is whole, not cut, when the byte before the window is a line feed,
+// even as the window's only line. An assistant record that holds the call's
+// id, but not as the id of a tool_use block in its message content, may be
+// the call in a shape the gate doesn't read: when the last look finds one
+// and not the call, it returns UNREAD. The id in a record of any other type
+// is no sign the call is on disk, as Claude Code writes data-flow-records
+// lines that name a call's id before the call's own record. The clock is
+// read after each look that didn't find the call, but for a last look that
+// returns UNREAD (inTime): past the deadline that stops the wait, but a look
+// under way still finishes, and so does the next one when the deadline
+// passes in the pause before it.
+const UNREAD = -1;
 async function waitForCall(fd, id) {
   const needle = Buffer.from(JSON.stringify(id));
-  const start = Date.now();
+  // Timed as the deadline is: a step of the wall clock (Date.now) would end
+  // the wait early, or make it run on to the deadline.
+  const start = performance.now();
   for (;;) {
+    const last = performance.now() - start >= POLL_FOR;
     const size = Number(fstatSync(fd).size);
-    let win = CHUNK;
+    let win = last ? MAX_WINDOW : CHUNK;
+    let odd = false;
     for (;;) {
       const from = Math.max(0, size - win);
       const buf = readAt(fd, Buffer.alloc(size - from), from);
-      let grow = from > 0 && buf.lastIndexOf(10, buf.length - 2) < 0;
+      const cut = from > 0 && readAt(fd, Buffer.alloc(1), from - 1)[0] !== 10;
+      let grow = cut && buf.lastIndexOf(10, buf.length - 2) < 0;
       for (let i = buf.indexOf(needle); i >= 0 && !grow; i = buf.indexOf(needle, i + 1)) {
         const a = buf.lastIndexOf(10, i) + 1;
-        if (a === 0 && from > 0) {
-          grow = true;
-          break;
+        if (a === 0 && cut) {
+          if (win < MAX_WINDOW) {
+            grow = true;
+            break;
+          }
+          i = buf.indexOf(10, i);
+          if (i < 0) break;
+          continue;
         }
         const b = buf.indexOf(10, i);
         const r = parse(buf.subarray(a, b < 0 ? buf.length : b));
-        if (r && r.type === 'assistant' && blocks(r).some((x) => x.type === 'tool_use' && x.id === id)) return from + (b < 0 ? buf.length : b + 1);
+        if (!r || r.type !== 'assistant') continue;
+        if (blocks(r).some((x) => x.type === 'tool_use' && x.id === id)) return from + (b < 0 ? buf.length : b + 1);
+        odd = true;
       }
       if (!grow || win >= MAX_WINDOW) break;
       win = Math.min(win * 4, MAX_WINDOW);
     }
-    if (Date.now() - start >= POLL_FOR) return null;
+    if (odd && last) return UNREAD;
+    inTime();
+    if (last) return null;
     await sleep(POLL_EVERY);
   }
+}
+
+// Whether the transcript holds a user or assistant record of this session
+// (its sessionId is the payload's session_id), read back from its end. Then
+// it is the file Claude Code writes for the session, and a call not found in
+// it is late, or in a record type the gate doesn't read the call from (a new
+// type, or a user record), which it can't tell apart. Past the deadline it
+// stops.
+function ownTranscript(fd, sessionId) {
+  if (typeof sessionId !== 'string' || sessionId === '') return false;
+  const quoted = JSON.stringify(sessionId);
+  let found = false;
+  readBack(fd, Number(fstatSync(fd).size), (line) => {
+    inTime();
+    if (!line.includes('"sessionId"') || !line.includes(quoted)) return false;
+    const r = parse(line);
+    found = r !== null && (r.type === 'user' || r.type === 'assistant') && r.sessionId === sessionId;
+    return found;
+  });
+  return found;
 }
 
 // A record that starts a turn. With the payload's prompt_id (current Claude
@@ -1686,7 +1747,7 @@ function notRun(records) {
       const c = b.content;
       const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x && typeof x.text === 'string' ? x.text : '')).join('\n') : '';
       const refused = typeof r.toolDenialKind === 'string' && r.toolDenialKind !== '';
-      const ours = b.is_error === true && [REASON_LOOKUP, REASON_LINE, REASON_LATE, ...OLD_REASONS].some((x) => text.includes(x));
+      const ours = b.is_error === true && [REASON_LOOKUP, REASON_LINE, REASON_LATE, REASON_UNSEEN, ...OLD_REASONS].some((x) => text.includes(x));
       if (refused || ours || (b.is_error === true && text.trimStart().startsWith('<tool_use_error>'))) ids.add(b.tool_use_id);
     }
   }
@@ -2069,7 +2130,17 @@ async function main() {
       return deny(needLookup ? REASON_LOOKUP : REASON_LINE);
     }
     const size = await waitForCall(fd, id);
-    if (size === null) return;
+    // Maybe on disk in a shape the gate doesn't read: it passes, as any
+    // record the gate can't read does.
+    if (size === UNREAD) return;
+    // Not found in time. In this session's own transcript the record is late
+    // (or in a record type the gate doesn't read), and the turn can't be read
+    // up to the call: deny. A transcript the gate can't tie to the session
+    // lets the call through, as any transcript it can't read does.
+    if (size === null) {
+      if (ownTranscript(fd, p.session_id)) deny(REASON_UNSEEN);
+      return;
+    }
     const {records, start} = readTurn(fd, size, modern);
     // A turn start for another prompt means this isn't the shape expected.
     if (modern && start && typeof start.promptId === 'string' && start.promptId !== p.prompt_id) return;

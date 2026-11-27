@@ -21,12 +21,25 @@ const PLAYBOOK = readFileSync(join(PLUGIN, 'templates/PLAYBOOK.md'), 'utf8');
 const OFF = ' To turn this check off: LESSONS_GATE=off (see the lessons-learned README).';
 const REASON_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>` from the repo's top folder and let it finish. Then, just before the call, write a short `Lessons checked:` line alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses both up, and so does any command with a `git commit` or `git push` in it, even one that fails or never reaches it. If this deny comes back, do both again as above. If it still comes back, check that the lookup finished before the call started and ran from the repo's top folder, with any `cd` there giving the path as its first argument (not a variable or `$(...)`), and that your reply's text starts with exactly `Lessons checked:`." + OFF;
 const REASON_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): just before the call, write a short `Lessons checked:` line naming the lessons that apply, alone as your reply's text (a line in thinking or a quoted mention doesn't count), and retry. A new turn (any new message to you but a background task's notice) uses the line up, and so does any command with a `git commit` or `git push` in it, even one that fails or never reaches it. If this deny comes back, write the line again as above, starting it with exactly `Lessons checked:`." + OFF;
-// The reasons of 0.4.0. The gate knows each by its text before OFF, so a
-// result holding only that text counts too. A call 0.4.0 denied never ran.
+// The reasons of 0.4.0, and the out-of-time reason main had from Q82
+// (735b245) until Q93. No release holds that one, but copies installed from
+// the marketplace in that time do. The gate knows each by its text before
+// OFF, so a result holding only that text counts too. A call an older copy
+// denied never ran.
 const OLD_LOOKUP = "Lessons check (PLAYBOOK.md, 'The lessons check'): run `node dev/lessons.mjs <2-4 topic words>`, write a visible `Lessons checked:` line, then retry.";
 const OLD_LINE = "Lessons check (PLAYBOOK.md, 'The lessons check'): write a visible `Lessons checked:` line naming the lessons that apply, then retry.";
-const OLD_REASONS = [['0.4.0, the lookup', OLD_LOOKUP + OFF], ['0.4.0, the line', OLD_LINE + OFF], ['0.4.0, the lookup before OFF', OLD_LOOKUP], ['0.4.0, the line before OFF', OLD_LINE]];
-const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn." + OFF;
+const OLD_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): this turn holds more commands than the gate can read in time, so it denies the call rather than let it through unread. Retry it in the next turn.";
+const OLD_REASONS = [
+  ['0.4.0, the lookup', OLD_LOOKUP + OFF],
+  ['0.4.0, the line', OLD_LINE + OFF],
+  ['0.4.0, the lookup before OFF', OLD_LOOKUP],
+  ['0.4.0, the line before OFF', OLD_LINE],
+  ['main before Q93, out of time', OLD_LATE + OFF],
+  ['main before Q93, out of time before OFF', OLD_LATE],
+  ['main before Q93, out of time, with the hook error prefix', `PreToolUse:Bash hook error: ${OLD_LATE}${OFF}`],
+];
+const REASON_LATE = "Lessons check (PLAYBOOK.md, 'The lessons check'): the gate ran out of time before it could read this turn up to the call, so it denies the call rather than let it through unread. Retry it in the next turn. If this deny keeps coming back, tell the user that the gate runs out of time in this session." + OFF;
+const REASON_UNSEEN = "Lessons check (PLAYBOOK.md, 'The lessons check'): the gate didn't find this call in the session's transcript in time, so it denies the call rather than let it through unread. Retry it as the only call in your next reply. If this deny keeps coming back, tell the user that the gate can't find calls in this session's transcript." + OFF;
 const LINE = 'Lessons checked: none apply';
 const LOOKUP = 'node dev/lessons.mjs hook test';
 const WIN = process.platform === 'win32';
@@ -336,7 +349,7 @@ test('a commit refused by any hook, rule or the user does not use up the line; a
   }
   // This copy's own denies, in a record with no toolDenialKind, bare or as
   // Claude Code writes a hook's error.
-  for (const [what, reason] of [['the lookup', REASON_LOOKUP], ['the line', REASON_LINE], ['out of time', REASON_LATE]]) {
+  for (const [what, reason] of [['the lookup', REASON_LOOKUP], ['the line', REASON_LINE], ['out of time', REASON_LATE], ['not found in time', REASON_UNSEEN]]) {
     for (const text of [reason, `PreToolUse:Bash hook error: ${reason}`]) {
       const own = (t) => ready(t).newMessage().use('toolu_d', 'Bash', {command: commit}).result('toolu_d', text, true);
       assert.equal(edit(root, own).deny, false, `denied with this copy's reason: ${what}${text === reason ? '' : ', with the hook error prefix'}`);
@@ -1871,6 +1884,121 @@ test('a Write whose record is over 1 MB is found and judged', () => {
   assert.equal(gate(payload(t, t.write(), 'Write', input, 'toolu_late_id', {cwd: root})).deny, true, 'an id in a cut first line');
 });
 
+// More than a chunk (1 MB) of whole records after the call's own, as when
+// earlier calls of the same message have large results. Each look reads the
+// last chunk; the last look reads the whole window, so the call is found and
+// judged. Before this, 0.4.0 let it through unread, and 1f68aba denied it as
+// not found.
+test('a call with over 1 MB of later records after its own is found and judged', {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const build = (t) => {
+    const id = current(t, 'Write', input);
+    for (let i = 0; i < 12; i++) t.result(`toolu_big${i}`, 'y'.repeat(100 * 1024));
+    return id;
+  };
+  const t = new Transcript(root).prompt();
+  t.lookup();
+  const id = build(t);
+  assert.equal(gate(payload(t, t.write(), 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+  const t2 = new Transcript(root).prompt();
+  ready(t2);
+  const id2 = build(t2);
+  assert.equal(gate(payload(t2, t2.write(), 'Write', input, id2, {cwd: root})).deny, false, 'judged: the turn is ready');
+});
+
+// The last look reads the whole 32 MB window. A record cut at the window's
+// start can't be read there, even when its part inside the window holds the
+// call's id, as a data-flow-records line does (Claude Code writes one before
+// the call's own record). The look skips it and finds the call's own record
+// after it, which is judged. It fails on 134d106, which stopped at the cut
+// record and denied the call as not found, and on 0.4.0, which let it
+// through unread (review round 2, cutline.mjs).
+test('a record cut at the start of the full window is skipped, and the call after it is judged', {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_cut';
+  const t = new Transcript(root).prompt();
+  t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
+  t.push({type: 'data-flow-records', sessionId: 'sess-1', v: 1, records: [{pad: 'p'.repeat(2000), toolUseId: id}]});
+  const flow = t.lines.length - 1;
+  current(t, 'Write', input, {id});
+  // The window starts halfway into the data-flow line, before the id.
+  const {path, lineAt, start} = windowAt(t, flow, Math.floor(t.lines[flow].length / 2));
+  const idAt = lineAt + t.lines[flow].indexOf(JSON.stringify(id));
+  assert.ok(lineAt < start && start < idAt, `the window starts at ${start}, not between the data-flow line's start ${lineAt} and the id ${idAt}`);
+  assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
+
+// The call's own record starting at the full window's first byte, right
+// after a line feed, is whole. The look reads the byte before the window to
+// tell, and judges the call. It fails on d9dbe1b and 134d106, which took the
+// record as cut and denied the call as not found, and on 0.4.0, which let it
+// through unread (review round 3, cutcases.mjs "exact").
+test('a record that starts at the first byte of the full window is read as whole', {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_edge';
+  const t = new Transcript(root).prompt();
+  t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
+  current(t, 'Write', input, {id});
+  const {path, lineAt, start} = windowAt(t, t.lines.length - 1, 0);
+  assert.equal(start, lineAt, "the window doesn't start at the call's own record");
+  assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
+
+// The call's own record as the only line of the full window: it starts right
+// after a line feed, at the window's first byte, and its line feed is the
+// file's last byte. It is whole, so the call is judged. It fails on 1c2495b,
+// which took a window with no line feed but its last byte as one cut line,
+// whatever the byte before it, and so stopped before reading the record and
+// denied the call as not found (review round 4, oneline.mjs).
+test("a call's record that is the full window's only line is read as whole", {timeout: 60_000}, () => {
+  const WINDOW = 32 * 1024 * 1024;
+  const root = makeRepo();
+  const id = 'toolu_only';
+  const build = (pad) => {
+    const t = new Transcript(root).prompt();
+    t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
+    current(t, 'Write', {file_path: join(root, 'x.txt'), content: 'x'.repeat(pad)}, {id});
+    return t;
+  };
+  const t = build(WINDOW - (Buffer.byteLength(build(0).lines.at(-1)) + 1));
+  const path = t.write();
+  const bytes = readFileSync(path);
+  const start = bytes.length - WINDOW;
+  assert.ok(start > 0 && bytes[start - 1] === 10, 'a line feed right before the window');
+  assert.equal(bytes.indexOf(10, start), bytes.length - 1, 'one line in the window');
+  assert.ok(bytes.subarray(start).equals(Buffer.from(`${t.lines.at(-1)}\n`)), "the window is the call's own record");
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  assert.equal(gate(payload(t, path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
+
+// Writes `t`, then later records with no id, so that the file's last 32 MB
+// (the gate's whole window) start `into` bytes into the record t.lines[at].
+// It counts bytes, as paths in the records can hold other characters, and
+// checks the file: a line feed, then that record, at the place it returns.
+// Returns the path, where that record starts, and where the window starts.
+function windowAt(t, at, into) {
+  const WINDOW = 32 * 1024 * 1024;
+  const path = t.write();
+  const lineAt = t.lines.slice(0, at).reduce((n, l) => n + Buffer.byteLength(l) + 1, 0);
+  const tail = lineAt + into + WINDOW - lstatSync(path).size;
+  const line = `${JSON.stringify({type: 'y', p: 'q'.repeat(200)})}\n`;
+  const n = Math.floor(tail / line.length);
+  appendFileSync(path, `${JSON.stringify({type: 'y', p: 'q'.repeat(200 + tail - n * line.length)})}\n`);
+  const block = line.repeat(1024);
+  let left = n - 1;
+  for (; left >= 1024; left -= 1024) appendFileSync(path, block);
+  appendFileSync(path, line.repeat(left));
+  const bytes = readFileSync(path);
+  const record = Buffer.from(t.lines[at]);
+  assert.ok(bytes[lineAt - 1] === 10 && bytes.subarray(lineAt, lineAt + record.length).equals(record), `t.lines[${at}] isn't at byte ${lineAt}, after a line feed`);
+  const start = bytes.length - WINDOW;
+  assert.equal(start, lineAt + into, `the window starts at byte ${start}, not ${into} into the record`);
+  return {path, lineAt, start};
+}
+
 test('a malformed transcript, a cut first line, invalid UTF-8 and an unknown format fail open', () => {
   const root = makeRepo();
   const file = join(root, 'src.txt');
@@ -1958,10 +2086,12 @@ test('a turn start for another prompt_id fails open, and without prompt_id an ol
 // Runs the hook with a preload that reports, on stderr, when the hook first
 // reads the transcript, so the test can act after that read whatever Node's
 // start cost, and, as the hook exits, how long it ran after that read, timed
-// inside the hook so the exit itself isn't counted. Returns {done, looked,
-// waited}: looked resolves at that first read, or with null if the hook exits
-// without one; waited() is the time the hook reported, or null.
-function watched(p) {
+// inside the hook so the exit itself isn't counted. With GATE_CLOCK_STEP in
+// extra, the wall clock (Date.now) steps that many ms at that first read, as
+// a time sync can step it. Returns {done, looked, waited}: looked resolves at
+// that first read, or with null if the hook exits without one; waited() is
+// the time the hook reported, or null.
+function watched(p, extra = {}) {
   const dir = scratch();
   const preload = join(dir, 'signal.mjs');
   writeFileSync(
@@ -1974,6 +2104,9 @@ function watched(p) {
       'const read = fs.readSync;',
       'let fd = null;',
       'let told = null;',
+      'const step = Number(process.env.GATE_CLOCK_STEP || 0);',
+      'const now = Date.now;',
+      'Date.now = () => now.call(Date) + (told === null ? 0 : step);',
       'fs.openSync = function (p, ...rest) { const f = open.call(this, p, ...rest); if (String(p) === want) fd = f; return f; };',
       "fs.readSync = function (f, ...rest) { const n = read.call(this, f, ...rest); if (f === fd && told === null) { told = performance.now(); process.stderr.write('looked\\n'); } return n; };",
       "process.on('exit', () => { if (told !== null) process.stderr.write(`waited ${performance.now() - told}\\n`); });",
@@ -1981,7 +2114,7 @@ function watched(p) {
       '',
     ].join('\n'),
   );
-  const env = {...process.env, GATE_TRANSCRIPT: p.transcript_path};
+  const env = {...process.env, ...extra, GATE_TRANSCRIPT: p.transcript_path};
   delete env.LESSONS_GATE;
   const {child, done} = spawn(process.execPath, ['--import', pathToFileURL(preload).href, GATE], {env});
   let err = '';
@@ -2000,29 +2133,179 @@ function watched(p) {
   return {done, looked, waited};
 }
 
-test('the hook waits for the current call to reach the transcript, then judges it', {timeout: 120_000}, async () => {
+const pause = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const reasonOf = (stdout) => (stdout.trim() ? JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason : null);
+// The record of a Write call `id`, to append to a transcript after `t`'s.
+function lateCall(t, root, id, input) {
+  const late = new Transcript(root);
+  late.n = t.n;
+  late.msg = 99;
+  late.use(id, 'Write', input);
+  return `${late.lines[0]}\n`;
+}
+
+// Claude Code can write the current call's record after its hook starts: in
+// Q92's tests, up to 5.9 s after the record's own time. The hook waits 1.3 s
+// for it (before this change it waited 300 ms, then let the call through).
+test('the hook waits for the current call to reach the transcript, then judges it, and denies a call that never comes', {timeout: 120_000}, async () => {
   const root = makeRepo();
   const t = new Transcript(root).prompt();
   t.lookup();
   const path = t.write();
   const input = {file_path: join(root, 'x.txt'), content: 'x'};
-  const late = new Transcript(root);
-  late.n = t.n;
-  late.msg = 99;
-  late.use('toolu_late', 'Write', input);
   // The call is appended only after the hook's first look found nothing.
   const one = watched(payload(t, path, 'Write', input, 'toolu_late', {cwd: root}));
   assert.notEqual(await one.looked, null, 'the hook exited without reading the transcript');
-  appendFileSync(path, `${late.lines[0]}\n`);
-  const {stdout} = await one.done;
-  assert.match(stdout, /"permissionDecision":"deny"/, 'the call came after the first look and was judged');
-  // Never written: allowed only after the wait.
-  const two = watched(payload(t, path, 'Write', input, 'toolu_never', {cwd: root}));
+  appendFileSync(path, lateCall(t, root, 'toolu_late', input));
+  assert.equal(reasonOf((await one.done).stdout), REASON_LOOKUP, 'the call came after the first look and was judged');
+  // Appended 700 ms after the first look: past the old 300 ms wait.
+  const two = watched(payload(t, path, 'Write', input, 'toolu_later', {cwd: root}));
   assert.notEqual(await two.looked, null, 'the hook exited without reading the transcript');
-  const r = await two.done;
-  assert.equal(r.stdout, '');
-  const waited = two.waited();
-  assert.ok(waited !== null && waited >= 280, `allowed ${Math.round(waited)} ms after its first look, before the 300 ms wait was over`);
+  await pause(700);
+  appendFileSync(path, lateCall(t, root, 'toolu_later', input));
+  assert.equal(reasonOf((await two.done).stdout), REASON_LOOKUP, 'the call came 700 ms after the first look and was judged');
+  // Never written: denied, and only after the wait.
+  const three = watched(payload(t, path, 'Write', input, 'toolu_never', {cwd: root}));
+  assert.notEqual(await three.looked, null, 'the hook exited without reading the transcript');
+  assert.equal(reasonOf((await three.done).stdout), REASON_UNSEEN, 'a call never written is denied');
+  const waited = three.waited();
+  assert.ok(waited !== null && waited >= 1280, `denied ${Math.round(waited)} ms after its first look, before the 1.3 s wait was over`);
+});
+
+// The wait is timed on performance.now, as the deadline is, so a step of the
+// wall clock, as a time sync makes, doesn't change it (review round 6). On
+// 7efa4c0's hook, which timed it with Date.now, a step a minute ahead ends
+// the wait at its next look, and the call is denied as not found though its
+// record comes 300 ms later. A step a minute back makes the wait run on to
+// the deadline, and the call is denied as late. On main's, whose wait has no
+// deadline check, the first call passes unread, and a step back keeps the
+// hook waiting past Claude Code's 10 s timeout (review round 7).
+test('a step of the wall clock during the wait for the current call neither ends it nor stretches it', {timeout: 60_000}, async () => {
+  const root = makeRepo();
+  const t = new Transcript(root).prompt();
+  t.lookup();
+  const path = t.write();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const ahead = watched(payload(t, path, 'Write', input, 'toolu_ahead', {cwd: root}), {GATE_CLOCK_STEP: '60000'});
+  assert.notEqual(await ahead.looked, null, 'the hook exited without reading the transcript');
+  await pause(300);
+  appendFileSync(path, lateCall(t, root, 'toolu_ahead', input));
+  assert.equal(reasonOf((await ahead.done).stdout), REASON_LOOKUP, 'the wall clock stepped a minute ahead, and the call that came 300 ms later was judged');
+  const back = watched(payload(t, path, 'Write', input, 'toolu_back', {cwd: root}), {GATE_CLOCK_STEP: '-60000'});
+  assert.notEqual(await back.looked, null, 'the hook exited without reading the transcript');
+  assert.equal(reasonOf((await back.done).stdout), REASON_UNSEEN, 'the wall clock stepped a minute back, and a call never written was denied as not found after the 1.3 s wait');
+});
+
+test('a lowered deadline also ends the wait for the current call, which is then denied as late', {timeout: 60_000}, async () => {
+  // No lookup is needed and the turn holds only the line, so judging the
+  // turn reads no command: found in time, the call would pass.
+  const root = makeRepo({script: null});
+  const t = new Transcript(root).prompt();
+  t.newMessage().text(LINE);
+  const path = t.write();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  // The deadline is 600 ms after Node's start. The call reaches the
+  // transcript 1,100 ms after the hook's first look: inside the 1.3 s wait,
+  // past the deadline. The gate is out of time then, so it denies the call
+  // as late, in this session's transcript and in another session's, where a
+  // call it can't find would pass. A hook whose wait ignores the deadline
+  // finds the call and lets it through.
+  for (const [session, where] of [['sess-1', "this session's transcript"], ['sess-2', "another session's transcript"]]) {
+    const id = `toolu_slow_${session}`;
+    const one = watched(payload(t, path, 'Write', input, id, {cwd: root, session_id: session}), {LESSONS_GATE_DEADLINE_MS: '600'});
+    assert.notEqual(await one.looked, null, 'the hook exited without reading the transcript');
+    await pause(1100);
+    appendFileSync(path, lateCall(t, root, id, input));
+    assert.equal(reasonOf((await one.done).stdout), REASON_LATE, `the wait ended at the deadline, in ${where}`);
+  }
+});
+
+// A call never written is denied only where the gate can tie the transcript
+// to the session; any other transcript lets it through, as before.
+test('a call never written is denied only in a transcript that holds a user or assistant record of this session', {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const t = new Transcript(root).prompt();
+  ready(t);
+  const p = (file, extra = {}) => payload(t, file, 'Write', input, 'toolu_never', {cwd: root, ...extra});
+  const path = t.write();
+  assert.equal(gate(p(path)).reason, REASON_UNSEEN, "this session's records");
+  assert.equal(gate(p(t.write(undefined, {respace: true}))).reason, REASON_UNSEEN, "this session's records, written with spaces");
+  assert.equal(gate(p(path, {session_id: 'sess-2'})).deny, false, "another session's records");
+  const named = new Transcript(root).prompt().text('sess-9');
+  ready(named);
+  assert.equal(gate(p(named.write(), {session_id: 'sess-9'})).deny, false, "another session's records, one naming this session in its text");
+  assert.equal(gate(p(path, {session_id: ''})).deny, false, 'no session in the payload');
+  const noise = new Transcript(root).attachment().attachment();
+  assert.equal(gate(p(noise.write())).deny, false, 'only records that carry the session but are not user or assistant records');
+});
+
+// In this session's transcript, an assistant record that holds the call's
+// id, but not as the id of a tool_use block in its message content, may be
+// the call on disk in a shape the gate doesn't read. When the wait ends with
+// no record of the call in its own shape, the call passes, as such a record
+// does (review round 1, F1: the probe's unknownShape). The call's id in a
+// record of any other type is no sign it is on disk: Claude Code writes
+// data-flow-records lines that name a call's id before the call's own
+// record. Those, and a tool_use block in a user record, are denied as
+// unseen. The turn has no line, so a call judged would be denied for the
+// lookup.
+test("in this session's transcript, an assistant record that holds a call's id but not as a tool_use block's id lets it through, and other records do not", {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_odd';
+  const run = (record) => {
+    const t = new Transcript(root).prompt();
+    t.lookup().newMessage();
+    t.push(record(t));
+    return gate(payload(t, t.write(), 'Write', input, id, {cwd: root}));
+  };
+  const asst = (content) => (t) => t.base('assistant', {message: {id: 'msg-odd', type: 'message', role: 'assistant', content}});
+  assert.equal(run(asst(id)).deny, false, 'content as a string');
+  assert.equal(run(asst([{type: 'tool_call', id, name: 'Write', input}])).deny, false, 'a block of another type');
+  assert.equal(run(asst([{type: 'tool_use', id: 'toolu_other', name: 'Bash', input: {command: 'echo', ref: id}}])).deny, false, "another call's input");
+  assert.equal(run((t) => t.base('user', {message: {role: 'user', content: [{type: 'tool_use', id, name: 'Write', input}]}})).reason, REASON_UNSEEN, 'a tool_use block in a user record');
+  assert.equal(run(() => ({type: 'data-flow-records', sessionId: 'sess-1', v: 1, records: [{toolUseId: id}]})).reason, REASON_UNSEEN, 'a data-flow-records line');
+});
+
+// Such a record lets the call through only when the wait ends. Here the
+// call's own record comes 500 ms after the hook's first look, after one: it
+// is judged. It fails on 134d106, which let the call through at the first
+// look that found the other record, and on 0.4.0, whose 300 ms wait was
+// over (review round 2).
+test('a record that holds the call in a shape the gate does not read lets it through only when the wait ends', {timeout: 60_000}, async () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_odd_first';
+  const t = new Transcript(root).prompt();
+  t.newMessage();
+  t.push(t.base('assistant', {message: {id: 'msg-odd', type: 'message', role: 'assistant', content: id}}));
+  const path = t.write();
+  const one = watched(payload(t, path, 'Write', input, id, {cwd: root}));
+  assert.notEqual(await one.looked, null, 'the hook exited without reading the transcript');
+  await pause(500);
+  appendFileSync(path, lateCall(t, root, id, input));
+  assert.equal(reasonOf((await one.done).stdout), REASON_LOOKUP, 'the call in its own shape came later and was judged');
+});
+
+// The look for this session's records checks the deadline too. A 33 MB
+// transcript of short lines that pass its quick text test and fail to parse
+// takes it seconds (3.5 s on the PC this was written on, and over 1.1 s on
+// each CI system at 134d106). With the deadline 1.8 s after Node's start,
+// the 1.3 s wait ends before it (about 1.36 s after the start here), and the
+// look stops there and denies. It fails on 1f68aba, which read all 32 MB and
+// let the call through.
+test("the look for this session's records stops at the deadline", {timeout: 60_000}, () => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const path = join(scratch(), 'transcript.jsonl');
+  const line = '"sessionId" "sess-1" x\n';
+  const block = line.repeat(Math.floor((1 << 20) / line.length));
+  // A user record of the session first, past the 32 MB window.
+  writeFileSync(path, `${JSON.stringify({sessionId: 'sess-1', type: 'user', message: {role: 'user', content: 'x'}})}\n`);
+  for (let n = 0; n < 33; n++) appendFileSync(path, block);
+  const p = {session_id: 'sess-1', transcript_path: path, cwd: root, prompt_id: 'prompt-1', hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: input, tool_use_id: 'toolu_never'};
+  assert.equal(gate(p, {LESSONS_GATE_DEADLINE_MS: '1800'}).reason, REASON_LATE);
 });
 
 test('the hook imports only fs, path and crypto, and calls no write, spawn or network function', () => {
@@ -2109,6 +2392,39 @@ const growth = (small, full, fixed) => {
   const ratio = Math.max(0, b - base) / Math.max(FLOOR, a - base);
   return {ratio, shown: `quarter ${Math.round(a)} ms, full ${Math.round(b)} ms, fixed cost ${Math.round(base)} ms, ratio past it ${ratio.toFixed(1)}`};
 };
+
+// A record cut at the start of the full window that names the call's id many
+// times after the cut, as a data-flow-records line can. The last look skips
+// to the record's end at the first of them, so its cost doesn't grow with
+// their count. The fixed cost is the same transcript with one. Fails on a
+// hook that skips one id at a time (review round 3's nojump mutant, where
+// each id scans back to the window's start: 33 s at 100,000 ids, past
+// Claude Code's 10 s timeout). The counts, 5,000 and 20,000, keep that hook's
+// runs short: its full run took about 3.4 s on a Windows PC. The deadline
+// doesn't cap it, as a look that finds the call doesn't look at the clock.
+test('time: a cut record at the start of the full window that names the call many times is skipped in linear time', {timeout: 180_000}, (t2) => {
+  const root = makeRepo();
+  const input = {file_path: join(root, 'x.txt'), content: 'x'};
+  const id = 'toolu_cut';
+  const build = (n) => {
+    const t = new Transcript(root).prompt();
+    t.push({type: 'y', p: 'f'.repeat(100 * 1024)});
+    t.push({type: 'data-flow-records', sessionId: 'sess-1', v: 1, pad: 'p'.repeat(2000), records: Array.from({length: n}, () => ({toolUseId: id}))});
+    const flow = t.lines.length - 1;
+    current(t, 'Write', input, {id});
+    const w = windowAt(t, flow, 1000);
+    assert.ok(w.lineAt < w.start && w.start < w.lineAt + t.lines[flow].indexOf(JSON.stringify(id)), `${n}: the window doesn't start in the pad`);
+    return {t, path: w.path};
+  };
+  const run = (b) => () => gate(payload(b.t, b.path, 'Write', input, id, {cwd: root})).ms;
+  const one = build(1);
+  const quarter = build(5_000);
+  const full = build(20_000);
+  const g = growth(run(quarter), run(full), run(one));
+  t2.diagnostic(g.shown);
+  assert.ok(g.ratio < 8, g.shown);
+  assert.equal(gate(payload(full.t, full.path, 'Write', input, id, {cwd: root})).reason, REASON_LOOKUP, 'judged: no line');
+});
 
 // Fails on round 2's reviewed gate, whose here-string regex ran from every
 // unclosed @' to the end of the command.
