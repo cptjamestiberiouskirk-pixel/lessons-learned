@@ -401,10 +401,10 @@ const onlyJson = (run, what) => {
   return JSON.parse(run.stdout.trim()).hookSpecificOutput.permissionDecisionReason;
 };
 
-// The gate stops at its own deadline and denies, as Codex, like Claude Code,
-// runs a call once the hook's timeout ends it (0.172.0, in a live run; see
-// tests/gate.test.mjs for Claude Code). At 1 ms the
-// deadline has passed before the gate reads its first command.
+// Once its own deadline has passed, the gate denies at its next look at the
+// clock, as Codex, like Claude Code, runs a call once the hook's timeout ends
+// it (0.172.0, in a live run; see tests/gate.test.mjs for Claude Code). At
+// 1 ms the deadline has passed before the gate reads its first command.
 test('codex: a gate out of time denies the call', () => {
   const root = makeRepo();
   const late = {LESSONS_GATE_DEADLINE_MS: '1'};
