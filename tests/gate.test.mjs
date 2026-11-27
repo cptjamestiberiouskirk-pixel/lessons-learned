@@ -1093,10 +1093,10 @@ test('a turn is read with each pair of ways, though no one command needs that pa
 
 // Claude Code ends a hook at its timeout and then runs the call: in 2.1.332 a
 // gate that took past 10 s left a `hook_cancelled` record with timedOut, and
-// the `git push` it would have denied ran (dev/release-state.md, Q82). So the
-// gate stops reading at its own deadline, well inside that timeout, and
-// denies. LESSONS_GATE_DEADLINE_MS lowers the deadline; at 1 ms it has passed
-// before the gate reads its first command.
+// the `git push` it would have denied ran (dev/release-state.md, Q82). So once
+// its own deadline, well inside that timeout, has passed, the gate denies at
+// its next look at the clock. LESSONS_GATE_DEADLINE_MS lowers the deadline; at
+// 1 ms it has passed before the gate reads its first command.
 test('a gate out of time denies the call, and a call it never reads still passes', () => {
   const root = makeRepo();
   const late = {LESSONS_GATE_DEADLINE_MS: '1'};
